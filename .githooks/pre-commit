@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+unformatted=$(gofmt -l .)
+if [ -n "$unformatted" ]; then
+	echo "pre-commit: run gofmt -w on these files:" >&2
+	echo "$unformatted" >&2
+	exit 1
+fi
+
+for module in . sdk; do
+	if [ -z "$(cd "$module" && go list ./... 2>/dev/null)" ]; then
+		continue
+	fi
+	echo "pre-commit: go test ./... in $module"
+	(cd "$module" && go test ./...)
+done

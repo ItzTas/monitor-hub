@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package monitorhub.plugin.v1;
+
+option go_package = "github.com/ItzTas/monitor-hub/sdk/pluginpb;pluginpb";
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+service Plugin {
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+  rpc Status(StatusRequest) returns (StatusResponse);
+  rpc Check(CheckRequest) returns (CheckResponse);
+  rpc Events(EventsRequest) returns (EventsResponse);
+}
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  string name = 1;
+  string display_name = 2;
+  string version = 3;
+  repeated EventKind kinds = 4;
+}
+
+message EventKind {
+  string id = 1;
+  string description = 2;
+}
+
+enum State {
+  STATE_UNSPECIFIED = 0;
+  STATE_IDLE = 1;
+  STATE_CHECKING = 2;
+  STATE_PAUSED = 3;
+  STATE_FAILING = 4;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  State state = 1;
+  string message = 2;
+  google.protobuf.Timestamp last_check_started_at = 3;
+  google.protobuf.Timestamp last_success_at = 4;
+  google.protobuf.Timestamp next_check_at = 5;
+}
+
+message CheckRequest {}
+
+message CheckResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_URGENT = 2;
+}
+
+message EventsRequest {
+  int64 after = 1;
+  int32 limit = 2;
+}
+
+message EventsResponse {
+  repeated Event events = 1;
+}
+
+message Event {
+  int64 seq = 1;
+  string id = 2;
+  string kind = 3;
+  Severity severity = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+  string title = 6;
+  string body = 7;
+  string url = 8;
+  google.protobuf.Struct payload = 9;
+}
