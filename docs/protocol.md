@@ -45,7 +45,7 @@ Do not use TLS. monitor-hub runs without AutoMTLS, so the hub does not send `PLU
 Register two services on the server:
 
 - `monitorhub.plugin.v1.Plugin`, which you implement.
-- The standard [gRPC health service](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) (`grpc.health.v1.Health`), with the service name `plugin` set to `SERVING`. The hub calls `Check` with `service = "plugin"` and treats anything but `SERVING` as unhealthy.
+- The standard [gRPC health service](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) (`grpc.health.v1.Health`), with the service name `plugin` set to `SERVING`. The hub calls `Check` with `service = "plugin"` and requires the call to succeed, which means the name must be registered. The hub does not read the status in the reply, but report `SERVING` anyway: that is the contract.
 
 Optionally register `plugin.GRPCController` (see [Shutdown](#shutdown)).
 
