@@ -185,7 +185,7 @@ Check: the `Owner` of every table and of `alerts_seq_seq` is the role in your UR
 | `SEI_URL`, `SEI_API_URL`, `SEI_USERNAME`, `SEI_ORG`, `SEI_UNITS`, `SEI_TIMEZONE`, `SEI_CONCURRENCY` | the same name with `SEI__` in front |
 | `SEI_PASSWORD`, `SEI_PASSWORD_FILE`, `SEI_PASSWORD_CMD` | `SEI__SEI_PASSWORD` and the same for the other two. Set one only. |
 | `POLL_INTERVAL`, `NOTIFICATION_DETAIL`, `RETURN_WARNING_DAYS`, `RETENTION_DAYS` | the same name with `SEI__` in front |
-| `LOG_LEVEL` | `LOG_LEVEL` for the hub and `SEI__LOG_LEVEL` for the plugin |
+| `LOG_LEVEL` | `LOG_LEVEL` for the hub and `SEI__LOG_LEVEL` for the plugin. Keep the hub's at `info` or `debug` for the take-over: step 5 waits for `info` lines, which `warn` or `error` hide. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TO`, `SMTP_TLS` | unchanged |
 | `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` | unchanged |
 | `NTFY_URL`, `NTFY_TOKEN` | unchanged |
@@ -241,7 +241,7 @@ The second command prints `postgres` (skip it if you removed that network in ste
 
 Running old and new at once doubles every notification. Stop the apps but keep the databases and volumes. Both must be stopped before the hub starts in step 5. The gazette plugin takes a lock in its database that keeps out a second copy of the plugin, but the Go program never takes that lock: with both running, every gazette alert is announced twice.
 
-First make sure the old gazette program has nothing left to send. The hub never announces an alert that Go stored and did not deliver (step 5 explains why). Look at its log for the last check interval, 30 minutes unless you set `CHECK_INTERVAL_MINUTES`:
+First make sure the old gazette program has nothing left to send. The hub never announces an alert that Go stored and did not deliver (step 5 explains why). Look at its log for the last check interval plus a few minutes. The command below uses 35 minutes, for the default interval of 30: if you set `CHECK_INTERVAL_MINUTES`, use that value plus 5 instead.
 
 ```bash
 docker logs --since 35m diario-alerr 2>&1 | grep 'delivery failed'
@@ -264,6 +264,12 @@ docker ps --format '{{.Names}}' | grep -E 'sei-monitor|diario-alerr'
 
 Check: no app container is left. A Postgres container may remain.
 
+Note the time the gazette container stopped. Step 5 compares it with the alerts the plugin records. Docker keeps it, in UTC:
+
+```bash
+docker inspect -f '{{.State.FinishedAt}}' diario-alerr
+```
+
 ## 5. Start the hub and check it
 
 The hub listens on port 8090 on the host, or on your `APP_PORT`. The commands below use 8090.
@@ -274,7 +280,7 @@ docker compose up -d
 docker compose logs --tail 50 monitor-hub
 ```
 
-Check the log: a `monitor-hub starting` line listing both plugins and your channels. An `invalid configuration` error lists every problem at once. A plugin with bad settings exits, and the hub restarts it after 1 s, 5 s, 30 s, 2 min and then every 5 min. So look at `running` below, not only at whether the container is up.
+Check the log: a `monitor-hub starting` line listing both plugins and your channels (an `info` line, so `LOG_LEVEL` must be `info` or `debug`, see step 3). An `invalid configuration` error lists every problem at once. A plugin with bad settings exits, and the hub restarts it after 1 s, 5 s, 30 s, 2 min and then every 5 min. So look at `running` below, not only at whether the container is up.
 
 Put your API token in a shell variable without writing it into history:
 
@@ -298,13 +304,17 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
 
    Expected: `{"items":[...]}` with `diario` first and `sei` second, each with `"running":true` and `"state"` set to `idle` or `checking`. The `sei` plugin may show another state until its first login finishes. A 401 means the token is wrong.
 
-3. The first read of each plugin is a baseline: the hub stores what the plugin already holds and announces none of it. That read comes on the hub's first poll after the plugin is up, within about 15 seconds. Watch your channels for a few minutes.
+3. The first read of each plugin is a baseline: the hub stores what the plugin already holds and announces none of it. That read comes on the hub's first poll after the plugin is up, usually within about 15 seconds, later while the other plugin's poll is slow. Watch your channels for a few minutes.
    - The gazette plugin holds back the alerts its own first cycle records until that read has ended. They reach the hub on the next poll and are announced as usual. So a notification in the first minute is normal when an edition the Go program had not scanned yet matches.
    - Alerts the Go program had stored and not delivered are part of the baseline, and nobody announces them. Step 4 looked for them before the stop, and item 4 below looks again.
    - On a new gazette database, not this take-over, the welcome and the first cycle's alerts are announced on the hub's second read. The take-over sends no welcome, because the database already has its state.
    - The `sei` baseline waits for the plugin's first completed cycle (up to `POLL_INTERVAL`).
 
-   Do not restart the hub or the stack until the hub has logged the end of the gazette baseline (next item). A restart before that line can make the baseline take in the first cycle's alerts too.
+   Do not restart the hub or the stack until the hub has logged the end of the gazette baseline (next item). A restart before that line can make the baseline take in the first cycle's alerts too. The same happens when the hub itself restarts the plugin after it crashed. The hub logs that as `plugin exited` or `plugin failed to start`:
+
+   ```bash
+   docker compose logs monitor-hub | grep -E 'msg="(plugin exited|plugin failed to start)" plugin=diario'
+   ```
 
 4. The end of the gazette baseline, and what nobody announced:
 
@@ -312,7 +322,7 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
    docker compose logs monitor-hub | grep 'msg="baseline complete" plugin=diario'
    ```
 
-   Expected: one line, usually within a minute of the start. Wait one more minute after it, then look in the plugin's database for alerts that nobody was told about:
+   Expected: one line, usually within a minute of the start. It is an `info` line: with `LOG_LEVEL` at `warn` or `error` it never shows, so set it to `info` first (step 3). Wait one more minute after it, then look in the plugin's database for alerts that nobody was told about:
 
    ```bash
    docker exec -i <postgres-container> psql -U diario_alerr -d diario_alerr <<'SQL'
@@ -328,9 +338,9 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
    ```
 
    Each row is an alert the hub has confirmed it stored. `seen_at` is when the edition was recorded (empty for the welcome), and `sent_by_go` lists the channels the Go program delivered it on.
-   - A row recorded before you stopped the Go container, with `sent_by_go` empty or missing a channel the old stack used, was announced by nobody. Read it there and pass it on yourself.
-   - A row recorded after the hub started comes from the plugin's first cycle and went out through the hub.
-   - If the hub or the stack restarted before the `baseline complete` line, run the query anyway: the rows recorded around the restart may have been taken in by the baseline. Look for each of them in your channels.
+   - A row recorded before the Go container stopped (the time you noted in step 4), with `sent_by_go` empty or missing a channel the old stack used, was announced by nobody. Read it there and pass it on yourself.
+   - A row recorded after the hub started comes from the plugin's first cycle and went out through the hub, unless something restarted first (next point).
+   - If the hub or the stack restarted before the `baseline complete` line, or the hub log shows `plugin exited` or `plugin failed to start` for `plugin=diario` before it (item 3), run the query anyway: the rows recorded around the restart may have been taken in by the baseline. Look for each of them in your channels.
 
    Both `seen_at` and the hub's log times carry their UTC offset, so compare them with that in mind. Use your own role and database names.
 
