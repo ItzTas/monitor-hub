@@ -17,5 +17,9 @@ linters:
       - path: (_test\.go$|[a-z]+test/)
         linters:
           - gosec
+      - path: internal/supervisor/supervisor\.go
+        text: G204
+        linters:
+          - gosec
     paths:
       - sdk/pluginpb
