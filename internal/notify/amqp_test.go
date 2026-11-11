@@ -570,20 +570,23 @@ func amqpGoroutines() int {
 	return strings.Count(string(buf[:runtime.Stack(buf, true)]), "amqp091-go")
 }
 
-func TestAMQPAbandonsABrokerThatAcceptsTCPAndNeverSpeaksAndLeavesNothingRunning(t *testing.T) {
+func silentBroker(t *testing.T) (string, func() int) {
+	t.Helper()
 	listener, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = listener.Close() })
 	var held sync.WaitGroup
-	t.Cleanup(held.Wait)
+	accepted := 0
+	accepting := make(chan struct{})
 	go func() {
+		defer close(accepting)
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
 				return
 			}
+			accepted++
 			held.Go(func() {
 				buf := make([]byte, 64)
 				for {
@@ -595,23 +598,38 @@ func TestAMQPAbandonsABrokerThatAcceptsTCPAndNeverSpeaksAndLeavesNothingRunning(
 			})
 		}
 	}()
+	stop := sync.OnceValue(func() int {
+		_ = listener.Close()
+		<-accepting
+		held.Wait()
+		return accepted
+	})
+	t.Cleanup(func() { stop() })
+	return listener.Addr().String(), stop
+}
+
+func TestAMQPAbandonsABrokerThatAcceptsTCPAndNeverSpeaksAndLeavesNothingRunning(t *testing.T) {
+	address, stop := silentBroker(t)
 	before := amqpGoroutines()
-	a := testAMQP("amqp://hub-user:"+amqpPassword+"@"+listener.Addr().String()+"/", nil)
+	a := testAMQP("amqp://hub-user:"+amqpPassword+"@"+address+"/", nil)
 	a.limit = 300 * time.Millisecond
 	started := time.Now()
 
-	err = a.Send(context.Background(), seiMessage("activity"))
+	err := a.Send(context.Background(), seiMessage("activity"))
 
 	if err == nil || time.Since(started) > 3*time.Second {
 		t.Fatalf("Send = %v after %s", err, time.Since(started))
 	}
-	assertNoSecret(t, err, "amqp://hub-user:"+amqpPassword+"@"+listener.Addr().String()+"/")
+	assertNoSecret(t, err, "amqp://hub-user:"+amqpPassword+"@"+address+"/")
 	deadline := time.Now().Add(3 * time.Second)
 	for amqpGoroutines() > before && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if after := amqpGoroutines(); after > before {
 		t.Errorf("%d client goroutine frames remain after the timed-out dial, %d before", after, before)
+	}
+	if connections := stop(); connections != 1 {
+		t.Errorf("the broker accepted %d connections, want 1", connections)
 	}
 }
 
