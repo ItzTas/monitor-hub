@@ -4,15 +4,19 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/ItzTas/monitor-hub/sdk/plugintest"
 )
 
 func TestRustExampleConformance(t *testing.T) {
-	binary := buildRustExample(t, "fixed")
+	command := filepath.Join(t.TempDir(), "example-rust")
+	if err := os.Symlink(buildRustExample(t, "fixed"), command); err != nil {
+		t.Fatal(err)
+	}
 	socketDir := t.TempDir()
-	cmd := exec.CommandContext(t.Context(), binary)
+	cmd := exec.CommandContext(t.Context(), command)
 	cmd.Env = []string{"EVENTS=3", "TMPDIR=" + socketDir}
 
 	violations, err := plugintest.Check(t.Context(), cmd, plugintest.Options{MinEvents: 3})
@@ -23,7 +27,7 @@ func TestRustExampleConformance(t *testing.T) {
 		t.Errorf("conformance: %s", violation)
 	}
 
-	assertNoProcess(t, binary)
+	assertNoProcess(t, command)
 	entries, err := os.ReadDir(socketDir)
 	if err != nil {
 		t.Fatal(err)

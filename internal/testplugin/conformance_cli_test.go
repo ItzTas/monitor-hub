@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -105,7 +106,7 @@ func TestConformanceWaitsForReadiness(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("with -ready-timeout: exit code = %d, want 0; stderr: %s", code, stderr)
 	}
-	code, _, _ = conformance(t, "-env", "EVENTS=3", "-env", "UNAVAILABLE_FOR=1s", "--", binary)
+	code, _, _ = conformance(t, "-env", "EVENTS=3", "-env", "UNAVAILABLE_FOR=1h", "--", binary)
 	if code != 1 {
 		t.Fatalf("without -ready-timeout: exit code = %d, want 1", code)
 	}
@@ -180,7 +181,31 @@ func TestConformancePassesOnlyDeclaredEnv(t *testing.T) {
 	}
 }
 
+func requirePgrep(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("pgrep"); err == nil {
+		return
+	}
+	if os.Getenv("CI") != "" {
+		t.Fatal("pgrep is required when CI is set")
+	}
+	t.Skip("pgrep is not on PATH")
+}
+
+func processes(t *testing.T, name string) []string {
+	t.Helper()
+	out, err := exec.CommandContext(t.Context(), "pgrep", "-x", name).Output()
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == 1 {
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("pgrep: %v", err)
+	}
+	return strings.Fields(string(out))
+}
+
 func TestConformanceStopsPluginOnInterrupt(t *testing.T) {
+	requirePgrep(t)
 	named := filepath.Join(t.TempDir(), "interrupted")
 	if err := os.Symlink(binary, named); err != nil {
 		t.Fatal(err)
@@ -189,15 +214,30 @@ func TestConformanceStopsPluginOnInterrupt(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(time.Second)
+	var started []string
+	t.Cleanup(func() {
+		for _, pid := range started {
+			_ = exec.CommandContext(context.Background(), "kill", "-KILL", pid).Run()
+		}
+	})
+	deadline := time.Now().Add(10 * time.Second)
+	for len(started) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		started = processes(t, "interrupted")
+	}
+	if len(started) == 0 {
+		t.Fatal("the plugin did not start within 10s")
+	}
+
 	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
 		t.Fatal(err)
 	}
+
 	err := cmd.Wait()
 	if exitErr, ok := errors.AsType[*exec.ExitError](err); !ok || exitErr.ExitCode() != 1 {
 		t.Fatalf("wait = %v, want exit code 1", err)
 	}
-	if out, _ := exec.CommandContext(t.Context(), "pgrep", "-x", "interrupted").Output(); len(out) != 0 {
-		t.Fatalf("plugin still running: %s", out)
+	if left := processes(t, "interrupted"); len(left) != 0 {
+		t.Fatalf("plugin still running: %v", left)
 	}
 }
