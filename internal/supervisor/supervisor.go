@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -34,7 +33,6 @@ type Supervisor struct {
 	environ       []string
 	dataRoot      string
 	log           *slog.Logger
-	logOutput     io.Writer
 	restartDelays []time.Duration
 	stableAfter   time.Duration
 
@@ -48,7 +46,6 @@ func New(entries []catalog.Entry, environ []string, dataRoot string, log *slog.L
 		environ:       environ,
 		dataRoot:      dataRoot,
 		log:           log,
-		logOutput:     os.Stdout,
 		restartDelays: []time.Duration{time.Second, 5 * time.Second, 30 * time.Second, 2 * time.Minute, 5 * time.Minute},
 		stableAfter:   10 * time.Minute,
 		clients:       map[string]pluginpb.PluginClient{},
@@ -160,9 +157,10 @@ func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
 		SkipHostEnv:      true,
 		Logger: hclog.New(&hclog.LoggerOptions{
-			Name:   entry.Manifest.Name,
-			Output: s.logOutput,
-			Level:  hclog.Debug,
+			Name:       entry.Manifest.Name,
+			Output:     newLogWriter(s.log, entry.Manifest.Name),
+			Level:      hclog.Debug,
+			JSONFormat: true,
 		}),
 	}), cmd, nil
 }

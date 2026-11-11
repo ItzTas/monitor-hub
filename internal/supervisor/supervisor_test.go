@@ -3,7 +3,6 @@ package supervisor
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -51,10 +50,14 @@ func entry(name, dir string, command ...string) catalog.Entry {
 
 func startSupervisor(t *testing.T, environ []string) (*Supervisor, string, func()) {
 	t.Helper()
+	return startLoggingSupervisor(t, environ, slog.New(slog.DiscardHandler))
+}
+
+func startLoggingSupervisor(t *testing.T, environ []string, logger *slog.Logger) (*Supervisor, string, func()) {
+	t.Helper()
 	dataRoot := t.TempDir()
-	s := New([]catalog.Entry{entry("testplugin", pluginDir, "testplugin")}, environ, dataRoot, slog.New(slog.DiscardHandler))
+	s := New([]catalog.Entry{entry("testplugin", pluginDir, "testplugin")}, environ, dataRoot, logger)
 	s.restartDelays = []time.Duration{10 * time.Millisecond}
-	s.logOutput = io.Discard
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
@@ -130,6 +133,24 @@ func TestPluginSeesOnlyItsEnvironment(t *testing.T) {
 			t.Fatalf("data dir mode = %v, want directory with 0700", info.Mode())
 		}
 	})
+}
+
+func TestPluginOutputGoesThroughTheHubLogger(t *testing.T) {
+	logger, buf := capture()
+	s, _, stop := startLoggingSupervisor(t, nil, logger)
+	waitDescribe(t, s, 10*time.Second)
+	stop()
+
+	var fromPlugin bool
+	for _, record := range buf.records(t) {
+		if record["plugin"] != "testplugin" {
+			t.Errorf("record without plugin=testplugin: %v", record)
+		}
+		fromPlugin = fromPlugin || (record["msg"] == "plugin address" && record["level"] == "DEBUG" && record["module"] != nil)
+	}
+	if !fromPlugin {
+		t.Error("no record carries the plugin's own \"plugin address\" line")
+	}
 }
 
 func TestCrashedPluginIsRestarted(t *testing.T) {

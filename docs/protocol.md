@@ -79,7 +79,11 @@ Some gRPC libraries expect the address as `unix:/tmp/plugin123456`. Use that for
 
 stdout is for the handshake line and nothing else. The hub reads the first line from stdout as the handshake and discards the rest. A stray `print` before the handshake breaks startup.
 
-Send all logs to stderr. The hub collects stderr and writes it to its own log, tagged with the plugin name.
+Send all logs to stderr. The hub writes each line to its own log, tagged with the plugin name, and the hub's `LOG_LEVEL` decides which lines show.
+
+- A line in hclog's JSON format, an object with `@level`, `@message` and any other fields, is logged at its `@level` (`debug`, `info`, `warn` or `error`) and keeps the other fields. The hub drops `trace` lines.
+- A plain-text line is logged at debug. If it starts with `[DEBUG]`, `[INFO]`, `[WARN]` or `[ERROR]`, it gets that level instead.
+- Once a line starts with `panic: ` or `fatal error: `, the hub logs that line and every plain-text line after it at error.
 
 ## Shutdown
 
