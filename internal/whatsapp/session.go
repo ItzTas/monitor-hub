@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -30,7 +31,10 @@ func Open(ctx context.Context, db *sql.DB, log *slog.Logger) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("whatsapp: read the session: %w", err)
 	}
-	return &Session{Client: whatsmeow.NewClient(device, newLogger(log, "whatsapp"))}, nil
+	client := whatsmeow.NewClient(device, newLogger(log, "whatsapp"))
+	client.SetWebsocketHTTPClient(&http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone(), Timeout: loginTimeout})
+	client.AddEventHandler(linkAlerts(log))
+	return &Session{Client: client}, nil
 }
 
 func (s *Session) Paired() bool {
