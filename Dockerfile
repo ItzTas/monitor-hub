@@ -19,13 +19,15 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
 FROM alpine:3.24
 
 # hadolint ignore=DL3018
-RUN apk add --no-cache ca-certificates \
+RUN apk add --no-cache ca-certificates poppler-utils \
     && addgroup -S -g 65532 monitor-hub \
     && adduser -S -D -H -u 65532 -G monitor-hub monitor-hub \
     && mkdir -p /opt/monitor-hub/plugins /data \
     && chown 65532:65532 /data
 
 COPY --from=build /out/monitor-hub /usr/local/bin/monitor-hub
+COPY --from=ghcr.io/itztas/diario-alerr:2.0.0 /plugin/ /opt/monitor-hub/plugins/diario/
+RUN chmod -R a+rX /opt/monitor-hub/plugins
 
 USER 65532:65532
 
