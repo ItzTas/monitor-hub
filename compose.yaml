@@ -7,11 +7,11 @@ services:
     image: ghcr.io/itztas/monitor-hub:${MONITOR_HUB_TAG:-latest}
     container_name: monitor-hub
     cpus: "1.0"
-    # Peak use: the hub, two plugin processes and, while the gazette plugin reads a PDF, up to
-    # 320m of tmpfs plus pdftotext. 384m was too small for that; 768m leaves room.
+    # Estimate, not a measurement: the hub, two plugin processes and, while the gazette plugin
+    # reads a PDF, up to 320m of tmpfs plus pdftotext. Watch it with `docker stats`.
     mem_limit: 768m
-    # Threads count as pids. The hub, the plugin processes and their runtime threads, and
-    # pdftotext need well under this; the limit only stops a runaway fork.
+    # Estimate. Threads count as pids; the hub, the plugins and pdftotext should need well under
+    # this. The limit only stops a runaway fork.
     pids_limit: 256
     restart: unless-stopped
     read_only: true
@@ -32,6 +32,9 @@ services:
       - data:/data
     networks:
       - postgres
+      # A database that still lives in an old stack's own Postgres: join that stack's network too
+      # (named <folder>_default, see docs/deploy.md) and uncomment this and the block below.
+      # - <old-stack-network>
     labels:
       caddy: http://hub.lan
       caddy.reverse_proxy: 127.0.0.1:${APP_PORT:-8090}
@@ -42,3 +45,5 @@ volumes:
 networks:
   postgres:
     external: true
+  # <old-stack-network>:
+  #   external: true
