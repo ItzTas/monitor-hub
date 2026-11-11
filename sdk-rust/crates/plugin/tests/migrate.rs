@@ -23,7 +23,7 @@ const C: Migration = Migration {
 const SLOW_A: Migration = Migration {
     version: 1,
     name: "00001_a.sql",
-    sql: "-- +goose Up\nSELECT pg_sleep(0.5);\nCREATE TABLE a (id integer);\n",
+    sql: "-- +goose Up\nSELECT pg_sleep(2);\nCREATE TABLE a (id integer);\n",
 };
 
 const BOTH: &[Migration] = &[SLOW_A, B];
@@ -269,6 +269,7 @@ async fn concurrent_runs_apply_each_version_once() {
     let Some(db) = database().await else { return };
     let mut first = connect(&db.url).await;
     let mut second = connect(&db.url).await;
+    up(&mut first, &[]).await.expect("create the goose table");
 
     let (left, right) = tokio::join!(
         tokio::spawn(async move { up(&mut first, BOTH).await }),
