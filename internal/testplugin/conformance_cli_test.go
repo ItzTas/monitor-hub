@@ -32,13 +32,58 @@ func conformance(t *testing.T, args ...string) (int, string, string) {
 	return 0, stdout.String(), stderr.String()
 }
 
-func TestConformancePasses(t *testing.T) {
-	code, stdout, stderr := conformance(t, "-min-events", "3", "-env", "EVENTS=3", "--", binary)
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0; stderr: %s", code, stderr)
+func ownLines(stderr string) []string {
+	var own []string
+	for line := range strings.Lines(stderr) {
+		if !strings.HasPrefix(line, "plugin: ") {
+			own = append(own, strings.TrimSuffix(line, "\n"))
+		}
 	}
-	if strings.Count(stdout, "\n") != 1 {
-		t.Fatalf("stdout = %q, want one line", stdout)
+	return own
+}
+
+func TestConformancePasses(t *testing.T) {
+	for _, events := range []string{"3", "150"} {
+		t.Run(events+" events", func(t *testing.T) {
+			code, stdout, stderr := conformance(t, "-min-events", events, "-env", "EVENTS="+events, "--", binary)
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0; stderr: %s", code, stderr)
+			}
+			if strings.Count(stdout, "\n") != 1 {
+				t.Fatalf("stdout = %q, want one line", stdout)
+			}
+		})
+	}
+}
+
+func TestConformanceReportsPagingViolations(t *testing.T) {
+	tests := map[string]struct {
+		env  []string
+		want string
+	}{
+		"limit ignored": {
+			env:  []string{"EVENTS=3", "IGNORE_LIMIT=1"},
+			want: "Events(after = 0, limit = 1) must return exactly the first event, got 3 events",
+		},
+		"no default limit": {
+			env:  []string{"EVENTS=150", "NO_DEFAULT_LIMIT=1"},
+			want: "Events(after = 0, limit = 0) returned 150 events, want at most 100: a limit of 0 or less means 100",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			var args []string
+			for _, env := range tt.env {
+				args = append(args, "-env", env)
+			}
+			code, stdout, stderr := conformance(t, append(args, "--", binary)...)
+			if code != 1 || stdout != "" {
+				t.Fatalf("exit code = %d, stdout = %q, want 1 and empty", code, stdout)
+			}
+			if got := ownLines(stderr); !slices.Equal(got, []string{tt.want}) {
+				t.Fatalf("the command's own stderr lines = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

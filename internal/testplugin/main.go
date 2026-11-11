@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"strconv"
@@ -111,12 +112,9 @@ func (*server) Events(_ context.Context, req *pluginpb.EventsRequest) (*pluginpb
 	if unavailableFor, err := time.ParseDuration(os.Getenv("UNAVAILABLE_FOR")); err == nil && time.Since(started) < unavailableFor {
 		return nil, status.Error(codes.Unavailable, "not ready yet")
 	}
-	limit := int(req.GetLimit())
-	if limit <= 0 {
-		limit = defaultLimit
-	}
+	limit := pageLimit(req.GetLimit())
 	var events []*pluginpb.Event
-	for n := max(req.GetAfter(), 0) + 1; n <= eventCount() && len(events) < limit; n++ {
+	for n := max(req.GetAfter(), 0) + 1; n <= eventCount() && int64(len(events)) < limit; n++ {
 		events = append(events, &pluginpb.Event{
 			Seq:        n,
 			Id:         "e" + strconv.FormatInt(n, 10),
@@ -127,6 +125,19 @@ func (*server) Events(_ context.Context, req *pluginpb.EventsRequest) (*pluginpb
 		})
 	}
 	return &pluginpb.EventsResponse{Events: events}, nil
+}
+
+func pageLimit(requested int32) int64 {
+	if os.Getenv("IGNORE_LIMIT") == "1" {
+		return math.MaxInt64
+	}
+	if requested > 0 {
+		return int64(requested)
+	}
+	if os.Getenv("NO_DEFAULT_LIMIT") == "1" {
+		return math.MaxInt64
+	}
+	return defaultLimit
 }
 
 func eventCount() int64 {

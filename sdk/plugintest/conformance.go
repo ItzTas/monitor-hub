@@ -34,6 +34,7 @@ type Options struct {
 const (
 	suiteTimeout  = 30 * time.Second
 	readyInterval = 200 * time.Millisecond
+	defaultLimit  = 100
 )
 
 func start(ctx context.Context, cmd *exec.Cmd, stderr io.Writer) (*plugin.Client, pluginpb.PluginClient, error) {
@@ -103,6 +104,7 @@ func check(ctx context.Context, c pluginpb.PluginClient, opts Options) []string 
 	events, violations := checkEvents(ctx, c, opts, kinds)
 	out = append(out, violations...)
 	out = append(out, checkPaging(ctx, c, events)...)
+	out = append(out, checkLimits(ctx, c, events)...)
 	return append(out, checkCheck(ctx, c)...)
 }
 
@@ -249,6 +251,28 @@ func checkPaging(ctx context.Context, c pluginpb.PluginClient, events []*pluginp
 	}
 	if !slices.EqualFunc(rest.GetEvents(), events[1:], func(a, b *pluginpb.Event) bool { return proto.Equal(a, b) }) {
 		out = append(out, "events after the first seq must equal the list without the first event")
+	}
+	return out
+}
+
+func checkLimits(ctx context.Context, c pluginpb.PluginClient, events []*pluginpb.Event) []string {
+	if len(events) < 2 {
+		return nil
+	}
+	var out []string
+	one, err := c.Events(ctx, &pluginpb.EventsRequest{After: 0, Limit: 1})
+	if err != nil {
+		out = append(out, fmt.Sprintf("Events(after = 0, limit = 1) failed: %v", err))
+	}
+	if err == nil && (len(one.GetEvents()) != 1 || !proto.Equal(one.GetEvents()[0], events[0])) {
+		out = append(out, fmt.Sprintf("Events(after = 0, limit = 1) must return exactly the first event, got %d events", len(one.GetEvents())))
+	}
+	page, err := c.Events(ctx, &pluginpb.EventsRequest{After: 0, Limit: 0})
+	if err != nil {
+		return append(out, fmt.Sprintf("Events(after = 0, limit = 0) failed: %v", err))
+	}
+	if n := len(page.GetEvents()); n > defaultLimit {
+		out = append(out, fmt.Sprintf("Events(after = 0, limit = 0) returned %d events, want at most %d: a limit of 0 or less means %d", n, defaultLimit, defaultLimit))
 	}
 	return out
 }

@@ -42,9 +42,13 @@ func (f *fakeClient) Events(_ context.Context, req *pluginpb.EventsRequest, _ ..
 	if f.eventsErr != nil && (f.failures < 0 || f.calls <= f.failures) {
 		return nil, f.eventsErr
 	}
+	limit := int(req.GetLimit())
+	if limit <= 0 {
+		limit = defaultLimit
+	}
 	var out []*pluginpb.Event
 	for _, e := range f.events {
-		if e.Seq > req.After {
+		if e.Seq > req.After && len(out) < limit {
 			out = append(out, e)
 		}
 	}
