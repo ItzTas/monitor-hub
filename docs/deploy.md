@@ -156,6 +156,21 @@ Both point at the existing databases, so nothing they already saw is announced a
 
 Take the real user, password, host and database from the running stack's own compose file and `.env` on the host. A password with special characters must be percent-encoded in the URL. The host is `postgres` on the shared network and the container name for a bundled database (see step 1).
 
+The gazette plugin is stricter about its database than the Go program was. A URL and a role that worked for Go can fail here:
+
+- The role in `DIARIO__DATABASE_URL` must own the tables and the sequence `alerts_seq_seq`. On its first start the plugin applies a migration that alters a table, and every `Events` call reads that sequence. This matters if the database was ever moved by dump and restore under another role.
+- Connect straight to Postgres. A pooler in transaction mode breaks the session lock the plugin holds and refuses the `options` start-up parameter it sends.
+- The plugin connects without TLS. Use `sslmode=disable` or `sslmode=prefer` and no other TLS parameter. `sslmode=verify-full`, or a pgx pool parameter such as `pool_max_conns`, makes it exit with `DATABASE_URL is not a valid Postgres address`.
+- The role must have no `idle_session_timeout`. The plugin keeps one connection idle for as long as it runs, to hold its lock. If the server closes it, the plugin exits and the hub restarts it, over and over.
+
+Check the role:
+
+```bash
+docker exec <postgres-container> psql -U diario_alerr -d diario_alerr -c '\dt' -c '\ds' -c 'SHOW idle_session_timeout'
+```
+
+Check: the `Owner` of every table and of `alerts_seq_seq` is the role in your URL, and `idle_session_timeout` is `0`. Use your own role and database names.
+
 ### From the old sei-monitor `.env`
 
 | Old name | New name |
@@ -218,7 +233,15 @@ The second command prints `postgres`. Run `docker network inspect` for every ext
 
 ## 4. Stop the old stacks
 
-Running old and new at once doubles every notification. Stop the apps but keep the databases and volumes.
+Running old and new at once doubles every notification. Stop the apps but keep the databases and volumes. Both must be stopped before the hub starts in step 5. The gazette plugin takes a lock in its database that keeps out a second copy of the plugin, but the Go program never takes that lock: with both running, every gazette alert is announced twice.
+
+First make sure the old gazette program has nothing left to send. The hub never announces an alert that Go stored and did not deliver (step 5 explains why). Look at its log for the last check interval, 30 minutes unless you set `CHECK_INTERVAL_MINUTES`:
+
+```bash
+docker logs --since 35m diario-alerr 2>&1 | grep 'delivery failed'
+```
+
+Check: no output. A `delivery failed, retrying next cycle` line means an alert is still waiting for that channel. Fix the channel and wait for the next cycle, or note the alert and pass it on yourself. Use the container name from `docker ps` if yours differs.
 
 If an old stack has its own Postgres service, `docker compose down` would stop that database too and the hub needs it. In that case stop only the app service:
 
@@ -269,27 +292,74 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
 
    Expected: `{"items":[...]}` with `diario` first and `sei` second, each with `"running":true` and `"state"` set to `idle` or `checking`. The `sei` plugin may show another state until its first login finishes. A 401 means the token is wrong.
 
-3. No notification arrives. The first read of each plugin is a baseline: the hub stores what is already there and announces nothing. Watch your channels for a few minutes. Three consequences:
-   - Alerts the old gazette service had stored but not yet delivered when you stopped it are absorbed and never announced.
-   - An edition published during the switch-over may be absorbed by the first baseline read without a notification. Check the gazette by hand for that window.
+3. The first read of each plugin is a baseline: the hub stores what the plugin already holds and announces none of it. That read comes on the hub's first poll after the plugin is up, within about 15 seconds. Watch your channels for a few minutes.
+   - The gazette plugin holds back the alerts its own first cycle records until that read has ended. They reach the hub on the next poll and are announced as usual. So a notification in the first minute is normal when an edition the Go program had not scanned yet matches.
+   - Alerts the Go program had stored and not delivered are part of the baseline, and nobody announces them. Step 4 looked for them before the stop, and item 4 below looks again.
+   - On a new gazette database, not this take-over, the welcome and the first cycle's alerts are announced on the hub's second read. The take-over sends no welcome, because the database already has its state.
    - The `sei` baseline waits for the plugin's first completed cycle (up to `POLL_INTERVAL`).
 
-4. Ask the gazette plugin to check now:
+   Do not restart the hub or the stack until the hub has logged the end of the gazette baseline (next item). A restart before that line can make the baseline take in the first cycle's alerts too.
+
+4. The end of the gazette baseline, and what nobody announced:
+
+   ```bash
+   docker compose logs monitor-hub | grep 'msg="baseline complete" plugin=diario'
+   ```
+
+   Expected: one line, usually within a minute of the start. Wait one more minute after it, then look in the plugin's database for alerts that nobody was told about:
+
+   ```bash
+   docker exec -i <postgres-container> psql -U diario_alerr -d diario_alerr <<'SQL'
+   SELECT a.seq, a.id, a.title, a.link, a.published_at, s.seen_at,
+          (SELECT string_agg(d.channel, ',' ORDER BY d.channel)
+             FROM alert_deliveries d WHERE d.alert_id = a.id) AS sent_by_go
+   FROM alerts a
+   LEFT JOIN seen_editions s ON a.id = 'edition-' || s.edition_id
+   WHERE a.seq <= (SELECT acked_seq FROM monitor_state)
+   ORDER BY a.seq DESC
+   LIMIT 20;
+   SQL
+   ```
+
+   Each row is an alert the hub has confirmed it stored. `seen_at` is when the edition was recorded (empty for the welcome), and `sent_by_go` lists the channels the Go program delivered it on.
+   - A row recorded before you stopped the Go container, with `sent_by_go` empty or missing a channel the old stack used, was announced by nobody. Read it there and pass it on yourself.
+   - A row recorded after the hub started comes from the plugin's first cycle and went out through the hub.
+   - If the hub or the stack restarted before the `baseline complete` line, run the query anyway: the rows recorded around the restart may have been taken in by the baseline. Look for each of them in your channels.
+
+   Both `seen_at` and the hub's log times carry their UTC offset, so compare them with that in mind. Use your own role and database names.
+
+5. The PDF extractor in the image:
+
+   ```bash
+   docker exec monitor-hub pdftotext -v
+   ```
+
+   Expected: a `pdftotext version` line. The gazette plugin runs the same check before it starts and refuses to start without it. The hub log then shows a `fatal` line with `plugin=diario` and an `error` that starts with `checking pdftotext:`, followed by `plugin failed to start`, and `/api/plugins` shows `diario` with `"running":false`.
+
+6. Ask the gazette plugin to check now. A whole cycle also proves that the arm64 build runs on the board: it resolves and reaches the gazette over TLS, reads the listing and writes to its database.
 
    ```bash
    curl -s -X POST -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/plugins/diario/check
    ```
 
-   Expected: `{"accepted":true,"message":"..."}`. A 404 means the plugin name is wrong, a 503 or 502 that the plugin is not reachable. `accepted:false` carries the plugin's reason in `message`.
+   Expected: `{"accepted":true,"message":"..."}`. A 404 means the plugin name is wrong, a 503 or 502 that the plugin is not reachable. `accepted:false` carries the plugin's reason in `message`. With `a check is already running`, the cycle the plugin starts with has not ended: ask again in a minute.
 
-5. The stored events and the feed:
+   Then read the plugin list after half a minute:
+
+   ```bash
+   curl -s -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/plugins
+   ```
+
+   Expected for `diario`: `"state":"idle"` and a `last_success_at` later than the moment you asked (the API gives times in UTC). `checking` means the cycle is still running, so repeat. `failing` gives the reason in `message`.
+
+7. The stored events and the feed:
 
    ```bash
    curl -s -H "Authorization: Bearer $API_TOKEN" 'http://127.0.0.1:8090/api/events?limit=5'
    curl -s "http://127.0.0.1:8090/feed.xml?token=<FEED_TOKEN>" | head -5
    ```
 
-6. No RPC errors after a few poll rounds (the hub polls every 15 seconds):
+8. No RPC errors after a few poll rounds (the hub polls every 15 seconds):
 
    ```bash
    docker compose logs --since 10m monitor-hub | grep -iE 'error|warn'
