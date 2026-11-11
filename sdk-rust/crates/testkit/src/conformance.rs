@@ -1,8 +1,10 @@
-use std::collections::HashMap;
+use std::collections::hash_map::RandomState;
 use std::env;
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, DirBuilder, Permissions};
+use std::hash::BuildHasher;
 use std::io::{self, ErrorKind, Read};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{self, Child, Command, ExitStatus, Stdio};
@@ -13,7 +15,13 @@ use std::time::{Duration, Instant};
 pub const SDK_GO_VERSION: &str = "sdk/v0.2.0";
 
 const GO_PACKAGE: &str = "github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance";
+const BINARY: &str = "plugin-conformance";
+const CACHE_PATH: [&str; 2] = ["monitor-hub", "plugin-conformance"];
+const TEMPORARY_PREFIX: &str = "monitor-hub-conformance";
+const STAGING_PREFIX: &str = ".install";
+const UNIQUE_ATTEMPTS: u64 = 16;
 const COMMAND_ENV: &str = "PLUGIN_CONFORMANCE";
+const INSTALL_LIMIT: Duration = Duration::from_secs(600);
 const ALLOWANCE: Duration = Duration::from_secs(120);
 const GRACE: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(20);
@@ -36,11 +44,16 @@ pub enum Outcome {
 
 enum Source {
     Binary(OsString),
-    Go {
-        package: String,
-        version: String,
-        env: Vec<(String, String)>,
-    },
+    Go(Install),
+}
+
+struct Install {
+    go: Vec<OsString>,
+    package: String,
+    version: String,
+    env: Vec<(String, String)>,
+    cache: Option<PathBuf>,
+    limit: Duration,
 }
 
 struct Finished {
@@ -89,7 +102,9 @@ fn run_from(source: Source, conformance: &Conformance) -> Outcome {
         Err(message) => return Outcome::Failed(message),
     };
     let limit = conformance.ready_timeout + ALLOWANCE;
-    match execute(&program, &arguments(conformance), limit) {
+    let mut command = Command::new(&program);
+    command.args(arguments(conformance));
+    match execute(&mut command, limit) {
         Ok(finished) => outcome(finished),
         Err(Failure::Start(err)) => {
             Outcome::Failed(format!("cannot start {}: {err}", program.to_string_lossy()))
@@ -111,65 +126,168 @@ fn locate() -> Option<Source> {
     if let Some(path) = env::var_os(COMMAND_ENV).filter(|value| !value.is_empty()) {
         return Some(Source::Binary(path));
     }
-    on_path("go").then(|| Source::Go {
-        package: GO_PACKAGE.to_owned(),
-        version: SDK_GO_VERSION
-            .rsplit('/')
-            .next()
-            .unwrap_or(SDK_GO_VERSION)
-            .to_owned(),
-        env: Vec::new(),
+    on_path("go").then(|| {
+        Source::Go(Install {
+            go: vec!["go".into()],
+            package: GO_PACKAGE.to_owned(),
+            version: SDK_GO_VERSION
+                .rsplit('/')
+                .next()
+                .unwrap_or(SDK_GO_VERSION)
+                .to_owned(),
+            env: Vec::new(),
+            cache: cache_base(env::var_os("XDG_CACHE_HOME"), env::var_os("HOME")),
+            limit: INSTALL_LIMIT,
+        })
     })
+}
+
+fn cache_base(xdg: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
+    let absolute = |value: OsString| Some(PathBuf::from(value)).filter(|path| path.is_absolute());
+    xdg.and_then(absolute)
+        .or_else(|| home.and_then(absolute).map(|home| home.join(".cache")))
 }
 
 fn obtain(source: Source) -> Result<OsString, String> {
     match source {
         Source::Binary(path) => Ok(path),
-        Source::Go {
-            package,
-            version,
-            env,
-        } => install(&package, &version, &env).map(PathBuf::into_os_string),
+        Source::Go(install) => {
+            let key = format!("{}@{}", install.package, install.version);
+            self::install(&install, &key)
+                .map(PathBuf::into_os_string)
+                .map_err(|detail| {
+                    format!(
+                        "the conformance command {key} could not be fetched or built:\n{detail}"
+                    )
+                })
+        }
     }
 }
 
-fn install(package: &str, version: &str, extra: &[(String, String)]) -> Result<PathBuf, String> {
-    static BUILT: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
-    let key = format!("{package}@{version}");
-    let mut built = BUILT
-        .get_or_init(Mutex::default)
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    if let Some(binary) = built.get(&key) {
-        return Ok(binary.clone());
-    }
-    let failed = |detail: &str| {
-        format!("the conformance command {key} could not be fetched or built:\n{detail}")
+fn install(install: &Install, key: &str) -> Result<PathBuf, String> {
+    static INSTALLING: Mutex<()> = Mutex::new(());
+    let _installing = INSTALLING.lock().unwrap_or_else(PoisonError::into_inner);
+    let (dir, owner) = match &install.cache {
+        Some(base) => cache_dir(base, &install.version)?,
+        None => (temporary_dir()?, None),
     };
-    let dir = env::temp_dir().join(format!("monitor-hub-conformance-{}", process::id()));
-    match fs::create_dir(&dir) {
+    let binary = dir.join(BINARY);
+    if fs::symlink_metadata(&binary)
+        .is_ok_and(|found| found.is_file() && owner.is_none_or(|owner| found.uid() == owner))
+    {
+        return Ok(binary);
+    }
+    let staging = unique_dir(&dir, STAGING_PREFIX)?;
+    let installed = go_install(install, key, &staging).and_then(|()| {
+        fs::rename(staging.join(BINARY), &binary).map_err(|err| {
+            format!(
+                "cannot move the built command to {}: {err}",
+                binary.display()
+            )
+        })
+    });
+    let _ = fs::remove_dir_all(&staging);
+    installed.map(|()| binary)
+}
+
+fn cache_dir(base: &Path, version: &str) -> Result<(PathBuf, Option<u32>), String> {
+    let owner = current_user()?;
+    fs::create_dir_all(base).map_err(|err| format!("cannot create {}: {err}", base.display()))?;
+    let mut dir = base.to_owned();
+    for part in CACHE_PATH.into_iter().chain([version]) {
+        dir.push(part);
+        private_dir(&dir, owner)?;
+    }
+    Ok((dir, Some(owner)))
+}
+
+fn private_dir(dir: &Path, owner: u32) -> Result<(), String> {
+    match DirBuilder::new().mode(0o700).create(dir) {
         Ok(()) => {}
         Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
-        Err(err) => return Err(failed(&format!("cannot create {}: {err}", dir.display()))),
+        Err(err) => return Err(format!("cannot create {}: {err}", dir.display())),
     }
-    let output = Command::new("go")
-        .args(["install", &key])
-        .env("GOBIN", &dir)
-        .envs(extra.iter().map(|(name, value)| (name, value)))
+    let found = fs::symlink_metadata(dir)
+        .map_err(|err| format!("cannot inspect {}: {err}", dir.display()))?;
+    if found.file_type().is_symlink() {
+        return Err(format!(
+            "{} is a symbolic link: refusing to install the conformance command through it",
+            dir.display()
+        ));
+    }
+    if !found.is_dir() {
+        return Err(format!("{} is not a directory", dir.display()));
+    }
+    if found.uid() != owner {
+        return Err(format!(
+            "{} belongs to user {}, not to you (user {owner}): refusing to install the conformance command there",
+            dir.display(),
+            found.uid()
+        ));
+    }
+    fs::set_permissions(dir, Permissions::from_mode(0o700))
+        .map_err(|err| format!("cannot make {} private: {err}", dir.display()))
+}
+
+fn current_user() -> Result<u32, String> {
+    let output = Command::new("id")
+        .arg("-u")
         .stdin(Stdio::null())
-        .output();
-    let detail = match &output {
-        Ok(output) if output.status.success() => None,
-        Ok(output) => Some(String::from_utf8_lossy(&output.stderr).trim().to_owned()),
-        Err(err) => Some(format!("cannot run go: {err}")),
-    };
-    if let Some(detail) = detail {
-        let _ = fs::remove_dir(&dir);
-        return Err(failed(&detail));
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|err| format!("cannot run id -u to find your user id: {err}"))?;
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .map_err(|_| "id -u did not print a user id".to_owned())
+}
+
+fn temporary_dir() -> Result<PathBuf, String> {
+    static DIR: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+    DIR.get_or_init(|| unique_dir(&env::temp_dir(), TEMPORARY_PREFIX))
+        .clone()
+}
+
+fn unique_dir(parent: &Path, prefix: &str) -> Result<PathBuf, String> {
+    let state = RandomState::new();
+    for attempt in 0..UNIQUE_ATTEMPTS {
+        let dir = parent.join(format!(
+            "{prefix}-{}-{:016x}",
+            process::id(),
+            state.hash_one(attempt)
+        ));
+        match DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(format!("cannot create {}: {err}", dir.display())),
+        }
     }
-    let binary = dir.join(package.rsplit('/').next().unwrap_or(package));
-    built.insert(key, binary.clone());
-    Ok(binary)
+    Err(format!(
+        "cannot create a directory with a unique name in {}",
+        parent.display()
+    ))
+}
+
+fn go_install(install: &Install, key: &str, staging: &Path) -> Result<(), String> {
+    let Some((go, leading)) = install.go.split_first() else {
+        return Err("no go command to run".to_owned());
+    };
+    let mut command = Command::new(go);
+    command
+        .args(leading)
+        .args(["install", key])
+        .env("GOBIN", staging)
+        .envs(install.env.iter().map(|(name, value)| (name, value)));
+    match execute(&mut command, install.limit) {
+        Ok(finished) if finished.status.success() => Ok(()),
+        Ok(finished) => Err(finished.stderr.trim().to_owned()),
+        Err(Failure::Start(err)) => Err(format!("cannot run go: {err}")),
+        Err(Failure::Timeout(stderr)) => Err(format!(
+            "go install did not finish within {:?} and was stopped\n{}",
+            install.limit,
+            stderr.trim()
+        )),
+    }
 }
 
 fn on_path(program: &str) -> bool {
@@ -199,9 +317,8 @@ enum Failure {
     Timeout(String),
 }
 
-fn execute(program: &OsString, args: &[String], limit: Duration) -> Result<Finished, Failure> {
-    let mut child = Command::new(program)
-        .args(args)
+fn execute(command: &mut Command, limit: Duration) -> Result<Finished, Failure> {
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -304,39 +421,193 @@ fn describe(status: ExitStatus) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    use tempfile::TempDir;
+
     use super::*;
+
+    const SUCCEEDS: &str =
+        "echo call >>\"$FAKE_GO_CALLS\"\nprintf '#!/bin/sh\\n' >\"$GOBIN/plugin-conformance\"\n";
+    const FAILS: &str = "echo 'go: module not found' >&2\nexit 1\n";
+    const HANGS: &str = "exec sleep 30\n";
+
+    struct Fake {
+        dir: TempDir,
+    }
+
+    impl Fake {
+        fn new(script: &str) -> Fake {
+            let dir = TempDir::new().expect("create temp dir");
+            fs::write(dir.path().join("go.sh"), script).expect("write the fake go");
+            Fake { dir }
+        }
+
+        fn install(&self, cache: Option<PathBuf>, limit: Duration) -> Install {
+            Install {
+                go: vec!["sh".into(), self.dir.path().join("go.sh").into()],
+                package: GO_PACKAGE.to_owned(),
+                version: "v1.2.3".to_owned(),
+                env: vec![(
+                    "FAKE_GO_CALLS".to_owned(),
+                    self.calls_file().to_string_lossy().into_owned(),
+                )],
+                cache,
+                limit,
+            }
+        }
+
+        fn calls_file(&self) -> PathBuf {
+            self.dir.path().join("calls")
+        }
+
+        fn calls(&self) -> usize {
+            fs::read_to_string(self.calls_file()).map_or(0, |calls| calls.lines().count())
+        }
+    }
+
+    fn mode(path: &Path) -> u32 {
+        fs::symlink_metadata(path)
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o7777
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .expect("read dir")
+            .map(|entry| {
+                entry
+                    .expect("dir entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn go_mode_installs_once_per_version_into_a_private_cache_dir() {
+        let fake = Fake::new(SUCCEEDS);
+        let cache = TempDir::new().expect("create temp dir");
+        let install = fake.install(Some(cache.path().to_owned()), INSTALL_LIMIT);
+
+        let first = obtain(Source::Go(
+            fake.install(Some(cache.path().to_owned()), INSTALL_LIMIT),
+        ));
+        let second = obtain(Source::Go(install));
+
+        let tool = cache.path().join("monitor-hub");
+        let version = tool.join("plugin-conformance/v1.2.3");
+        let binary = version.join("plugin-conformance").into_os_string();
+        assert_eq!(first, Ok(binary.clone()));
+        assert_eq!(second, Ok(binary));
+        assert_eq!(fake.calls(), 1);
+        for dir in [&tool, &tool.join("plugin-conformance"), &version] {
+            assert_eq!(mode(dir), 0o700, "{}", dir.display());
+        }
+        assert_eq!(names(&version), ["plugin-conformance"]);
+    }
+
+    #[test]
+    fn go_mode_refuses_a_cache_dir_that_is_a_symbolic_link() {
+        let fake = Fake::new(SUCCEEDS);
+        let cache = TempDir::new().expect("create temp dir");
+        fs::create_dir(cache.path().join("elsewhere")).expect("create a dir");
+        symlink(
+            cache.path().join("elsewhere"),
+            cache.path().join("monitor-hub"),
+        )
+        .expect("symlink");
+
+        let Err(message) = obtain(Source::Go(
+            fake.install(Some(cache.path().to_owned()), INSTALL_LIMIT),
+        )) else {
+            panic!("a symbolic link in the cache path must be refused");
+        };
+
+        assert!(message.contains("is a symbolic link"), "{message}");
+        assert_eq!(fake.calls(), 0);
+    }
+
+    #[test]
+    fn without_a_cache_dir_go_mode_installs_into_a_private_temporary_dir() {
+        let fake = Fake::new(SUCCEEDS);
+
+        let binary =
+            PathBuf::from(obtain(Source::Go(fake.install(None, INSTALL_LIMIT))).expect("install"));
+
+        let dir = binary.parent().expect("install dir").to_owned();
+        let name = dir
+            .file_name()
+            .expect("dir name")
+            .to_string_lossy()
+            .into_owned();
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(dir.parent(), Some(env::temp_dir().as_path()));
+        assert!(name.starts_with("monitor-hub-conformance-"), "{name}");
+        assert_eq!(binary.file_name(), Some("plugin-conformance".as_ref()));
+    }
 
     #[test]
     fn a_command_that_cannot_be_fetched_is_not_a_plugin_violation() {
-        if !on_path("go") {
-            assert!(
-                env::var_os("CI").is_none_or(|value| value.is_empty()),
-                "go is required when CI is set"
-            );
-            eprintln!("skipping: go is not available");
-            return;
-        }
-        let source = Source::Go {
-            package: GO_PACKAGE.to_owned(),
-            version: "v9.9.9".to_owned(),
-            env: vec![
-                ("GOPROXY".to_owned(), "off".to_owned()),
-                ("GOFLAGS".to_owned(), "-mod=mod".to_owned()),
-            ],
-        };
-        let conformance = Conformance {
-            command: vec!["unused".into()],
-            env: Vec::new(),
-            min_events: 0,
-            ready_timeout: Duration::ZERO,
-        };
-        let Outcome::Failed(message) = run_from(source, &conformance) else {
-            panic!("a version that cannot exist must fail");
+        let fake = Fake::new(FAILS);
+        let cache = TempDir::new().expect("create temp dir");
+
+        let outcome = run_from(
+            Source::Go(fake.install(Some(cache.path().to_owned()), INSTALL_LIMIT)),
+            &Conformance {
+                command: vec!["unused".into()],
+                env: Vec::new(),
+                min_events: 0,
+                ready_timeout: Duration::ZERO,
+            },
+        );
+
+        let Outcome::Failed(message) = outcome else {
+            panic!("a failed go install must fail the run");
         };
         assert!(message.starts_with("the conformance command "), "{message}");
         assert!(
-            message.contains("could not be fetched or built:"),
+            message.ends_with("could not be fetched or built:\ngo: module not found"),
             "{message}"
         );
+        assert!(names(&cache.path().join("monitor-hub/plugin-conformance/v1.2.3")).is_empty());
+    }
+
+    #[test]
+    fn a_go_install_that_hangs_is_stopped_at_its_limit() {
+        let fake = Fake::new(HANGS);
+        let cache = TempDir::new().expect("create temp dir");
+        let started = Instant::now();
+
+        let Err(message) = obtain(Source::Go(
+            fake.install(Some(cache.path().to_owned()), Duration::from_millis(200)),
+        )) else {
+            panic!("a hanging go install must fail");
+        };
+
+        assert!(message.contains("did not finish within 200ms"), "{message}");
+        assert!(started.elapsed() < GRACE, "took {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn the_cache_dir_is_xdg_cache_home_then_home_dot_cache() {
+        let cases = [
+            ((Some("/x"), Some("/h")), Some("/x")),
+            ((Some("relative"), Some("/h")), Some("/h/.cache")),
+            ((Some(""), Some("/h")), Some("/h/.cache")),
+            ((None, Some("/h")), Some("/h/.cache")),
+            ((None, Some("h")), None),
+            ((None, None), None),
+        ];
+        for ((xdg, home), want) in cases {
+            assert_eq!(
+                cache_base(xdg.map(OsString::from), home.map(OsString::from)),
+                want.map(PathBuf::from),
+                "XDG_CACHE_HOME={xdg:?} HOME={home:?}"
+            );
+        }
     }
 }

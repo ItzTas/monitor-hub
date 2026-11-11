@@ -1,15 +1,13 @@
-use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{self, Command};
 use std::sync::OnceLock;
 use std::time::Duration;
+use std::{env, fs};
 
 use monitor_hub_plugin_testkit::conformance::{Conformance, Outcome, run};
-use tempfile::TempDir;
 
 struct Setup {
     example: PathBuf,
-    _command_dir: TempDir,
 }
 
 fn ci() -> bool {
@@ -22,13 +20,15 @@ fn unavailable(reason: &str) -> Option<&'static Setup> {
     None
 }
 
-fn build_command(dir: &Path) -> Result<PathBuf, String> {
+fn build_command() -> Result<PathBuf, String> {
     let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sdk");
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let binary = dir.join("plugin-conformance");
+    let staging = dir.join(format!("plugin-conformance.{}", process::id()));
     let output = Command::new("go")
         .current_dir(sdk)
         .args(["build", "-o"])
-        .arg(&binary)
+        .arg(&staging)
         .arg("./cmd/plugin-conformance")
         .output()
         .map_err(|err| format!("cannot run go: {err}"))?;
@@ -38,6 +38,7 @@ fn build_command(dir: &Path) -> Result<PathBuf, String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
+    fs::rename(&staging, &binary).map_err(|err| format!("cannot move the built command: {err}"))?;
     Ok(binary)
 }
 
@@ -69,8 +70,7 @@ fn setup() -> Option<&'static Setup> {
     static SETUP: OnceLock<Option<Setup>> = OnceLock::new();
     SETUP
         .get_or_init(|| {
-            let dir = TempDir::new().expect("create temp dir");
-            let binary = match build_command(dir.path()) {
+            let binary = match build_command() {
                 Ok(binary) => binary,
                 Err(reason) => {
                     assert!(!ci(), "required when CI is set: {reason}");
@@ -81,7 +81,6 @@ fn setup() -> Option<&'static Setup> {
             unsafe { env::set_var("PLUGIN_CONFORMANCE", binary) };
             Some(Setup {
                 example: build_example(),
-                _command_dir: dir,
             })
         })
         .as_ref()
