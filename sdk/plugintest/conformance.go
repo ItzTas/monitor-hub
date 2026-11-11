@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -27,6 +28,7 @@ var namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,30}$`)
 type Options struct {
 	MinEvents    int
 	ReadyTimeout time.Duration
+	Stderr       io.Writer
 }
 
 const (
@@ -34,7 +36,7 @@ const (
 	readyInterval = 200 * time.Millisecond
 )
 
-func start(ctx context.Context, cmd *exec.Cmd) (*plugin.Client, pluginpb.PluginClient, error) {
+func start(ctx context.Context, cmd *exec.Cmd, stderr io.Writer) (*plugin.Client, pluginpb.PluginClient, error) {
 	client := plugin.NewClient(&plugin.ClientConfig{
 		HandshakeConfig:  sdk.Handshake,
 		Plugins:          sdk.PluginSet(),
@@ -42,6 +44,7 @@ func start(ctx context.Context, cmd *exec.Cmd) (*plugin.Client, pluginpb.PluginC
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
 		SkipHostEnv:      true,
 		Logger:           hclog.NewNullLogger(),
+		Stderr:           stderr,
 	})
 	stop := context.AfterFunc(ctx, client.Kill)
 	defer stop()
@@ -65,7 +68,7 @@ func start(ctx context.Context, cmd *exec.Cmd) (*plugin.Client, pluginpb.PluginC
 
 func Dial(t *testing.T, cmd *exec.Cmd) pluginpb.PluginClient {
 	t.Helper()
-	client, c, err := start(context.Background(), cmd)
+	client, c, err := start(context.Background(), cmd, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +77,7 @@ func Dial(t *testing.T, cmd *exec.Cmd) pluginpb.PluginClient {
 }
 
 func Check(ctx context.Context, cmd *exec.Cmd, opts Options) ([]string, error) {
-	client, c, err := start(ctx, cmd)
+	client, c, err := start(ctx, cmd, opts.Stderr)
 	if err != nil {
 		return nil, err
 	}

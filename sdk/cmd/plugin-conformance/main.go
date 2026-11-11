@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -18,6 +19,7 @@ import (
 )
 
 const (
+	pluginPrefix   = "plugin: "
 	exitOK         = 0
 	exitViolations = 1
 	exitUsage      = 2
@@ -25,6 +27,25 @@ const (
 )
 
 type envFlags []string
+
+type prefixed struct {
+	out  io.Writer
+	line []byte
+}
+
+func (p *prefixed) Write(b []byte) (int, error) {
+	p.line = append(p.line, b...)
+	for {
+		end := bytes.IndexByte(p.line, '\n')
+		if end < 0 {
+			return len(b), nil
+		}
+		if _, err := p.out.Write(append([]byte(pluginPrefix), p.line[:end+1]...)); err != nil {
+			return len(b), err
+		}
+		p.line = p.line[end+1:]
+	}
+}
 
 func (e *envFlags) String() string { return strings.Join(*e, ",") }
 
@@ -73,6 +94,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	command := args[sep+1:]
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Env = env
+	opts.Stderr = &prefixed{out: stderr}
 	violations, err := plugintest.Check(ctx, cmd, opts)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "plugin-conformance: %v\n", oneLine(err))

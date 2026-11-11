@@ -38,6 +38,9 @@ func main() {
 	if lines := os.Getenv("STDERR_LINES"); lines != "" {
 		writeStderr(lines)
 	}
+	if os.Getenv("EXIT_BEFORE_HANDSHAKE") == "1" {
+		os.Exit(1)
+	}
 	if os.Getenv("STALL_STATUS") != "" {
 		serveOneAtATime()
 		return

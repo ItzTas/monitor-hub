@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -106,6 +107,18 @@ func TestConformanceStartFailure(t *testing.T) {
 	}
 	if stdout != "" || strings.Count(stderr, "\n") != 1 {
 		t.Fatalf("stdout = %q, stderr = %q, want empty stdout and one stderr line", stdout, stderr)
+	}
+}
+
+func TestConformancePrefixesPluginStderrBeforeItsOwnLines(t *testing.T) {
+	code, stdout, stderr := conformance(t, "-env", "STDERR_LINES=cannot open the database\x1fgiving up", "-env", "EXIT_BEFORE_HANDSHAKE=1", "--", binary)
+	if code != 1 || stdout != "" {
+		t.Fatalf("exit code = %d, stdout = %q, want 1 and empty", code, stdout)
+	}
+	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+	want := []string{"plugin: cannot open the database", "plugin: giving up"}
+	if len(lines) != 3 || !slices.Equal(lines[:2], want) || !strings.HasPrefix(lines[2], "plugin-conformance: ") {
+		t.Fatalf("stderr = %q, want the plugin's two lines prefixed with \"plugin: \", then the command's own line", stderr)
 	}
 }
 
