@@ -2,12 +2,9 @@ package core
 
 import (
 	"cmp"
-	"errors"
-	"fmt"
 	"net/mail"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -51,58 +48,11 @@ type Webhook struct {
 	Secret Secret
 }
 
-type channelReader struct {
-	env      map[string]string
-	problems []string
+func (r *reader) channels() Channels {
+	return Channels{Email: r.email(), Telegram: r.telegram(), Ntfy: r.ntfy(), Webhook: r.webhook()}
 }
 
-func loadChannels(env map[string]string) (Channels, error) {
-	r := &channelReader{env: env}
-	channels := Channels{Email: r.email(), Telegram: r.telegram(), Ntfy: r.ntfy(), Webhook: r.webhook()}
-	if len(r.problems) > 0 {
-		return Channels{}, errors.New("invalid notification channels:\n  - " + strings.Join(r.problems, "\n  - "))
-	}
-	return channels, nil
-}
-
-func (r *channelReader) problem(format string, args ...any) {
-	r.problems = append(r.problems, fmt.Sprintf(format, args...))
-}
-
-func (r *channelReader) text(name string) string {
-	return strings.TrimSpace(r.env[name])
-}
-
-func (r *channelReader) required(name, hint string) string {
-	value := r.text(name)
-	if value == "" {
-		r.problem("%s is required%s", name, hint)
-	}
-	return value
-}
-
-func (r *channelReader) secret(name string) Secret {
-	value := r.env[name]
-	if strings.TrimSpace(value) == "" {
-		return Secret{}
-	}
-	return NewSecret(value)
-}
-
-func (r *channelReader) integer(name string, fallback, low, high int) int {
-	value := r.text(name)
-	if value == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(value)
-	if err != nil || n < low || n > high {
-		r.problem("%s: use a whole number from %d to %d (got %q)", name, low, high, value)
-		return fallback
-	}
-	return n
-}
-
-func (r *channelReader) parseURL(name, value string, allowQuery bool) (*url.URL, bool) {
+func (r *reader) parseURL(name, value string, allowQuery bool) (*url.URL, bool) {
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		r.problem("%s: use a full address starting with https://", name)
@@ -119,7 +69,7 @@ func (r *channelReader) parseURL(name, value string, allowQuery bool) (*url.URL,
 	return parsed, true
 }
 
-func (r *channelReader) email() *Email {
+func (r *reader) email() *Email {
 	host := r.text("SMTP_HOST")
 	if host == "" {
 		return nil
@@ -148,7 +98,7 @@ func (r *channelReader) email() *Email {
 	return email
 }
 
-func (r *channelReader) address(name string) string {
+func (r *reader) address(name string) string {
 	value := r.required(name, "")
 	if value == "" {
 		return ""
@@ -160,7 +110,7 @@ func (r *channelReader) address(name string) string {
 	return value
 }
 
-func (r *channelReader) addresses(name string) []string {
+func (r *reader) addresses(name string) []string {
 	value := r.required(name, "")
 	if value == "" {
 		return nil
@@ -177,7 +127,7 @@ func (r *channelReader) addresses(name string) []string {
 	return addresses
 }
 
-func (r *channelReader) telegram() *Telegram {
+func (r *reader) telegram() *Telegram {
 	token := r.secret("TELEGRAM_TOKEN")
 	if token.IsZero() {
 		return nil
@@ -192,7 +142,7 @@ func (r *channelReader) telegram() *Telegram {
 	return &Telegram{Token: token, ChatID: chatID}
 }
 
-func (r *channelReader) ntfy() *Ntfy {
+func (r *reader) ntfy() *Ntfy {
 	value := r.text("NTFY_URL")
 	if value == "" {
 		return nil
@@ -204,7 +154,7 @@ func (r *channelReader) ntfy() *Ntfy {
 	return &Ntfy{URL: strings.TrimRight(value, "/"), Token: r.secret("NTFY_TOKEN")}
 }
 
-func (r *channelReader) webhook() *Webhook {
+func (r *reader) webhook() *Webhook {
 	value := r.text("WEBHOOK_URL")
 	if value == "" {
 		return nil

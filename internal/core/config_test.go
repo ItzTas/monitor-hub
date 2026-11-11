@@ -1,6 +1,7 @@
 package core
 
 import (
+	"io/fs"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -18,7 +19,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		"DATA_DIR=/srv/data",
 		"LOG_LEVEL=debug",
 		"UNRELATED=x=y",
-	})
+	}, noFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 }
 
 func TestLoadFillsDefaults(t *testing.T) {
-	cfg, err := Load([]string{"DATABASE_URL=postgres://db", "API_TOKEN=secret"})
+	cfg, err := Load([]string{"DATABASE_URL=postgres://db", "API_TOKEN=secret"}, noFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,10 +66,24 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 	}
 	for name, environ := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Load(environ); err == nil {
+			if _, err := Load(environ, noFiles); err == nil {
 				t.Error("Load accepted it")
 			}
 		})
+	}
+}
+
+func noFiles(path string) ([]byte, error) {
+	return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+}
+
+func files(contents map[string]string) func(string) ([]byte, error) {
+	return func(path string) ([]byte, error) {
+		content, ok := contents[path]
+		if !ok {
+			return noFiles(path)
+		}
+		return []byte(content), nil
 	}
 }
 
@@ -90,7 +105,7 @@ func TestLoadReadsTheChannels(t *testing.T) {
 		"NTFY_TOKEN=tk_0123456789",
 		"WEBHOOK_URL=https://hooks.example.org/in?key=abc",
 		"WEBHOOK_SECRET=0123456789abcdef",
-	))
+	), noFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +136,7 @@ func TestLoadPicksTheSMTPPortFromTheTLSMode(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			cfg, err := Load(environ(append([]string{"SMTP_HOST=smtp.example.org", "SMTP_FROM=a@example.org", "SMTP_TO=b@example.org"}, tc.extra...)...))
+			cfg, err := Load(environ(append([]string{"SMTP_HOST=smtp.example.org", "SMTP_FROM=a@example.org", "SMTP_TO=b@example.org"}, tc.extra...)...), noFiles)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,7 +176,7 @@ func TestLoadRejectsInvalidChannels(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := Load(environ(tc.extra...))
+			_, err := Load(environ(tc.extra...), noFiles)
 			if err == nil {
 				t.Fatal("Load accepted it")
 			}
@@ -187,7 +202,7 @@ func TestChannelErrorsNeverShowSecrets(t *testing.T) {
 		"NTFY_TOKEN=ntfy-secret-4",
 		"WEBHOOK_URL=ftp://hooks.example.org/in?key=webhook-secret-5",
 		"WEBHOOK_SECRET=hook-6",
-	))
+	), noFiles)
 	if err == nil {
 		t.Fatal("want an error")
 	}
