@@ -37,6 +37,9 @@ func ReadManifest(r io.Reader) (Manifest, error) {
 	if err := dec.Decode(&m); err != nil {
 		return Manifest{}, fmt.Errorf("decode manifest: %w", err)
 	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return Manifest{}, errors.New("unexpected data after the manifest object")
+	}
 	if err := m.validate(); err != nil {
 		return Manifest{}, err
 	}

@@ -15,6 +15,8 @@ func TestReadManifestRejects(t *testing.T) {
 		"short name":         `{"protocol_version":1,"name":"x","command":["x"]}`,
 		"empty command":      `{"protocol_version":1,"name":"diario","command":[]}`,
 		"unknown field":      `{"protocol_version":1,"name":"diario","command":["x"],"extra":1}`,
+		"trailing object":    `{"protocol_version":1,"name":"diario","command":["x"]}{"a":1}`,
+		"trailing junk":      `{"protocol_version":1,"name":"diario","command":["x"]} junk`,
 		"shell in apk":       `{"protocol_version":1,"name":"diario","command":["x"],"apk":["poppler-utils; rm -rf /"]}`,
 	}
 	for name, raw := range tests {
@@ -27,7 +29,7 @@ func TestReadManifestRejects(t *testing.T) {
 }
 
 func TestReadManifestAccepts(t *testing.T) {
-	raw := `{"protocol_version":1,"name":"diario","command":["diario-alerr","plugin"],"apk":["poppler-utils"]}`
+	raw := `{"protocol_version":1,"name":"diario","command":["diario-alerr","plugin"],"apk":["poppler-utils"]}` + " \n"
 	m, err := ReadManifest(strings.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
