@@ -190,7 +190,7 @@ The other `Event` fields. Two are required, and different parts enforce them: th
 
 The baseline is the hub's whole first read of a plugin it has not read to the end before: a new plugin, or one whose stored position was reset. It covers every `Events` page from `after = 0` up to the first page shorter than 500. The events of that read are stored for history and are never notified. The baseline ends when a read reaches its short page without an error; if a read fails halfway, the next poll goes on reading as part of the baseline. Everything stored after that is a candidate for a notification.
 
-The first read happens on the hub's first poll after the plugin is up. The hub polls once when it starts and then 15 seconds after each poll ends, and a poll skips any plugin the hub has not connected to yet. So the first read starts no more than about 15 seconds after the plugin's handshake.
+The first read happens on the hub's first poll after the plugin is up. The hub polls once when it starts and then 15 seconds after each poll ends, and a poll skips any plugin the hub has not connected to yet. A poll reads every plugin at the same time and ends only when the slowest one is done, and each call it makes may take up to 30 seconds. So the first read usually starts about 15 seconds after the plugin's handshake, and later while another plugin's poll is slow.
 
 This has one consequence for plugins. If your plugin cannot read its events yet, because it is not logged in or its database is not ready, **fail the `Events` call with gRPC status `UNAVAILABLE`**. Do not answer with an empty list. An empty answer is a success, so it completes the baseline, and every event that shows up later gets notified as if it were new.
 
