@@ -11,19 +11,33 @@ use tokio_postgres::{Client, NoTls};
 
 const READY_WITHIN: Duration = Duration::from_secs(30);
 const READY_POLL: Duration = Duration::from_millis(50);
+const INITDB_LIMIT: Duration = Duration::from_secs(120);
+const SMART_SHUTDOWN_LIMIT: Duration = Duration::from_secs(10);
 const CLUSTER: &str = r#"trap '' INT PIPE
 dir=$(mktemp -d "${TMPDIR:-/tmp}/monitor-hub-pg.XXXXXX") || exit 1
-if ! initdb -D "$dir/data" -U postgres -A trust -E UTF8 --locale=C --no-sync --no-instructions >"$dir/initdb.log" 2>&1; then
+timeout "$1" initdb -D "$dir/data" -U postgres -A trust -E UTF8 --locale=C --no-sync --no-instructions >"$dir/initdb.log" 2>&1
+status=$?
+if [ "$status" -ne 0 ]; then
     cat "$dir/initdb.log"
+    if [ "$status" -eq 124 ]; then
+        echo "initdb did not finish within $1 seconds"
+    fi
     rm -rf "$dir"
     exit 1
 fi
 postgres -D "$dir/data" -k "$dir" -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off </dev/null >"$dir/postgres.log" 2>&1 &
+pid=$!
 echo "ready $dir"
 exec >/dev/null
 read -r _
-kill -TERM "$!" 2>/dev/null
-wait "$!"
+kill -TERM "$pid" 2>/dev/null
+waited=0
+while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$2" ]; do
+    sleep 1
+    waited=$((waited + 1))
+done
+kill -INT "$pid" 2>/dev/null
+wait "$pid"
 rm -rf "$dir""#;
 
 static SERVER: OnceCell<Result<Server, String>> = OnceCell::const_new();
@@ -69,7 +83,9 @@ async fn start() -> Result<Server, String> {
         server.wait_ready().await?;
         return Ok(server);
     }
-    let (dir, cluster) = start_cluster()?;
+    let (dir, cluster) = tokio::task::spawn_blocking(start_cluster)
+        .await
+        .map_err(|err| format!("start the test cluster: {err}"))??;
     let admin = format!(
         "postgres://postgres@/postgres?host={}&sslmode=disable",
         encode(&dir)
@@ -186,7 +202,9 @@ fn start_cluster() -> Result<(PathBuf, Child), String> {
         return Err("set TEST_DATABASE_URL or install PostgreSQL (initdb and postgres)".to_owned());
     }
     let mut cluster = Command::new("sh")
-        .args(["-c", CLUSTER])
+        .args(["-c", CLUSTER, "monitor-hub-pg"])
+        .arg(INITDB_LIMIT.as_secs().to_string())
+        .arg(SMART_SHUTDOWN_LIMIT.as_secs().to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
