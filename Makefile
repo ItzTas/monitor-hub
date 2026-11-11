@@ -1,6 +1,6 @@
 MODULES := . sdk
 
-.PHONY: check lint test generate generate-rust check-rust
+.PHONY: check lint test generate generate-rust generate-python check-rust
 
 check: lint test
 
@@ -30,3 +30,6 @@ check-rust:
 	cd sdk-rust && cargo fmt --all --check
 	cd sdk-rust && cargo clippy --workspace --all-targets --all-features -- -D warnings
 	cd sdk-rust && cargo test --workspace --all-features
+
+generate-python:
+	uvx --from grpcio-tools==1.78.0 python -m grpc_tools.protoc -Iproto/monitorhub/plugin/v1 --python_out=examples/python-plugin/gen --pyi_out=examples/python-plugin/gen --grpc_python_out=examples/python-plugin/gen proto/monitorhub/plugin/v1/plugin.proto

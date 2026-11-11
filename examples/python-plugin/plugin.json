@@ -1,0 +1,6 @@
+{
+  "protocol_version": 1,
+  "name": "example-python",
+  "command": ["python3", "main.py"],
+  "apk": ["python3", "py3-grpcio", "py3-protobuf"]
+}
