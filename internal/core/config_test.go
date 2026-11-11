@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -199,9 +200,6 @@ func TestLoadRejectsInvalidChannels(t *testing.T) {
 		"webhook without secret":     {[]string{"WEBHOOK_URL=https://hooks.example.org/in"}, []string{"WEBHOOK_SECRET is required; it signs the webhook body"}},
 		"webhook secret too short":   {[]string{"WEBHOOK_URL=https://hooks.example.org/in", "WEBHOOK_SECRET=short"}, []string{"WEBHOOK_SECRET: use at least 16 characters"}},
 		"webhook with a fragment":    {[]string{"WEBHOOK_URL=https://hooks.example.org/in#x", "WEBHOOK_SECRET=0123456789abcdef"}, []string{"WEBHOOK_URL: remove everything after ? or #"}},
-		"whatsapp number too short":  {[]string{"WHATSAPP_RECIPIENTS=991234567"}, []string{`WHATSAPP_RECIPIENTS: "991234567" is neither a phone number with country and area code (e.g. 5595991234567) nor a group id (ending in @g.us)`}},
-		"whatsapp group not numeric": {[]string{"WHATSAPP_RECIPIENTS=5595991234567, grupo@g.us"}, []string{`WHATSAPP_RECIPIENTS: "grupo@g.us" is neither`}},
-		"whatsapp number with text":  {[]string{"WHATSAPP_RECIPIENTS=55 95 9912-ABCD"}, []string{`WHATSAPP_RECIPIENTS: "55 95 9912-ABCD" is neither`}},
 		"every problem at once":      {[]string{"TELEGRAM_TOKEN=abc", "NTFY_URL=https://ntfy.example.org"}, []string{"TELEGRAM_TOKEN: this does not look like a bot token", "TELEGRAM_CHAT_ID is required", "NTFY_URL: end the address with the topic"}},
 	}
 	for name, tc := range cases {
@@ -213,6 +211,40 @@ func TestLoadRejectsInvalidChannels(t *testing.T) {
 			for _, want := range tc.want {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestWhatsAppRecipientProblemsNameThePositionOnly(t *testing.T) {
+	cases := map[string]struct {
+		value string
+		want  []string
+	}{
+		"every entry malformed": {"8007770, grupo@g.us, 88 77 6655-ABCD", []string{
+			"WHATSAPP_RECIPIENTS: entry 1 of 3 is neither a phone number with country and area code (e.g. 5595991234567) nor a group id (ending in @g.us)",
+			"WHATSAPP_RECIPIENTS: entry 2 of 3 is neither a phone number with country and area code (e.g. 5595991234567) nor a group id (ending in @g.us)",
+			"WHATSAPP_RECIPIENTS: entry 3 of 3 is neither a phone number with country and area code (e.g. 5595991234567) nor a group id (ending in @g.us)",
+		}},
+		"one malformed among valid ones": {"+55 (95) 99123-4567, 120363012345678901@g.us, 4433221", []string{
+			"WHATSAPP_RECIPIENTS: entry 3 of 3 is neither a phone number with country and area code (e.g. 5595991234567) nor a group id (ending in @g.us)",
+		}},
+		"no entry": {", ,", []string{"WHATSAPP_RECIPIENTS: list at least one phone number or group id"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(environ("WHATSAPP_RECIPIENTS="+tc.value), noFiles)
+			if err == nil {
+				t.Fatal("Load accepted it")
+			}
+			want := "invalid configuration:\n  - " + strings.Join(tc.want, "\n  - ")
+			if err.Error() != want {
+				t.Errorf("error:\n%v\nwant:\n%s", err, want)
+			}
+			for _, digits := range regexp.MustCompile(`\d+`).FindAllString(tc.value, -1) {
+				if len(digits) > 1 && strings.Contains(strings.ReplaceAll(err.Error(), "5595991234567", ""), digits) {
+					t.Errorf("the error shows %q from the input:\n%v", digits, err)
 				}
 			}
 		})

@@ -180,15 +180,21 @@ func (r *reader) whatsapp() *WhatsApp {
 	if value == "" {
 		return nil
 	}
-	whatsapp := &WhatsApp{}
+	var entries []string
 	for item := range strings.SplitSeq(value, ",") {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
+		if item = strings.TrimSpace(item); item != "" {
+			entries = append(entries, item)
 		}
-		recipient, ok := whatsappRecipient(item)
+	}
+	whatsapp := &WhatsApp{}
+	if len(entries) == 0 {
+		r.problem("WHATSAPP_RECIPIENTS: list at least one phone number or group id")
+		return whatsapp
+	}
+	for i, entry := range entries {
+		recipient, ok := whatsappRecipient(entry)
 		if !ok {
-			r.problem("WHATSAPP_RECIPIENTS: %q is neither a phone number with country and area code (e.g. 5595991234567) nor a group id (ending in @g.us)", item)
+			r.problem("WHATSAPP_RECIPIENTS: entry %d of %d is neither a phone number with country and area code (e.g. 5595991234567) nor a group id (ending in @g.us)", i+1, len(entries))
 			continue
 		}
 		whatsapp.Recipients = append(whatsapp.Recipients, recipient)
