@@ -16,6 +16,8 @@ import (
 	"github.com/ItzTas/monitor-hub/internal/whatsapp"
 )
 
+const owner = "5595991234567"
+
 func openDatabase(t *testing.T) *sql.DB {
 	t.Helper()
 	db := stdlib.OpenDBFromPool(coretest.Pool(t))
@@ -48,14 +50,14 @@ func TestPairedSessionLivesInTheDatabaseAndRefusesAnotherPairing(t *testing.T) {
 	openSession(t, db)
 	container := sqlstore.NewWithDB(db, "postgres", waLog.Noop)
 	device := container.NewDevice()
-	device.ID = &types.JID{User: number, Device: 7, Server: types.DefaultUserServer}
+	device.ID = &types.JID{User: owner, Device: 7, Server: types.DefaultUserServer}
 	device.Account = &waAdv.ADVSignedDeviceIdentity{Details: []byte{1}, AccountSignature: make([]byte, 64), AccountSignatureKey: make([]byte, 32), DeviceSignature: make([]byte, 64)}
 	if err := container.PutDevice(t.Context(), device); err != nil {
 		t.Fatal(err)
 	}
 
 	session := openSession(t, db)
-	err := session.Pair(t.Context(), number, func(string) { t.Error("showed a pairing code") })
+	err := session.Pair(t.Context(), owner, func(string) { t.Error("showed a pairing code") })
 
 	if !session.Paired() || !errors.Is(err, whatsapp.ErrAlreadyPaired) {
 		t.Errorf("paired %v, Pair = %v", session.Paired(), err)

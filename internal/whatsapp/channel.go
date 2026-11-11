@@ -16,11 +16,11 @@ import (
 )
 
 const (
+	channelName  = "whatsapp"
 	loginTimeout = 30 * time.Second
 	sendTimeout  = 2 * time.Minute
+	retryAfter   = time.Minute
 )
-
-var errLoginTimeout = fmt.Errorf("the WhatsApp session did not log in within %s", loginTimeout)
 
 type Messenger interface {
 	Paired() bool
@@ -32,11 +32,17 @@ type Messenger interface {
 }
 
 type Channel struct {
-	messenger  Messenger
-	recipients []string
-	login      chan struct{}
-	mu         sync.Mutex
-	numbers    map[string]types.JID
+	messenger    Messenger
+	recipients   []string
+	loginTimeout time.Duration
+	sendTimeout  time.Duration
+	retryAfter   time.Duration
+	now          func() time.Time
+	login        chan struct{}
+	mu           sync.Mutex
+	numbers      map[string]types.JID
+	failure      error
+	retryAt      time.Time
 }
 
 type redactedError struct {
@@ -53,11 +59,20 @@ func (e *redactedError) Unwrap() error {
 }
 
 func NewChannel(messenger Messenger, recipients []string) *Channel {
-	return &Channel{messenger: messenger, recipients: recipients, login: make(chan struct{}, 1), numbers: map[string]types.JID{}}
+	return &Channel{
+		messenger:    messenger,
+		recipients:   recipients,
+		loginTimeout: loginTimeout,
+		sendTimeout:  sendTimeout,
+		retryAfter:   retryAfter,
+		now:          time.Now,
+		login:        make(chan struct{}, 1),
+		numbers:      map[string]types.JID{},
+	}
 }
 
 func (c *Channel) Name() string {
-	return "whatsapp"
+	return channelName
 }
 
 func (c *Channel) Ready() bool {
@@ -65,10 +80,13 @@ func (c *Channel) Ready() bool {
 }
 
 func (c *Channel) Send(ctx context.Context, msg notify.Message) error {
-	if err := c.connect(ctx); err != nil {
-		return redacted(err)
+	if err := c.recentFailure(); err != nil {
+		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	if err := c.connect(ctx); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.sendTimeout)
 	defer cancel()
 	text := new("monitor-hub: " + msg.Subject + "\n\n" + msg.Body)
 	var errs []error
@@ -85,14 +103,14 @@ func (c *Channel) Send(ctx context.Context, msg notify.Message) error {
 }
 
 func (c *Channel) connect(ctx context.Context) error {
-	timer := time.NewTimer(loginTimeout)
+	timer := time.NewTimer(c.loginTimeout)
 	defer timer.Stop()
 	select {
 	case c.login <- struct{}{}:
 	case <-ctx.Done():
 		return stopped(ctx)
 	case <-timer.C:
-		return errLoginTimeout
+		return c.failed(c.loginExpired())
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -101,12 +119,43 @@ func (c *Channel) connect(ctx context.Context) error {
 	}()
 	select {
 	case err := <-done:
-		return err
+		return c.settle(err)
 	case <-ctx.Done():
 		return stopped(ctx)
 	case <-timer.C:
-		return errLoginTimeout
+		return c.failed(c.loginExpired())
 	}
+}
+
+func (c *Channel) recentFailure() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.failure == nil || !c.now().Before(c.retryAt) {
+		return nil
+	}
+	return c.failure
+}
+
+func (c *Channel) settle(err error) error {
+	if err != nil {
+		return c.failed(err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failure = nil
+	return nil
+}
+
+func (c *Channel) failed(err error) error {
+	err = redacted(err)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failure, c.retryAt = err, c.now().Add(c.retryAfter)
+	return err
+}
+
+func (c *Channel) loginExpired() error {
+	return fmt.Errorf("the WhatsApp session did not log in within %s", c.loginTimeout)
 }
 
 func (c *Channel) logIn(ctx context.Context) error {
@@ -115,14 +164,14 @@ func (c *Channel) logIn(ctx context.Context) error {
 			return fmt.Errorf("could not connect to WhatsApp: %w", err)
 		}
 	}
-	if !c.messenger.WaitForConnection(loginTimeout) {
-		return errLoginTimeout
+	if !c.messenger.WaitForConnection(c.loginTimeout) {
+		return c.loginExpired()
 	}
 	return nil
 }
 
 func stopped(ctx context.Context) error {
-	return fmt.Errorf("could not connect to WhatsApp: %w", ctx.Err())
+	return redacted(fmt.Errorf("could not connect to WhatsApp: %w", ctx.Err()))
 }
 
 func (c *Channel) resolve(ctx context.Context, recipient string) (types.JID, error) {
