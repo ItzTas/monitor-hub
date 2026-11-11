@@ -71,9 +71,18 @@ For monitor-hub the line looks like this:
 | `NETWORK-ADDR` | The absolute path of the socket, with no `unix:` prefix. |
 | `PROTOCOL` | `grpc`. |
 
-Print the line only after the server is listening. The hub trims whitespace and splits on `|`, so the path cannot contain `|`. If the hub does not get a valid line within its start timeout (one minute by default), it gives up and kills the process.
+Print the line only after the server is listening. The hub trims whitespace and splits on `|`, so the path cannot contain `|`. If the hub does not get a valid line within 60 seconds, it kills the plugin (see [Start-up time](#start-up-time)).
 
 Some gRPC libraries expect the address as `unix:/tmp/plugin123456`. Use that form when you bind, and print the bare path in the handshake.
+
+### Start-up time
+
+The hub waits 60 seconds for the handshake line. When the line has not arrived by then, the hub kills the plugin's whole process group and starts the plugin again later. The delay before each restart grows: 1 second, 5 seconds, 30 seconds, 2 minutes, then 5 minutes for every further attempt. It goes back to 1 second once the plugin has run for 10 minutes. A restart repeats everything the plugin does before the handshake, so a step that is too slow once stays too slow on every attempt.
+
+A plugin that needs slow preparation, such as connecting to a database or applying migrations, can do it in one of two ways:
+
+1. Prepare, then serve. Do each step before the handshake line, each under its own time limit, with a total well under 60 seconds. When a step fails or runs out of time, write one error line to stderr and exit with status 1.
+2. Serve, then prepare. Print the handshake line first and prepare in the background. Until preparation is done, fail `Events` with `UNAVAILABLE` and keep answering `Describe`, `Status` and `Check` (see [How the hub calls a plugin](#how-the-hub-calls-a-plugin)). Pick it when preparation can take longer than the budget allows.
 
 ### stdout and stderr
 
@@ -112,9 +121,17 @@ The hub starts each plugin in its own process group and kills that whole group o
 
 ## The `Plugin` service
 
+### How the hub calls a plugin
+
+The hub polls every plugin every 15 seconds. Each poll calls `Describe` first. When `Describe` fails, or returns a `name` other than the plugin's name in `plugin.json`, the hub logs a warning and skips the rest of that poll. Otherwise it calls `Status` and reads `Events` at the same time. Each of these calls has a 30-second time limit.
+
+The hub calls `Check` only when someone asks it, through the hub's API, to run a cycle now. That call has a 10-second time limit.
+
+`Describe`, `Status` and `Check` must succeed at all times, including while `Events` still answers `UNAVAILABLE`. A plugin that is not ready reports it through `Status` (`STATE_FAILING` with a reason in `message`) and through `Check` (`accepted = false`), not by failing those calls.
+
 ### `Describe`
 
-Called once after startup. Return:
+The hub calls it on every poll. Return:
 
 - `name`: the plugin name, identical to `name` in `plugin.json`.
 - `display_name`: a human-readable name.
@@ -148,9 +165,10 @@ State that belongs to the monitor, such as the processes already seen or the edi
 
 ## Events: `seq`, `after` and `id`
 
-`Events(after, limit)` returns the events whose `seq` is greater than `after`, in increasing `seq` order, up to `limit` of them.
+`Events(after, limit)` returns the events whose `seq` is greater than `after`, in increasing `seq` order. It returns exactly `min(limit, available)` of them, where `available` is the number of events after `after` that the plugin holds.
 
 - `limit <= 0` means 100. The plugin must apply that default. Never return more than the effective limit.
+- Never return fewer than the effective limit while more events exist. The hub asks for pages of 500 and keeps reading while a page is full. It treats a shorter page as the end of the read, and during the first read that short page also completes the baseline (see [The first read is the baseline](#the-first-read-is-the-baseline)). A plugin that caps its pages below `limit`, for example at 100, completes the baseline after its first page, and every older event it held back is notified on the next poll.
 - `seq` is an integer that strictly increases per plugin. Every new event gets a `seq` greater than every earlier one. Never reuse a value and never go backwards, including after a restart. Persist the counter, or derive it from something that only grows.
 - The hub stores the highest `seq` it has saved and sends it back as `after`. Receiving `after = X` is the hub's confirmation that everything up to `X` is saved. The plugin may delete those events then, and only then.
 - Until the hub confirms, keep the events and keep returning them. If the hub asks again with the same `after`, return the same events again.
@@ -222,7 +240,7 @@ The hub image build copies that directory to `/opt/monitor-hub/plugins/<name>/`.
 
 ## Conformance
 
-The `plugin-conformance` command starts your plugin the way the hub does, calls it over gRPC, and reports every rule it breaks. Build it from this repository, or run it at a released version:
+The `plugin-conformance` command starts your plugin through go-plugin, as the hub does, calls it over gRPC, and reports every rule it breaks. The start is not identical to the hub's: [What the plugin receives](#what-the-plugin-receives) lists the differences. Build the command from this repository, or run it at a released version:
 
 ```
 go run github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.2.0 \
@@ -237,7 +255,19 @@ Everything after `--` is the plugin's command line. The flags go before it:
 | `-ready-timeout D` | `0` | How long to wait while the first `Events` call answers `UNAVAILABLE`, for example `10s`. The call is retried every 200 ms, and only for that status. With `0` it is not retried. |
 | `-env NAME=value` | none | An environment variable for the plugin. Repeat the flag for more. |
 
-The plugin receives only the `-env` variables, plus the ones the handshake needs. Pass whatever configuration it requires to produce events.
+`-env` puts the value in the command's argument list, where other users of the same machine can read it (with `ps`, or in `/proc/<pid>/cmdline`). Pass only throwaway test credentials this way, such as the URL of a test database.
+
+### What the plugin receives
+
+- The `-env` variables.
+- The variables go-plugin adds for the handshake: `MONITOR_HUB_PLUGIN`, `PLUGIN_MIN_PORT`, `PLUGIN_MAX_PORT` and `PLUGIN_PROTOCOL_VERSIONS`.
+- Nothing else. The hub passes `PATH`, `TZ`, `TMPDIR` and `MONITOR_HUB_DATA_DIR`, but the command does not: pass the ones your plugin needs with `-env`. Without `TMPDIR`, the plugin creates its socket in its own default directory, which is `/tmp` for the SDKs.
+- The working directory of the command, not the plugin directory.
+- The command's process group. The hub gives each plugin a process group of its own; the command does not.
+
+Pass whatever configuration the plugin requires to produce events.
+
+### Output
 
 Exit codes:
 
@@ -247,12 +277,17 @@ Exit codes:
 | `1` | The plugin broke a rule, or could not be started and reached. Each violation is one line on stderr. |
 | `2` | The command was called wrongly. A usage line goes to stderr. |
 
+The command copies everything the plugin writes to stderr onto its own stderr, with `plugin: ` in front of each line. The plugin's lines come out as the plugin writes them. The command writes its own lines (violations, or a line starting with `plugin-conformance: ` when the plugin could not be started or reached) only after it has stopped the plugin and read the plugin's stderr to the end. So every plugin line comes before them, and when a plugin dies during start-up, its last error is just above the command's line.
+
+### Checks
+
 The suite checks that:
 
 - `Describe` returns a valid `name` (see [`plugin.json`](#pluginjson)), a non-empty `display_name`, and kind ids that are non-empty and unique.
 - `Status` returns a state other than `STATE_UNSPECIFIED`.
 - The first `Events(after = 0, limit = 1000)` succeeds and returns at least `-min-events` events. Each event has a positive `seq` that increases strictly, a unique non-empty `id`, a non-empty `title`, a `kind` declared by `Describe`, a `severity` other than `SEVERITY_UNSPECIFIED`, and an `occurred_at`.
 - `Events` after the last `seq` is empty, and `Events` after the first `seq` equals the first list without its first event.
+- When the first list holds at least two events, `Events(after = 0, limit = 1)` returns exactly the first event, and `Events(after = 0, limit = 0)` returns at most 100 events.
 - `Check` succeeds.
 
 The checks are limited to 30 seconds plus `-ready-timeout`. Starting the plugin and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
@@ -268,9 +303,10 @@ Generate the stubs from `plugin.proto` with your language's protoc plugin. Pin t
 - Exit with an error if `MONITOR_HUB_PLUGIN` is not `7c0e5a52-monitor-hub`.
 - Listen on a Unix socket, without TLS.
 - Register `monitorhub.plugin.v1.Plugin` and the health service with `plugin` set to `SERVING`.
-- Print `1|1|unix|<socket path>|grpc` as the only line on stdout.
+- Print `1|1|unix|<socket path>|grpc` as the only line on stdout, within 60 seconds of starting.
 - Log to stderr, preferably as hclog JSON.
 - Keep `seq` strictly increasing, and delete events only after the hub confirms them through `after`.
-- Fail `Events` with `UNAVAILABLE` while the plugin cannot read yet.
+- Return exactly `min(limit, available)` events from `Events`, with 100 as the default limit.
+- Fail `Events` with `UNAVAILABLE` while the plugin cannot read yet, and keep answering `Describe`, `Status` and `Check`.
 - Implement `plugin.GRPCController/Shutdown`, or be ready to be killed after 2 seconds.
 - Give every event a non-empty `title` and an `occurred_at`, and pass `plugin-conformance`.
