@@ -9,6 +9,8 @@ use std::{env, fs, mem, thread};
 use tokio::sync::OnceCell;
 use tokio_postgres::{Client, NoTls};
 
+use crate::ci;
+
 const READY_WITHIN: Duration = Duration::from_secs(30);
 const READY_POLL: Duration = Duration::from_millis(50);
 const INITDB_LIMIT: Duration = Duration::from_secs(120);
@@ -67,7 +69,7 @@ pub async fn database() -> Option<Database> {
 }
 
 fn unavailable(reason: &str) -> Option<Database> {
-    if env::var_os("CI").is_some_and(|value| !value.is_empty()) {
+    if ci::active() {
         panic!("Postgres is required when CI is set: {reason}");
     }
     eprintln!("Postgres unavailable, skipping: {reason}");

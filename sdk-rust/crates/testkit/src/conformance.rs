@@ -12,6 +12,8 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::ci;
+
 pub const SDK_GO_VERSION: &str = "sdk/v0.2.0";
 
 const GO_PACKAGE: &str = "github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance";
@@ -116,7 +118,7 @@ fn run_from(source: Source, conformance: &Conformance) -> Outcome {
 }
 
 fn unavailable(reason: &str) -> Outcome {
-    if env::var_os("CI").is_some_and(|value| !value.is_empty()) {
+    if ci::active() {
         panic!("the conformance command is required when CI is set: {reason}");
     }
     Outcome::Skipped(reason.to_owned())

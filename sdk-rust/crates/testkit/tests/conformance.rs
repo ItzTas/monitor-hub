@@ -6,16 +6,15 @@ use std::{env, fs};
 
 use monitor_hub_plugin_testkit::conformance::{Conformance, Outcome, run};
 
+#[path = "../src/ci.rs"]
+mod ci;
+
 struct Setup {
     example: PathBuf,
 }
 
-fn ci() -> bool {
-    env::var_os("CI").is_some_and(|value| !value.is_empty())
-}
-
 fn unavailable(reason: &str) -> Option<&'static Setup> {
-    assert!(!ci(), "required when CI is set: {reason}");
+    assert!(!ci::active(), "required when CI is set: {reason}");
     eprintln!("skipping: {reason}");
     None
 }
@@ -73,7 +72,7 @@ fn setup() -> Option<&'static Setup> {
             let binary = match build_command() {
                 Ok(binary) => binary,
                 Err(reason) => {
-                    assert!(!ci(), "required when CI is set: {reason}");
+                    assert!(!ci::active(), "required when CI is set: {reason}");
                     eprintln!("skipping: {reason}");
                     return None;
                 }

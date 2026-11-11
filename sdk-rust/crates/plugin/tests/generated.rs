@@ -4,10 +4,13 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+#[path = "../../testkit/src/ci.rs"]
+mod ci;
+
 #[test]
 fn generated_code_is_current() {
     if !protoc_available() {
-        assert!(env::var_os("CI").is_none(), "protoc is required in CI");
+        assert!(!ci::active(), "protoc is required in CI");
         eprintln!("skipped: protoc is not available");
         return;
     }

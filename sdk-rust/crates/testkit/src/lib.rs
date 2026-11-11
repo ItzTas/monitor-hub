@@ -1,3 +1,4 @@
+mod ci;
 pub mod conformance;
 mod postgres;
 
