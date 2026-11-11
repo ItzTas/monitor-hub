@@ -71,6 +71,25 @@ func TestSentGroupIsNotResentWhileItsOutcomeCannotBeRecorded(t *testing.T) {
 	}
 }
 
+func TestHeldOutcomeIsRecordedAfterTheChannelStopsBeingReady(t *testing.T) {
+	pool := coretest.Pool(t)
+	queue(t, pool, []string{"whatsapp"}, t0, seiEvent("Process 1 moved", t0))
+	now := t0
+	whatsapp := &gatedChannel{fakeChannel: fakeChannel{name: "whatsapp"}, ready: true}
+	dispatcher, outbox := newReadOnlyDispatcher(pool, &now, []string{"whatsapp"}, whatsapp)
+
+	dispatcher.RunOnce(t.Context())
+	whatsapp.ready = false
+	outbox.set("whatsapp", false)
+	now = t0.Add(30 * time.Second)
+	dispatcher.RunOnce(t.Context())
+
+	d := deliveriesOf(t, pool, "whatsapp")["Process 1 moved"]
+	if len(whatsapp.messages()) != 1 || d.status != "sent" || d.attempts != 1 || d.sentAt == nil || !d.sentAt.Equal(t0) {
+		t.Errorf("%d sends, delivery %+v", len(whatsapp.messages()), d)
+	}
+}
+
 func TestFailedSendKeepsItsBackoffWhileItsOutcomeCannotBeRecorded(t *testing.T) {
 	pool := coretest.Pool(t)
 	queue(t, pool, []string{"telegram"}, t0, seiEvent("Process 1 moved", t0))

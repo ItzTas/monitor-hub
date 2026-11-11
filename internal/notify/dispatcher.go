@@ -75,10 +75,10 @@ func (d *Dispatcher) RunOnce(ctx context.Context) {
 }
 
 func (d *Dispatcher) deliver(ctx context.Context, channel Channel) {
-	if gated, ok := channel.(gate); ok && !gated.Ready() {
+	if !d.recordHeld(ctx, channel.Name()) {
 		return
 	}
-	if !d.recordHeld(ctx, channel.Name()) {
+	if gated, ok := channel.(gate); ok && !gated.Ready() {
 		return
 	}
 	due, err := d.outbox.DueDeliveries(ctx, channel.Name(), d.now(), batchSize)
