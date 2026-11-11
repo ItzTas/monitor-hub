@@ -238,6 +238,38 @@ func TestRunDeliversEveryPollIntervalUntilTheContextEnds(t *testing.T) {
 	}
 }
 
+type gatedChannel struct {
+	fakeChannel
+	ready bool
+}
+
+func (c *gatedChannel) Ready() bool {
+	return c.ready
+}
+
+func TestChannelThatIsNotReadyKeepsItsDeliveriesUntilItIs(t *testing.T) {
+	pool := coretest.Pool(t)
+	queue(t, pool, []string{"telegram", "whatsapp"}, t0, seiEvent("Process 1 moved", t0))
+	now := t0.Add(24 * time.Hour)
+	telegram := &fakeChannel{name: "telegram"}
+	waiting := &gatedChannel{fakeChannel: fakeChannel{name: "whatsapp"}}
+
+	newDispatcher(pool, &now, telegram, waiting).RunOnce(t.Context())
+
+	d := deliveriesOf(t, pool, "whatsapp")["Process 1 moved"]
+	if len(waiting.messages()) != 0 || len(telegram.messages()) != 1 || d.status != "pending" || d.attempts != 0 || !d.nextAttemptAt.Equal(t0) {
+		t.Errorf("waiting channel got %d messages, telegram %d, delivery %+v", len(waiting.messages()), len(telegram.messages()), d)
+	}
+
+	ready := &gatedChannel{fakeChannel: fakeChannel{name: "whatsapp"}, ready: true}
+	newDispatcher(pool, &now, telegram, ready).RunOnce(t.Context())
+
+	d = deliveriesOf(t, pool, "whatsapp")["Process 1 moved"]
+	if len(ready.messages()) != 1 || len(telegram.messages()) != 1 || d.status != "sent" || d.attempts != 1 {
+		t.Errorf("ready channel got %d messages, telegram %d, delivery %+v", len(ready.messages()), len(telegram.messages()), d)
+	}
+}
+
 func TestRunWithoutChannelsReturnsAtOnce(t *testing.T) {
 	dispatcher := NewDispatcher(nil, nil, slog.New(slog.DiscardHandler))
 

@@ -31,6 +31,7 @@ type application struct {
 	dispatcher *notify.Dispatcher
 	channels   []string
 	handler    http.Handler
+	whatsapp   *whatsAppLink
 }
 
 func assemble(ctx context.Context, cfg core.Config, environ []string, logger *slog.Logger, now func() time.Time) (*application, error) {
@@ -43,7 +44,8 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 		return nil, err
 	}
 	plugins := supervisor.New(entries, environ, cfg.DataDir, logger)
-	channels := notify.Channels(cfg.Channels, userAgent())
+	link, sessions := whatsAppChannels(ctx, cfg.Channels.WhatsApp, pool, logger)
+	channels := notify.Channels(cfg.Channels, userAgent(), sessions...)
 	names := notify.ChannelNames(channels)
 	mux := http.NewServeMux()
 	health.Configure(mux, pool, logger)
@@ -58,6 +60,7 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 		dispatcher: notify.NewDispatcher(notify.NewOutbox(pool), channels, logger, notify.WithClock(now, time.After)),
 		channels:   names,
 		handler:    withMiddleware(mux, logger),
+		whatsapp:   link,
 	}, nil
 }
 
@@ -82,5 +85,6 @@ func (a *application) Run(ctx context.Context) error {
 }
 
 func (a *application) Close() {
+	a.whatsapp.Close()
 	a.pool.Close()
 }

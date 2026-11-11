@@ -22,6 +22,10 @@ type Channel interface {
 	Send(ctx context.Context, msg Message) error
 }
 
+type gate interface {
+	Ready() bool
+}
+
 type Dispatcher struct {
 	outbox     Outbox
 	channels   []Channel
@@ -71,6 +75,9 @@ func (d *Dispatcher) RunOnce(ctx context.Context) {
 }
 
 func (d *Dispatcher) deliver(ctx context.Context, channel Channel) {
+	if gated, ok := channel.(gate); ok && !gated.Ready() {
+		return
+	}
 	if !d.recordHeld(ctx, channel.Name()) {
 		return
 	}

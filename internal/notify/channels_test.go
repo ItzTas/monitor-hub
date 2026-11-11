@@ -14,16 +14,19 @@ func TestChannelsFollowTheConfigurationWithUniqueNames(t *testing.T) {
 		Ntfy:     &core.Ntfy{URL: "https://ntfy.sh/hub-topic"},
 		Webhook:  &core.Webhook{URL: "https://hooks.example.org/hub", Secret: core.NewSecret(webhookSecret)},
 	}
+	whatsapp := &fakeChannel{name: "whatsapp"}
 	cases := map[string]struct {
-		cfg  core.Channels
-		want []string
+		cfg   core.Channels
+		extra []Channel
+		want  []string
 	}{
-		"every channel": {cfg, []string{"email", "telegram", "ntfy", "webhook"}},
-		"ntfy only":     {core.Channels{Ntfy: cfg.Ntfy}, []string{"ntfy"}},
-		"none":          {core.Channels{}, nil},
+		"every channel":       {cfg, []Channel{whatsapp}, []string{"email", "telegram", "ntfy", "webhook", "whatsapp"}},
+		"ntfy only":           {core.Channels{Ntfy: cfg.Ntfy}, nil, []string{"ntfy"}},
+		"a session's channel": {core.Channels{}, []Channel{whatsapp}, []string{"whatsapp"}},
+		"none":                {core.Channels{}, nil, nil},
 	}
 	for name, tc := range cases {
-		names := ChannelNames(Channels(tc.cfg, "monitor-hub/test"))
+		names := ChannelNames(Channels(tc.cfg, "monitor-hub/test", tc.extra...))
 		if !slices.Equal(names, tc.want) {
 			t.Errorf("%s: names = %v, want %v", name, names, tc.want)
 		}

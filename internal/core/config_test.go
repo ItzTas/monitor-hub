@@ -73,6 +73,31 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 	}
 }
 
+func TestLoadDatabaseURLNeedsNothingElse(t *testing.T) {
+	cases := map[string]struct {
+		environ []string
+		files   map[string]string
+		want    string
+		problem string
+	}{
+		"direct":    {[]string{"DATABASE_URL=postgres://hub@db/hub", "SMTP_HOST=smtp.example.org"}, nil, "postgres://hub@db/hub", ""},
+		"from file": {[]string{"DATABASE_URL_FILE=/run/secrets/db"}, map[string]string{"/run/secrets/db": "postgres://hub:pw@db/hub\n"}, "postgres://hub:pw@db/hub", ""},
+		"missing":   {[]string{"API_TOKEN=secret"}, nil, "", "DATABASE_URL is empty: set the Postgres address (or set DATABASE_URL_FILE)"},
+		"both":      {[]string{"DATABASE_URL=postgres://db", "DATABASE_URL_FILE=/run/secrets/db"}, nil, "", "set either DATABASE_URL or DATABASE_URL_FILE, not both"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := LoadDatabaseURL(tc.environ, files(tc.files))
+			if tc.problem == "" && (err != nil || got != tc.want) {
+				t.Errorf("LoadDatabaseURL = %q, %v; want %q", got, err, tc.want)
+			}
+			if tc.problem != "" && (err == nil || !strings.Contains(err.Error(), tc.problem)) {
+				t.Errorf("LoadDatabaseURL = %q, %v; want an error with %q", got, err, tc.problem)
+			}
+		})
+	}
+}
+
 func noFiles(path string) ([]byte, error) {
 	return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
 }
@@ -105,6 +130,7 @@ func TestLoadReadsTheChannels(t *testing.T) {
 		"NTFY_TOKEN=tk_0123456789",
 		"WEBHOOK_URL=https://hooks.example.org/in?key=abc",
 		"WEBHOOK_SECRET=0123456789abcdef",
+		"WHATSAPP_RECIPIENTS=+55 (95) 99123-4567, 120363012345678901@g.us,, 120363012345678901-1600000000@g.us",
 	), noFiles)
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +143,7 @@ func TestLoadReadsTheChannels(t *testing.T) {
 		Telegram: &Telegram{Token: NewSecret("123456789:AAEabcdefghijklmnopqrstuvwx"), ChatID: "-1001234567890"},
 		Ntfy:     &Ntfy{URL: "https://ntfy.example.org/hub-topic", Token: NewSecret("tk_0123456789")},
 		Webhook:  &Webhook{URL: "https://hooks.example.org/in?key=abc", Secret: NewSecret("0123456789abcdef")},
+		WhatsApp: &WhatsApp{Recipients: []string{"5595991234567", "120363012345678901@g.us", "120363012345678901-1600000000@g.us"}},
 	}
 	if !reflect.DeepEqual(cfg.Channels, want) {
 		t.Errorf("channels = %+v\nwant       %+v", cfg.Channels, want)
@@ -172,6 +199,9 @@ func TestLoadRejectsInvalidChannels(t *testing.T) {
 		"webhook without secret":     {[]string{"WEBHOOK_URL=https://hooks.example.org/in"}, []string{"WEBHOOK_SECRET is required; it signs the webhook body"}},
 		"webhook secret too short":   {[]string{"WEBHOOK_URL=https://hooks.example.org/in", "WEBHOOK_SECRET=short"}, []string{"WEBHOOK_SECRET: use at least 16 characters"}},
 		"webhook with a fragment":    {[]string{"WEBHOOK_URL=https://hooks.example.org/in#x", "WEBHOOK_SECRET=0123456789abcdef"}, []string{"WEBHOOK_URL: remove everything after ? or #"}},
+		"whatsapp number too short":  {[]string{"WHATSAPP_RECIPIENTS=991234567"}, []string{`WHATSAPP_RECIPIENTS: "991234567" is neither a phone number with country and area code (e.g. 5595991234567) nor a group id (ending in @g.us)`}},
+		"whatsapp group not numeric": {[]string{"WHATSAPP_RECIPIENTS=5595991234567, grupo@g.us"}, []string{`WHATSAPP_RECIPIENTS: "grupo@g.us" is neither`}},
+		"whatsapp number with text":  {[]string{"WHATSAPP_RECIPIENTS=55 95 9912-ABCD"}, []string{`WHATSAPP_RECIPIENTS: "55 95 9912-ABCD" is neither`}},
 		"every problem at once":      {[]string{"TELEGRAM_TOKEN=abc", "NTFY_URL=https://ntfy.example.org"}, []string{"TELEGRAM_TOKEN: this does not look like a bot token", "TELEGRAM_CHAT_ID is required", "NTFY_URL: end the address with the topic"}},
 	}
 	for name, tc := range cases {

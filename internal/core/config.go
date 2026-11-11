@@ -19,14 +19,11 @@ type Config struct {
 	Channels    Channels
 }
 
+const databaseHint = "set the Postgres address"
+
 func Load(environ []string, readFile func(string) ([]byte, error)) (Config, error) {
-	env := make(map[string]string, len(environ))
-	for _, entry := range environ {
-		if key, value, ok := strings.Cut(entry, "="); ok {
-			env[key] = value
-		}
-	}
-	r := &reader{env: env, readFile: readFile}
+	r := newReader(environ, readFile)
+	env := r.env
 	secrets := map[string]Secret{}
 	for _, name := range []string{"DATABASE_URL", "API_TOKEN", "FEED_TOKEN"} {
 		secrets[name] = r.secret(name)
@@ -36,12 +33,12 @@ func Load(environ []string, readFile func(string) ([]byte, error)) (Config, erro
 		return Config{}, err
 	}
 	required := map[string]string{
-		"DATABASE_URL": "set the Postgres address",
+		"DATABASE_URL": databaseHint,
 		"API_TOKEN":    "set the bearer token the API requires",
 	}
 	for key, hint := range required {
 		if secrets[key].IsZero() {
-			return Config{}, fmt.Errorf("%s is empty: %s (or set %s_FILE)", key, hint, key)
+			return Config{}, missing(key, hint)
 		}
 	}
 	var level slog.Level
@@ -65,6 +62,32 @@ func Load(environ []string, readFile func(string) ([]byte, error)) (Config, erro
 		}
 	}
 	return cfg, nil
+}
+
+func LoadDatabaseURL(environ []string, readFile func(string) ([]byte, error)) (string, error) {
+	r := newReader(environ, readFile)
+	databaseURL := r.secret("DATABASE_URL")
+	if err := r.err(); err != nil {
+		return "", err
+	}
+	if databaseURL.IsZero() {
+		return "", missing("DATABASE_URL", databaseHint)
+	}
+	return databaseURL.Reveal(), nil
+}
+
+func newReader(environ []string, readFile func(string) ([]byte, error)) *reader {
+	env := make(map[string]string, len(environ))
+	for _, entry := range environ {
+		if key, value, ok := strings.Cut(entry, "="); ok {
+			env[key] = value
+		}
+	}
+	return &reader{env: env, readFile: readFile}
+}
+
+func missing(key, hint string) error {
+	return fmt.Errorf("%s is empty: %s (or set %s_FILE)", key, hint, key)
 }
 
 func envOr(env map[string]string, key, fallback string) string {

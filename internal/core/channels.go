@@ -21,6 +21,7 @@ type Channels struct {
 	Telegram *Telegram
 	Ntfy     *Ntfy
 	Webhook  *Webhook
+	WhatsApp *WhatsApp
 }
 
 type Email struct {
@@ -48,8 +49,12 @@ type Webhook struct {
 	Secret Secret
 }
 
+type WhatsApp struct {
+	Recipients []string
+}
+
 func (r *reader) channels() Channels {
-	return Channels{Email: r.email(), Telegram: r.telegram(), Ntfy: r.ntfy(), Webhook: r.webhook()}
+	return Channels{Email: r.email(), Telegram: r.telegram(), Ntfy: r.ntfy(), Webhook: r.webhook(), WhatsApp: r.whatsapp()}
 }
 
 func (r *reader) parseURL(name, value string, allowQuery bool) (*url.URL, bool) {
@@ -168,4 +173,41 @@ func (r *reader) webhook() *Webhook {
 		r.problem("WEBHOOK_SECRET: use at least %d characters", minWebhookSecretLength)
 	}
 	return &Webhook{URL: value, Secret: secret}
+}
+
+func (r *reader) whatsapp() *WhatsApp {
+	value := r.text("WHATSAPP_RECIPIENTS")
+	if value == "" {
+		return nil
+	}
+	whatsapp := &WhatsApp{}
+	for item := range strings.SplitSeq(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		recipient, ok := whatsappRecipient(item)
+		if !ok {
+			r.problem("WHATSAPP_RECIPIENTS: %q is neither a phone number with country and area code (e.g. 5595991234567) nor a group id (ending in @g.us)", item)
+			continue
+		}
+		whatsapp.Recipients = append(whatsapp.Recipients, recipient)
+	}
+	return whatsapp
+}
+
+func whatsappRecipient(item string) (string, bool) {
+	if strings.HasSuffix(item, "@g.us") {
+		return item, regexp.MustCompile(`^\d+(-\d+)?@g\.us$`).MatchString(item)
+	}
+	if !regexp.MustCompile(`^\+?[\d\s().-]+$`).MatchString(item) {
+		return "", false
+	}
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, item)
+	return digits, len(digits) >= 10 && len(digits) <= 15
 }

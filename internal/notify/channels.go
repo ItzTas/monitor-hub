@@ -2,7 +2,7 @@ package notify
 
 import "github.com/ItzTas/monitor-hub/internal/core"
 
-func Channels(cfg core.Channels, userAgent string) []Channel {
+func Channels(cfg core.Channels, userAgent string, sessions ...Channel) []Channel {
 	candidates := []struct {
 		on    bool
 		build func() Channel
@@ -18,7 +18,7 @@ func Channels(cfg core.Channels, userAgent string) []Channel {
 			channels = append(channels, candidate.build())
 		}
 	}
-	return channels
+	return append(channels, sessions...)
 }
 
 func ChannelNames(channels []Channel) []string {
