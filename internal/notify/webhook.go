@@ -31,14 +31,22 @@ func newWebhook(cfg core.Webhook, userAgent string) *webhook {
 	return &webhook{url: cfg.URL, secret: cfg.Secret, userAgent: userAgent, client: newHTTPClient()}
 }
 
+func encodeEvents(msg Message) ([]byte, error) {
+	body, err := json.Marshal(webhookPayload{Test: msg.Test, Events: msg.Events})
+	if err != nil {
+		return nil, fmt.Errorf("could not encode the events: %w", err)
+	}
+	return body, nil
+}
+
 func (w *webhook) Name() string {
 	return "webhook"
 }
 
 func (w *webhook) Send(ctx context.Context, msg Message) error {
-	body, err := json.Marshal(webhookPayload{Test: msg.Test, Events: msg.Events})
+	body, err := encodeEvents(msg)
 	if err != nil {
-		return fmt.Errorf("could not encode the events: %w", err)
+		return err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, w.url, bytes.NewReader(body))
 	if err != nil {

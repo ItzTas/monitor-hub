@@ -2,7 +2,6 @@ package notify
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -192,9 +191,9 @@ func newAMQPMessage(msg Message) (amqpMessage, error) {
 	if len(msg.Events) == 0 && !msg.Test {
 		return amqpMessage{}, errors.New("there are no events to publish")
 	}
-	body, err := json.Marshal(webhookPayload{Test: msg.Test, Events: msg.Events})
+	body, err := encodeEvents(msg)
 	if err != nil {
-		return amqpMessage{}, fmt.Errorf("could not encode the events: %w", err)
+		return amqpMessage{}, err
 	}
 	key, kind := amqpTestKey, amqpTestKey
 	if !msg.Test {
