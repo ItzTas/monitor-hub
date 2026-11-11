@@ -21,3 +21,4 @@ test:
 
 generate:
 	go tool buf generate
+	go tool sqlc generate
