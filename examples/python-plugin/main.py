@@ -33,17 +33,18 @@ SERVING = 1
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
-    seq INTEGER PRIMARY KEY,
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
     occurred_ms INTEGER NOT NULL,
     title TEXT NOT NULL
 )
 """
 ADD_PING = """
-INSERT INTO events (seq, id, occurred_ms, title)
-SELECT n, 'ping-' || n, ?, 'ping ' || n
-FROM (SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM events)
+INSERT INTO events (id, occurred_ms, title)
+SELECT 'ping-' || n, ?, 'ping ' || n
+FROM (SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0) + 1 AS n)
 """
+ADD_FIRST_PING = ADD_PING + " WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'events')"
 
 
 def log(level: str, message: str, **fields: object) -> None:
@@ -64,9 +65,8 @@ class Store:
         try:
             with contextlib.closing(sqlite3.connect(self._path, timeout=5)) as conn:
                 conn.execute(SCHEMA)
-                if conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0:
-                    with conn:
-                        conn.execute(ADD_PING, (now_ms(),))
+                with conn:
+                    conn.execute(ADD_FIRST_PING, (now_ms(),))
                 yield conn
         except sqlite3.Error as err:
             raise StorageError(str(err)) from err
@@ -108,6 +108,7 @@ def to_event(seq: int, event_id: str, occurred_ms: int, title: str) -> pb.Event:
 class PluginService(pb_grpc.PluginServicer):
     def __init__(self, store: Store) -> None:
         self._store = store
+        self._lock = threading.Lock()
         self._last_check_ms: int | None = None
         self._failure = ""
 
@@ -122,27 +123,35 @@ class PluginService(pb_grpc.PluginServicer):
 
     @override
     def Status(self, request: pb.StatusRequest, context: grpc.ServicerContext) -> pb.StatusResponse:
+        with self._lock:
+            last_check_ms, failure = self._last_check_ms, self._failure
         response = pb.StatusResponse(state=pb.STATE_IDLE)
-        if self._failure:
+        if failure:
             response.state = pb.STATE_FAILING
-            response.message = self._failure
-        if self._last_check_ms is not None:
-            response.last_check_started_at.CopyFrom(timestamp(self._last_check_ms))
-            if not self._failure:
-                response.last_success_at.CopyFrom(timestamp(self._last_check_ms))
+            response.message = failure
+        if last_check_ms is not None:
+            response.last_check_started_at.CopyFrom(timestamp(last_check_ms))
+            if not failure:
+                response.last_success_at.CopyFrom(timestamp(last_check_ms))
         return response
 
     @override
     def Check(self, request: pb.CheckRequest, context: grpc.ServicerContext) -> pb.CheckResponse:
-        self._last_check_ms = now_ms()
+        started_ms = now_ms()
         try:
             self._store.add_ping()
         except StorageError as err:
-            self._failure = f"storage unavailable: {err}"
+            failure = f"storage unavailable: {err}"
+            self._record_check(started_ms, failure)
             log("error", "check failed", error=str(err))
-            return pb.CheckResponse(accepted=False, message=self._failure)
-        self._failure = ""
+            return pb.CheckResponse(accepted=False, message=failure)
+        self._record_check(started_ms, "")
         return pb.CheckResponse(accepted=True)
+
+    def _record_check(self, started_ms: int, failure: str) -> None:
+        with self._lock:
+            self._last_check_ms = started_ms
+            self._failure = failure
 
     @override
     def Events(self, request: pb.EventsRequest, context: grpc.ServicerContext) -> pb.EventsResponse:
@@ -206,11 +215,15 @@ def serve(store: Store) -> int:
     pb_grpc.add_PluginServicer_to_server(PluginService(store), server)
     server.add_generic_rpc_handlers((health_handler(), controller_handler(stop)))
     try:
-        server.add_insecure_port(f"unix:{path}")
+        if not server.add_insecure_port(f"unix:{path}"):
+            raise RuntimeError(f"cannot listen on {path}")
         server.start()
         log("info", "serving", socket=str(path))
         print(f"1|1|unix|{path}|grpc", flush=True)
         stop.wait()
+    except RuntimeError as err:
+        log("error", "cannot start the server", error=str(err))
+        return 1
     finally:
         server.stop(grace=1).wait()
         path.unlink(missing_ok=True)
