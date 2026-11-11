@@ -85,11 +85,15 @@ fn write_stderr(line: &[u8]) {
 
 fn report_panic(info: &PanicHookInfo<'_>) {
     let payload = info.payload_as_str().unwrap_or("Box<dyn Any>");
-    let mut fields = vec![("panic", Value::from(payload))];
-    if let Some(location) = info.location() {
-        fields.push(("location", location.to_string().into()));
-    }
-    write_event(Level::ERROR, "panic", "panic", &fields);
+    let location = info
+        .location()
+        .map(|location| ("location", Value::from(location.to_string())));
+    write_event(
+        Level::ERROR,
+        "panic",
+        &format!("panic: {payload}"),
+        location.as_slice(),
+    );
 }
 
 struct JsonLines<F> {

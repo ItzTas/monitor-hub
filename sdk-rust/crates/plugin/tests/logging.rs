@@ -180,11 +180,18 @@ fn a_panic_is_one_error_line_on_stderr() {
     assert_eq!(lines.len(), 1, "stderr: {:?}", run.stderr);
     let line = &lines[0];
     assert_eq!(text(line, "@level"), "error");
-    assert_eq!(text(line, "panic"), "demo panic");
+    assert_eq!(text(line, "@message"), "panic: demo panic");
+    assert_eq!(text(line, "@module"), "panic");
     let location = text(line, "location");
     assert!(
         location.starts_with("crates/plugin/examples/fixed.rs:"),
         "location: {location}"
+    );
+    let mut keys: Vec<&str> = line.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        ["@level", "@message", "@module", "@timestamp", "location"]
     );
 }
 
