@@ -306,6 +306,93 @@ func TestAMQPSendsOneAtATimeOnTheSameConnection(t *testing.T) {
 	}
 }
 
+type fakeConfirmation struct {
+	acked bool
+	err   error
+	hold  bool
+}
+
+func (c fakeConfirmation) wait(ctx context.Context) (bool, error) {
+	if c.hold {
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
+	return c.acked, c.err
+}
+
+type fakeWire struct {
+	declareErr error
+	sendErr    error
+	confirm    fakeConfirmation
+	published  []string
+	interrupts atomic.Int32
+}
+
+func (w *fakeWire) declare(string) error {
+	return w.declareErr
+}
+
+func (w *fakeWire) send(_ context.Context, exchange string, msg amqpMessage) (amqpConfirmation, error) {
+	if w.sendErr != nil {
+		return nil, w.sendErr
+	}
+	w.published = append(w.published, exchange+"/"+msg.key)
+	return w.confirm, nil
+}
+
+func publishWithin(t *testing.T, wire *fakeWire, limit time.Duration) error {
+	t.Helper()
+	link := &brokerLink{wire: wire, interrupt: func() { wire.interrupts.Add(1) }}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	msg, err := newAMQPMessage(seiMessage("activity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- link.publish(ctx, "hub-test", msg) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatalf("publish still running after 5s with a limit of %s", limit)
+		return nil
+	}
+}
+
+func TestAMQPPublishSucceedsOnlyWhenTheBrokerConfirms(t *testing.T) {
+	cases := map[string]struct {
+		wire *fakeWire
+		want string
+	}{
+		"the broker acks":                      {&fakeWire{confirm: fakeConfirmation{acked: true}}, ""},
+		"the broker nacks":                     {&fakeWire{confirm: fakeConfirmation{acked: false}}, "the broker did not take the message"},
+		"the connection closes before the ack": {&fakeWire{confirm: fakeConfirmation{err: amqp.ErrClosed}}, "the broker did not confirm the message in time: "},
+		"no confirm comes before the limit":    {&fakeWire{confirm: fakeConfirmation{hold: true}}, "the broker did not confirm the message in time: context deadline exceeded"},
+		"the exchange cannot be declared":      {&fakeWire{declareErr: errors.New("406")}, "could not declare the exchange hub-test: 406"},
+		"the publish itself is refused":        {&fakeWire{sendErr: amqp.ErrClosed}, "could not publish: "},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := publishWithin(t, tc.wire, 50*time.Millisecond)
+
+			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.HasPrefix(err.Error(), tc.want)) {
+				t.Errorf("publish = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAMQPPublishPassesTheExchangeAndKeyToTheWire(t *testing.T) {
+	wire := &fakeWire{confirm: fakeConfirmation{acked: true}}
+
+	err := publishWithin(t, wire, time.Second)
+
+	if err != nil || len(wire.published) != 1 || wire.published[0] != "hub-test/sei.activity" {
+		t.Errorf("publish = %v, published %v", err, wire.published)
+	}
+}
+
 func TestAMQPSendEndsWithinItsOwnLimitWhenTheContextHasNoDeadline(t *testing.T) {
 	cases := map[string]*fakeBroker{
 		"a connect that never answers": {block: true},
@@ -317,12 +404,16 @@ func TestAMQPSendEndsWithinItsOwnLimitWhenTheContextHasNoDeadline(t *testing.T) 
 		t.Run(name, func(t *testing.T) {
 			a := testAMQP("amqp://guest:guest@broker/", broker)
 			a.limit = 50 * time.Millisecond
-			started := time.Now()
+			done := make(chan error, 1)
+			go func() { done <- a.Send(context.Background(), seiMessage("activity")) }()
 
-			err := a.Send(context.Background(), seiMessage("activity"))
-
-			if err == nil || !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 2*time.Second {
-				t.Errorf("Send = %v after %s", err, time.Since(started))
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("Send = %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Send still running after 5s with a limit of 50ms")
 			}
 		})
 	}

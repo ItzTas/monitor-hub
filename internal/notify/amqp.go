@@ -238,9 +238,43 @@ func routingSegment(kind string) string {
 	return segment[:min(len(segment), maxKindLength)]
 }
 
+type amqpConfirmation interface {
+	wait(ctx context.Context) (bool, error)
+}
+
+type amqpWire interface {
+	declare(exchange string) error
+	send(ctx context.Context, exchange string, msg amqpMessage) (amqpConfirmation, error)
+}
+
 type brokerLink struct {
-	conn    *amqp.Connection
+	conn      *amqp.Connection
+	wire      amqpWire
+	interrupt func()
+}
+
+type libraryWire struct {
 	channel *amqp.Channel
+}
+
+func (w libraryWire) declare(exchange string) error {
+	return w.channel.ExchangeDeclare(exchange, amqp.ExchangeTopic, true, false, false, false, nil)
+}
+
+func (w libraryWire) send(ctx context.Context, exchange string, msg amqpMessage) (amqpConfirmation, error) {
+	confirmation, err := w.channel.PublishWithDeferredConfirmWithContext(ctx, exchange, msg.key, false, false, msg.publishing)
+	if err != nil {
+		return nil, err
+	}
+	return libraryConfirmation{confirmation}, nil
+}
+
+type libraryConfirmation struct {
+	confirmation *amqp.DeferredConfirmation
+}
+
+func (c libraryConfirmation) wait(ctx context.Context) (bool, error) {
+	return c.confirmation.WaitContext(ctx)
 }
 
 func dialBroker(ctx context.Context, address string) (amqpLink, error) {
@@ -291,19 +325,23 @@ func openConfirming(ctx context.Context, conn *amqp.Connection) (*brokerLink, er
 	if err := channel.Confirm(false); err != nil {
 		return nil, fmt.Errorf("could not turn on publisher confirms: %w", err)
 	}
-	return &brokerLink{conn: conn, channel: channel}, nil
+	return &brokerLink{
+		conn:      conn,
+		wire:      libraryWire{channel},
+		interrupt: func() { _ = conn.CloseDeadline(time.Now()) },
+	}, nil
 }
 
 func (l *brokerLink) publish(ctx context.Context, exchange string, msg amqpMessage) error {
-	defer context.AfterFunc(ctx, func() { _ = l.conn.CloseDeadline(time.Now()) })()
-	if err := l.channel.ExchangeDeclare(exchange, amqp.ExchangeTopic, true, false, false, false, nil); err != nil {
+	defer context.AfterFunc(ctx, l.interrupt)()
+	if err := l.wire.declare(exchange); err != nil {
 		return fmt.Errorf("could not declare the exchange %s: %w", exchange, err)
 	}
-	confirmation, err := l.channel.PublishWithDeferredConfirmWithContext(ctx, exchange, msg.key, false, false, msg.publishing)
+	confirmation, err := l.wire.send(ctx, exchange, msg)
 	if err != nil {
 		return fmt.Errorf("could not publish: %w", err)
 	}
-	acked, err := confirmation.WaitContext(ctx)
+	acked, err := confirmation.wait(ctx)
 	if err != nil {
 		return fmt.Errorf("the broker did not confirm the message in time: %w", err)
 	}
