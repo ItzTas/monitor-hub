@@ -1,5 +1,5 @@
 use std::env;
-use std::fs;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -233,12 +233,43 @@ fn a_serve_failure_is_a_json_error_line() {
 
     assert_eq!(run.output.status.code(), Some(1));
     assert_eq!(run.stdout, "");
-    let lines = json_lines(&run.stderr);
-    assert_eq!(lines.len(), 1, "stderr: {:?}", run.stderr);
-    assert_eq!(text(&lines[0], "@level"), "error");
-    let message = text(&lines[0], "@message");
-    assert!(
-        message.contains(missing.to_str().expect("UTF-8 path")),
-        "message does not name the socket dir: {message}"
+    let error = serve_error(&run.stderr);
+    let want = format!(
+        "cannot create the plugin socket: listen on {}/plugin-",
+        missing.display()
     );
+    assert!(error.starts_with(&want), "error: {error}");
+    assert!(error.ends_with("(os error 2)"), "error: {error}");
+}
+
+#[test]
+fn a_handshake_write_failure_is_a_json_error_line_and_leaves_no_socket() {
+    let dir = TempDir::new().expect("create temp dir");
+    let full = File::create("/dev/full").expect("open /dev/full");
+    let child = Command::new(example())
+        .env_clear()
+        .env("TMPDIR", dir.path())
+        .env(MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE)
+        .stdin(Stdio::null())
+        .stdout(full)
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start example plugin");
+
+    let run = finish(child, thread::spawn(String::new));
+
+    assert_eq!(run.output.status.code(), Some(1));
+    assert_eq!(
+        serve_error(&run.stderr),
+        "cannot write the handshake line: No space left on device (os error 28)"
+    );
+    assert_eq!(fs::read_dir(dir.path()).expect("read dir").count(), 0);
+}
+
+fn serve_error(stderr: &str) -> String {
+    let lines = json_lines(stderr);
+    assert_eq!(lines.len(), 1, "stderr: {stderr:?}");
+    assert_eq!(text(&lines[0], "@level"), "error");
+    assert_eq!(text(&lines[0], "@message"), "serve failed");
+    text(&lines[0], "error").to_owned()
 }

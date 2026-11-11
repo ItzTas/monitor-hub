@@ -1,4 +1,5 @@
 use std::env;
+use std::error::Error;
 use std::process::ExitCode;
 
 use monitor_hub_plugin::logging::{self, LoggingError};
@@ -124,7 +125,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,
         Err(err) => {
-            tracing::error!("{err}");
+            tracing::error!(error = &err as &dyn Error, "serve failed");
             ExitCode::FAILURE
         }
     }

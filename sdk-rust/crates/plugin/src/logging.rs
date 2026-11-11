@@ -1,6 +1,7 @@
 use std::error::Error as StdError;
 use std::fmt::Debug;
 use std::io::{self, Write};
+use std::iter;
 use std::panic::{self, PanicHookInfo};
 
 use chrono::{SecondsFormat, Utc};
@@ -171,8 +172,22 @@ impl Visit for Fields {
     }
 
     fn record_error(&mut self, field: &Field, value: &(dyn StdError + 'static)) {
-        self.add(field.name(), value.to_string().into());
+        self.add(field.name(), chain(value).into());
     }
+}
+
+fn chain(error: &(dyn StdError + 'static)) -> String {
+    iter::successors(error.source(), |&cause| cause.source()).fold(
+        error.to_string(),
+        |mut text, cause| {
+            let part = cause.to_string();
+            if !text.ends_with(&part) {
+                text.push_str(": ");
+                text.push_str(&part);
+            }
+            text
+        },
+    )
 }
 
 fn number_or_text(number: Option<Number>, value: impl ToString) -> Value {
@@ -247,6 +262,8 @@ fn terminated(mut line: Vec<u8>) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error;
+    use std::fmt;
     use std::sync::{Arc, Mutex};
 
     use serde_json::{Map, Value, json};
@@ -441,6 +458,64 @@ mod tests {
             "field_plugin": "x",
         });
         assert_eq!(Value::Object(parsed), want);
+    }
+
+    #[derive(Debug)]
+    struct Chained(&'static str, Option<Box<Chained>>);
+
+    impl fmt::Display for Chained {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str(self.0)
+        }
+    }
+
+    impl Error for Chained {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            self.1
+                .as_deref()
+                .map(|cause| cause as &(dyn Error + 'static))
+        }
+    }
+
+    fn chained(texts: &[&'static str]) -> Chained {
+        let (last, rest) = texts.split_last().expect("at least one text");
+        rest.iter().rev().fold(Chained(last, None), |cause, text| {
+            Chained(text, Some(Box::new(cause)))
+        })
+    }
+
+    #[test]
+    fn an_error_field_holds_its_whole_source_chain() {
+        let err = chained(&[
+            "migration 00002_b.sql failed",
+            "db error",
+            "ERROR: relation \"x\" does not exist",
+        ]);
+
+        let (_, line) = one_event(|| tracing::error!(error = &err as &dyn Error, "failed"));
+
+        assert_eq!(
+            line["error"],
+            "migration 00002_b.sql failed: db error: ERROR: relation \"x\" does not exist"
+        );
+    }
+
+    #[test]
+    fn a_cause_the_text_already_ends_with_is_not_repeated() {
+        let err = chained(&[
+            "cannot listen: listen on /tmp/x: denied",
+            "listen on /tmp/x: denied",
+            "denied",
+            "",
+            "os error 13",
+        ]);
+
+        let (_, line) = one_event(|| tracing::error!(error = &err as &dyn Error, "failed"));
+
+        assert_eq!(
+            line["error"],
+            "cannot listen: listen on /tmp/x: denied: os error 13"
+        );
     }
 
     #[test]

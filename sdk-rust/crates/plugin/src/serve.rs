@@ -22,9 +22,13 @@ const DRAIN_LIMIT: Duration = Duration::from_secs(1);
 pub enum ServeError {
     #[error("{NOT_LAUNCHED_BY_HUB}")]
     NotLaunchedByHub,
-    #[error("cannot set up the plugin socket: {0}")]
+    #[error("cannot register the signal handlers")]
+    Signals(#[source] io::Error),
+    #[error("cannot create the plugin socket")]
     Socket(#[source] io::Error),
-    #[error("plugin gRPC server failed: {0}")]
+    #[error("cannot write the handshake line")]
+    Handshake(#[source] io::Error),
+    #[error("the plugin gRPC server failed")]
     Transport(#[source] tonic::transport::Error),
 }
 
@@ -33,7 +37,7 @@ pub async fn serve<P: Plugin>(plugin: P) -> Result<(), ServeError> {
         eprintln!("{NOT_LAUNCHED_BY_HUB}");
         return Err(ServeError::NotLaunchedByHub);
     }
-    let signals = Signals::listen().map_err(ServeError::Socket)?;
+    let signals = Signals::listen().map_err(ServeError::Signals)?;
     let (socket, listener) = Socket::bind().map_err(ServeError::Socket)?;
 
     let (health, health_service) = tonic_health::server::health_reporter();
@@ -46,7 +50,7 @@ pub async fn serve<P: Plugin>(plugin: P) -> Result<(), ServeError> {
         .add_service(GrpcControllerServer::new(Controller { stop }))
         .add_service(PluginServer::new(plugin));
 
-    socket.announce().map_err(ServeError::Socket)?;
+    socket.announce().map_err(ServeError::Handshake)?;
 
     let (draining, drain_started) = oneshot::channel();
     let shutdown = async move {

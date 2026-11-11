@@ -3,11 +3,16 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::{env, fs};
 
+use monitor_hub_plugin::logging;
 use monitor_hub_plugin::migrate::{Migration, up};
 use tokio_postgres::NoTls;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    if let Err(err) = logging::init("info") {
+        eprintln!("migrate_fixture: {err}");
+        return ExitCode::FAILURE;
+    }
     match run().await {
         Ok(applied) => {
             for version in applied {
@@ -16,7 +21,7 @@ async fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(err) => {
-            eprintln!("migrate_fixture: {}", chain(err.as_ref()));
+            tracing::error!(error = err.as_ref() as &dyn Error, "migrate_fixture failed");
             ExitCode::FAILURE
         }
     }
@@ -59,15 +64,4 @@ fn read(dir: &Path) -> Result<Vec<Migration>, Box<dyn Error>> {
         });
     }
     Ok(migrations)
-}
-
-fn chain(err: &dyn Error) -> String {
-    let mut message = err.to_string();
-    let mut source = err.source();
-    while let Some(cause) = source {
-        message.push_str(": ");
-        message.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    message
 }
