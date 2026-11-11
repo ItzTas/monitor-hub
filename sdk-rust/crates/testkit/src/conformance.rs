@@ -8,7 +8,7 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{self, Child, Command, ExitStatus, Stdio};
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{Mutex, Once, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -21,6 +21,7 @@ const BINARY: &str = "plugin-conformance";
 const CACHE_PATH: [&str; 2] = ["monitor-hub", "plugin-conformance"];
 const TEMPORARY_PREFIX: &str = "monitor-hub-conformance";
 const STAGING_PREFIX: &str = ".install";
+const USER_PROBE_PREFIX: &str = ".monitor-hub-user";
 const UNIQUE_ATTEMPTS: u64 = 16;
 const COMMAND_ENV: &str = "PLUGIN_CONFORMANCE";
 const INSTALL_LIMIT: Duration = Duration::from_secs(600);
@@ -69,6 +70,11 @@ struct Install {
     env: Vec<(String, String)>,
     cache: Option<PathBuf>,
     limit: Duration,
+}
+
+enum Location {
+    Cache(PathBuf),
+    Temporary(String),
 }
 
 struct Finished {
@@ -182,16 +188,19 @@ fn obtain(source: Source) -> Result<OsString, String> {
 fn install(install: &Install, key: &str) -> Result<PathBuf, String> {
     static INSTALLING: Mutex<()> = Mutex::new(());
     let _installing = INSTALLING.lock().unwrap_or_else(PoisonError::into_inner);
-    let (dir, owner) = match &install.cache {
-        Some(base) => cache_dir(base, &install.version)?,
-        None => (temporary_dir()?, None),
+    let owner = current_user()?;
+    let dir = match location(install.cache.as_deref(), &install.version, owner) {
+        Location::Cache(dir) => dir,
+        Location::Temporary(reason) => {
+            report_fallback(&reason);
+            temporary_dir()?
+        }
     };
     let binary = dir.join(BINARY);
-    if fs::symlink_metadata(&binary)
-        .is_ok_and(|found| found.is_file() && owner.is_none_or(|owner| found.uid() == owner))
-    {
+    if reusable(&binary, owner) {
         return Ok(binary);
     }
+    remove_stale_staging(&dir, install.limit);
     let staging = unique_dir(&dir, STAGING_PREFIX)?;
     let installed = go_install(install, key, &staging).and_then(|()| {
         fs::rename(staging.join(BINARY), &binary).map_err(|err| {
@@ -205,15 +214,36 @@ fn install(install: &Install, key: &str) -> Result<PathBuf, String> {
     installed.map(|()| binary)
 }
 
-fn cache_dir(base: &Path, version: &str) -> Result<(PathBuf, Option<u32>), String> {
-    let owner = current_user()?;
-    fs::create_dir_all(base).map_err(|err| format!("cannot create {}: {err}", base.display()))?;
+fn location(base: Option<&Path>, version: &str, owner: u32) -> Location {
+    let Some(base) = base else {
+        return Location::Temporary(
+            "neither XDG_CACHE_HOME nor HOME is an absolute path".to_owned(),
+        );
+    };
+    match cache_dir(base, version, owner) {
+        Ok(dir) => Location::Cache(dir),
+        Err(reason) => Location::Temporary(reason),
+    }
+}
+
+fn cache_dir(base: &Path, version: &str, owner: u32) -> Result<PathBuf, String> {
+    if fs::symlink_metadata(base).is_err_and(|err| err.kind() == ErrorKind::NotFound) {
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(base)
+            .map_err(|err| format!("cannot create {}: {err}", base.display()))?;
+    }
+    let found = owned_dir(base, owner)?;
+    if found.mode() & 0o022 != 0 {
+        return Err(format!("{} is writable by group or others", base.display()));
+    }
     let mut dir = base.to_owned();
     for part in CACHE_PATH.into_iter().chain([version]) {
         dir.push(part);
         private_dir(&dir, owner)?;
     }
-    Ok((dir, Some(owner)))
+    Ok(dir)
 }
 
 fn private_dir(dir: &Path, owner: u32) -> Result<(), String> {
@@ -222,39 +252,72 @@ fn private_dir(dir: &Path, owner: u32) -> Result<(), String> {
         Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
         Err(err) => return Err(format!("cannot create {}: {err}", dir.display())),
     }
+    owned_dir(dir, owner)?;
+    fs::set_permissions(dir, Permissions::from_mode(0o700))
+        .map_err(|err| format!("cannot make {} private: {err}", dir.display()))
+}
+
+fn owned_dir(dir: &Path, owner: u32) -> Result<fs::Metadata, String> {
     let found = fs::symlink_metadata(dir)
         .map_err(|err| format!("cannot inspect {}: {err}", dir.display()))?;
     if found.file_type().is_symlink() {
-        return Err(format!(
-            "{} is a symbolic link: refusing to install the conformance command through it",
-            dir.display()
-        ));
+        return Err(format!("{} is a symbolic link", dir.display()));
     }
     if !found.is_dir() {
         return Err(format!("{} is not a directory", dir.display()));
     }
     if found.uid() != owner {
         return Err(format!(
-            "{} belongs to user {}, not to you (user {owner}): refusing to install the conformance command there",
+            "{} belongs to user {}, not to user {owner}",
             dir.display(),
             found.uid()
         ));
     }
-    fs::set_permissions(dir, Permissions::from_mode(0o700))
-        .map_err(|err| format!("cannot make {} private: {err}", dir.display()))
+    Ok(found)
+}
+
+fn reusable(binary: &Path, owner: u32) -> bool {
+    fs::symlink_metadata(binary)
+        .is_ok_and(|found| found.is_file() && found.uid() == owner && found.mode() & 0o100 != 0)
+}
+
+fn remove_stale_staging(dir: &Path, limit: Duration) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let staging = format!("{STAGING_PREFIX}-");
+    for entry in entries.flatten() {
+        let stale = entry.file_name().to_string_lossy().starts_with(&staging)
+            && entry
+                .metadata()
+                .and_then(|found| found.modified())
+                .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > limit));
+        if stale {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+fn report_fallback(reason: &str) {
+    static REPORTED: Once = Once::new();
+    REPORTED.call_once(|| {
+        eprintln!(
+            "the conformance command is installed in a temporary directory for this process, because the cache directory cannot be used: {reason}"
+        );
+    });
 }
 
 fn current_user() -> Result<u32, String> {
-    let output = Command::new("id")
-        .arg("-u")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|err| format!("cannot run id -u to find your user id: {err}"))?;
-    String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .map_err(|_| "id -u did not print a user id".to_owned())
+    static USER: OnceLock<Result<u32, String>> = OnceLock::new();
+    USER.get_or_init(|| {
+        let probe = unique_dir(&env::temp_dir(), USER_PROBE_PREFIX)?;
+        let owner = fs::symlink_metadata(&probe)
+            .map(|found| found.uid())
+            .map_err(|err| format!("cannot inspect {}: {err}", probe.display()));
+        let _ = fs::remove_dir(&probe);
+        owner
+    })
+    .clone()
 }
 
 fn temporary_dir() -> Result<PathBuf, String> {
@@ -436,14 +499,15 @@ fn describe(status: ExitStatus) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
     use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::time::SystemTime;
 
     use tempfile::TempDir;
 
     use super::*;
 
-    const SUCCEEDS: &str =
-        "echo call >>\"$FAKE_GO_CALLS\"\nprintf '#!/bin/sh\\n' >\"$GOBIN/plugin-conformance\"\n";
+    const SUCCEEDS: &str = "echo call >>\"$FAKE_GO_CALLS\"\nprintf '#!/bin/sh\\n' >\"$GOBIN/plugin-conformance\"\nchmod 755 \"$GOBIN/plugin-conformance\"\n";
     const FAILS: &str = "echo 'go: module not found' >&2\nexit 1\n";
     const HANGS: &str = "exec sleep 30\n";
 
@@ -525,34 +589,155 @@ mod tests {
         assert_eq!(names(&version), ["plugin-conformance"]);
     }
 
-    #[test]
-    fn go_mode_refuses_a_cache_dir_that_is_a_symbolic_link() {
-        let fake = Fake::new(SUCCEEDS);
-        let cache = TempDir::new().expect("create temp dir");
-        fs::create_dir(cache.path().join("elsewhere")).expect("create a dir");
-        symlink(
-            cache.path().join("elsewhere"),
-            cache.path().join("monitor-hub"),
-        )
-        .expect("symlink");
+    fn owner() -> u32 {
+        current_user().expect("find the current user")
+    }
 
-        let Err(message) = obtain(Source::Go(
-            fake.install(Some(cache.path().to_owned()), INSTALL_LIMIT),
-        )) else {
-            panic!("a symbolic link in the cache path must be refused");
-        };
+    fn set_mode(path: &Path, mode: u32) {
+        fs::set_permissions(path, Permissions::from_mode(mode)).expect("chmod");
+    }
 
-        assert!(message.contains("is a symbolic link"), "{message}");
-        assert_eq!(fake.calls(), 0);
+    fn temporary_reason(location: Location) -> String {
+        match location {
+            Location::Temporary(reason) => reason,
+            Location::Cache(dir) => {
+                panic!("expected the temporary fallback, got {}", dir.display())
+            }
+        }
     }
 
     #[test]
-    fn without_a_cache_dir_go_mode_installs_into_a_private_temporary_dir() {
+    fn the_current_user_is_the_owner_of_what_this_process_creates() {
+        let dir = TempDir::new().expect("create temp dir");
+
+        assert_eq!(owner(), fs::metadata(dir.path()).expect("stat").uid());
+    }
+
+    #[test]
+    fn an_unusable_or_unsafe_cache_base_falls_back_to_a_temporary_dir() {
+        let root = TempDir::new().expect("create temp dir");
+        let path = |name: &str| root.path().join(name);
+        fs::write(path("file"), "").expect("write a file");
+        fs::create_dir(path("real")).expect("create a dir");
+        symlink(path("real"), path("link")).expect("symlink");
+        fs::create_dir(path("open")).expect("create a dir");
+        set_mode(&path("open"), 0o777);
+        fs::create_dir(path("locked")).expect("create a dir");
+        set_mode(&path("locked"), 0o555);
+        fs::create_dir(path("inner")).expect("create a dir");
+        symlink(path("real"), path("inner").join("monitor-hub")).expect("symlink");
+        let cases = [
+            (Some(path("file")), owner(), "is not a directory"),
+            (Some(path("link")), owner(), "is a symbolic link"),
+            (
+                Some(path("open")),
+                owner(),
+                "is writable by group or others",
+            ),
+            (Some(path("locked").join("cache")), owner(), "cannot create"),
+            (Some(path("real")), owner() + 1, "belongs to user"),
+            (Some(path("inner")), owner(), "is a symbolic link"),
+            (
+                None,
+                owner(),
+                "neither XDG_CACHE_HOME nor HOME is an absolute path",
+            ),
+        ];
+
+        for (base, uid, want) in cases {
+            let reason = temporary_reason(location(base.as_deref(), "v1.2.3", uid));
+            assert!(reason.contains(want), "{base:?}: {reason}");
+        }
+        set_mode(&path("locked"), 0o755);
+    }
+
+    #[test]
+    fn an_existing_cache_dir_with_a_wider_mode_is_made_private() {
+        let cache = TempDir::new().expect("create temp dir");
+        let tool = cache.path().join("monitor-hub");
+        fs::create_dir(&tool).expect("create a dir");
+        set_mode(&tool, 0o755);
+
+        let found = location(Some(cache.path()), "v1.2.3", owner());
+
+        assert!(matches!(found, Location::Cache(_)));
+        assert_eq!(mode(&tool), 0o700);
+    }
+
+    #[test]
+    fn a_cached_binary_is_reused_only_when_it_is_an_executable_file_of_the_user() {
+        let dir = TempDir::new().expect("create temp dir");
+        let binary = dir.path().join("plugin-conformance");
+        fs::write(&binary, "").expect("write a file");
+        set_mode(&binary, 0o755);
+
+        assert!(reusable(&binary, owner()));
+        assert!(!reusable(&binary, owner() + 1));
+        set_mode(&binary, 0o644);
+        assert!(!reusable(&binary, owner()));
+    }
+
+    #[test]
+    fn a_cached_binary_without_the_execute_bit_is_reinstalled() {
         let fake = Fake::new(SUCCEEDS);
+        let cache = TempDir::new().expect("create temp dir");
+        let binary = PathBuf::from(
+            obtain(Source::Go(
+                fake.install(Some(cache.path().to_owned()), INSTALL_LIMIT),
+            ))
+            .expect("first install"),
+        );
+        set_mode(&binary, 0o644);
 
-        let binary =
-            PathBuf::from(obtain(Source::Go(fake.install(None, INSTALL_LIMIT))).expect("install"));
+        let again = obtain(Source::Go(
+            fake.install(Some(cache.path().to_owned()), INSTALL_LIMIT),
+        ));
 
+        assert_eq!(again, Ok(binary.clone().into_os_string()));
+        assert_eq!(fake.calls(), 2);
+        assert_eq!(mode(&binary), 0o755);
+    }
+
+    #[test]
+    fn staging_dirs_older_than_the_install_limit_are_removed_when_an_install_starts() {
+        let fake = Fake::new(SUCCEEDS);
+        let cache = TempDir::new().expect("create temp dir");
+        let version = cache.path().join("monitor-hub/plugin-conformance/v1.2.3");
+        fs::create_dir_all(&version).expect("create the version dir");
+        let (stale, fresh) = (
+            version.join(".install-stale"),
+            version.join(".install-fresh"),
+        );
+        fs::create_dir_all(stale.join("leftover")).expect("create a stale dir");
+        fs::create_dir(&fresh).expect("create a fresh dir");
+        File::open(&stale)
+            .and_then(|dir| dir.set_modified(SystemTime::now() - 2 * INSTALL_LIMIT))
+            .expect("age the stale dir");
+
+        obtain(Source::Go(
+            fake.install(Some(cache.path().to_owned()), INSTALL_LIMIT),
+        ))
+        .expect("install");
+
+        let mut left = names(&version);
+        left.sort();
+        assert_eq!(left, [".install-fresh", "plugin-conformance"]);
+    }
+
+    #[test]
+    fn without_a_usable_cache_base_go_mode_installs_into_one_private_temporary_dir() {
+        let fake = Fake::new(SUCCEEDS);
+        let locked = TempDir::new().expect("create temp dir");
+        set_mode(locked.path(), 0o555);
+
+        let without = obtain(Source::Go(fake.install(None, INSTALL_LIMIT))).map(PathBuf::from);
+        let uncreatable = obtain(Source::Go(
+            fake.install(Some(locked.path().join(".cache")), INSTALL_LIMIT),
+        ))
+        .map(PathBuf::from);
+
+        set_mode(locked.path(), 0o755);
+        let binary = without.expect("install without a base");
         let dir = binary.parent().expect("install dir").to_owned();
         let name = dir
             .file_name()
@@ -560,9 +745,11 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         let _ = fs::remove_dir_all(&dir);
+        assert_eq!(uncreatable, Ok(binary.clone()));
         assert_eq!(dir.parent(), Some(env::temp_dir().as_path()));
         assert!(name.starts_with("monitor-hub-conformance-"), "{name}");
         assert_eq!(binary.file_name(), Some("plugin-conformance".as_ref()));
+        assert_eq!(fake.calls(), 1);
     }
 
     #[test]
