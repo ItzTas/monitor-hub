@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -78,9 +79,10 @@ func (s *Supervisor) Names() []string {
 }
 
 func (s *Supervisor) supervise(ctx context.Context, entry catalog.Entry) {
+	name := entry.Manifest.Name
 	failures := 0
 	for {
-		uptime := s.runOnce(ctx, entry)
+		uptime, err := s.runOnce(ctx, entry)
 		if ctx.Err() != nil {
 			return
 		}
@@ -89,7 +91,7 @@ func (s *Supervisor) supervise(ctx context.Context, entry catalog.Entry) {
 		}
 		delay := s.restartDelays[min(failures, len(s.restartDelays)-1)]
 		failures++
-		s.log.Warn("plugin stopped", "plugin", entry.Manifest.Name, "restart_in", delay)
+		s.reportStop(name, uptime, delay, err)
 		select {
 		case <-ctx.Done():
 			return
@@ -98,20 +100,26 @@ func (s *Supervisor) supervise(ctx context.Context, entry catalog.Entry) {
 	}
 }
 
-func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) time.Duration {
+func (s *Supervisor) reportStop(name string, uptime, delay time.Duration, startErr error) {
+	if startErr != nil {
+		s.log.Error("plugin failed to start", "plugin", name, "error", startErr, "retry_in", delay)
+		return
+	}
+	s.log.Warn("plugin exited", "plugin", name, "uptime", uptime.Round(time.Millisecond), "restart_in", delay)
+}
+
+func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Duration, error) {
 	name := entry.Manifest.Name
 	var ready atomic.Bool
 	client, cmd, err := s.newClient(ctx, entry, &ready)
 	if err != nil {
-		s.log.Error("plugin failed to start", "plugin", name, "error", err)
-		return 0
+		return 0, err
 	}
 	defer closePidfd(cmd)
 	rpc, err := dispense(client)
 	if err != nil {
-		s.log.Error("plugin failed to start", "plugin", name, "error", err)
 		stop(client, cmd, false)
-		return 0
+		return 0, err
 	}
 	ready.Store(true)
 	s.setClient(name, rpc)
@@ -126,7 +134,10 @@ func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) time.Dura
 	s.dropClient(name)
 	stop(client, cmd, ctx.Err() != nil)
 	<-exited
-	return uptime
+	if ctx.Err() != nil {
+		s.log.Info("plugin stopped", "plugin", name)
+	}
+	return uptime, nil
 }
 
 func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *atomic.Bool) (*plugin.Client, *exec.Cmd, error) {
@@ -156,12 +167,8 @@ func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *
 		Cmd:              cmd,
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
 		SkipHostEnv:      true,
-		Logger: hclog.New(&hclog.LoggerOptions{
-			Name:       entry.Manifest.Name,
-			Output:     newLogWriter(s.log, entry.Manifest.Name),
-			Level:      hclog.Debug,
-			JSONFormat: true,
-		}),
+		Stderr:           newLogWriter(s.log, entry.Manifest.Name),
+		Logger:           hclog.New(&hclog.LoggerOptions{Output: io.Discard, Level: hclog.Off}),
 	}), cmd, nil
 }
 

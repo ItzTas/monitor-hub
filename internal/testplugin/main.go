@@ -32,6 +32,9 @@ func main() {
 	if os.Getenv("SPAWN_CHILD") == "1" {
 		spawnChild()
 	}
+	if lines := os.Getenv("STDERR_LINES"); lines != "" {
+		writeStderr(lines)
+	}
 	if os.Getenv("STALL_STATUS") != "" {
 		serveOneAtATime()
 		return
@@ -64,6 +67,12 @@ func spawnChild() {
 		os.Exit(1)
 	}
 	_ = os.Setenv("CHILD_PID", strconv.Itoa(cmd.Process.Pid))
+}
+
+func writeStderr(lines string) {
+	for line := range strings.SplitSeq(lines, "\x1f") {
+		_, _ = fmt.Fprintln(os.Stderr, line)
+	}
 }
 
 func (*server) Describe(context.Context, *pluginpb.DescribeRequest) (*pluginpb.DescribeResponse, error) {

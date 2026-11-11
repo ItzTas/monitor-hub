@@ -79,11 +79,11 @@ Some gRPC libraries expect the address as `unix:/tmp/plugin123456`. Use that for
 
 stdout is for the handshake line and nothing else. The hub reads the first line from stdout as the handshake and discards the rest. A stray `print` before the handshake breaks startup.
 
-Send all logs to stderr. The hub writes each line to its own log, tagged with the plugin name, and the hub's `LOG_LEVEL` decides which lines show.
+Send all logs to stderr, one line per entry. The hub writes each line to its own log, tagged with the plugin name, and the hub's `LOG_LEVEL` decides which lines show.
 
-- A line in hclog's JSON format, an object with `@level`, `@message` and any other fields, is logged at its `@level` (`debug`, `info`, `warn` or `error`) and keeps the other fields. The hub drops `trace` lines.
-- A plain-text line is logged at debug. If it starts with `[DEBUG]`, `[INFO]`, `[WARN]` or `[ERROR]`, it gets that level instead.
-- Once a line starts with `panic: ` or `fatal error: `, the hub logs that line and every plain-text line after it at error.
+- A line that is a single JSON object with a string `@level` and a string `@message` is logged at that level. `trace` and `debug` map to debug, `info`, `warn` and `error` map to themselves, and any other value maps to debug. The object's other fields become attributes of the entry, with `@module` kept as `module`. `@timestamp` is optional, and the hub ignores it whatever its format.
+- Any other line is logged at debug as plain text. That includes JSON whose `@level` or `@message` is missing or is not a string.
+- A line longer than 64 KiB is cut at 64 KiB, logged at debug and marked `truncated`. The hub drops the rest of that line.
 
 ## Shutdown
 

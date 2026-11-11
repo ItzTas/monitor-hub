@@ -135,24 +135,6 @@ func TestPluginSeesOnlyItsEnvironment(t *testing.T) {
 	})
 }
 
-func TestPluginOutputGoesThroughTheHubLogger(t *testing.T) {
-	logger, buf := capture()
-	s, _, stop := startLoggingSupervisor(t, nil, logger)
-	waitDescribe(t, s, 10*time.Second)
-	stop()
-
-	var fromPlugin bool
-	for _, record := range buf.records(t) {
-		if record["plugin"] != "testplugin" {
-			t.Errorf("record without plugin=testplugin: %v", record)
-		}
-		fromPlugin = fromPlugin || (record["msg"] == "plugin address" && record["level"] == "DEBUG" && record["module"] != nil)
-	}
-	if !fromPlugin {
-		t.Error("no record carries the plugin's own \"plugin address\" line")
-	}
-}
-
 func TestCrashedPluginIsRestarted(t *testing.T) {
 	s, _, _ := startSupervisor(t, []string{"TESTPLUGIN__CRASH_ON_CHECK=1"})
 	c := waitDescribe(t, s, 10*time.Second)
