@@ -85,7 +85,7 @@ docker compose pull
 docker run --rm --entrypoint ls ghcr.io/itztas/monitor-hub:latest /opt/monitor-hub/plugins
 ```
 
-Check: the list shows `diario` and `sei`. While it shows only `diario`, the hub cannot take over sei-monitor yet.
+Check: the list shows both `diario` and `sei`. If it shows only `diario`, stop here and leave both old stacks running. Step 4 stops sei-monitor too, and nothing in this image would replace it, so SEI would go unwatched. Come back to this check when a newer hub image carries `sei`.
 
 ### Where the databases are
 
