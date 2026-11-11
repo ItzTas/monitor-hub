@@ -85,6 +85,16 @@ Send all logs to stderr, one line per entry. The hub writes each line to its own
 - Any other line is logged at debug as plain text. That includes JSON whose `@level` or `@message` is missing or is not a string.
 - A line longer than 64 KiB is cut at 64 KiB, logged at debug and marked `truncated`. The hub drops the rest of that line.
 
+The recommended format is the JSON that hclog writes, one object per line:
+
+```json
+{"@level":"info","@message":"fetched 3 items","@module":"diario","@timestamp":"2026-01-01T00:00:00.000000Z","items":3}
+```
+
+`@level` and `@message` are required. `@module` becomes the `module` attribute, and `@timestamp` is ignored. Every other key becomes an attribute of the entry, except that the hub renames the keys `plugin`, `module`, `time`, `level`, `msg` and `source` to `field_plugin`, `field_module` and so on. Avoid those names. Keep each line under 64 KiB, or the hub cuts it and the level is lost.
+
+The Rust SDK writes exactly this format to stderr: `monitor_hub_plugin::logging::init` installs a `tracing` subscriber, and a panic becomes one `error` line. It prefixes a field that would collide with the keys above with `field_` itself.
+
 ## Shutdown
 
 To stop a plugin, the hub:
@@ -146,14 +156,15 @@ State that belongs to the monitor, such as the processes already seen or the edi
 - Until the hub confirms, keep the events and keep returning them. If the hub asks again with the same `after`, return the same events again.
 - `id` is stable and unique per plugin. It identifies the thing that happened, not the delivery. Sending the same event twice is allowed: the hub deduplicates on `(plugin, id)`, so a second copy is dropped. An event that is re-sent with a new `seq` must keep its old `id`.
 
-The other `Event` fields:
+The other `Event` fields (the conformance suite, described below, also fails an event with an empty `title` or no `occurred_at`):
 
 | Field | Meaning |
 |---|---|
 | `kind` | One of the kind ids from `Describe`. |
 | `severity` | `SEVERITY_INFO` or `SEVERITY_URGENT`. Never send `SEVERITY_UNSPECIFIED`. |
-| `occurred_at` | When the event happened, not when it was reported. |
-| `title`, `body` | Text for the notification. |
+| `occurred_at` | Required. When the event happened, not when it was reported. The hub rejects an event without a valid `occurred_at`. |
+| `title` | Required. The notification title. It must not be empty. |
+| `body` | Text for the notification. |
 | `url` | A link to the source, or empty. |
 | `payload` | Free-form structured data (`google.protobuf.Struct`). The hub stores it and passes it on without reading it. |
 
@@ -209,13 +220,53 @@ A plugin image puts the manifest and every file the plugin needs under `/plugin/
 
 The hub image build copies that directory to `/opt/monitor-hub/plugins/<name>/`. The plugin runs from there, as user `65532`, on a read-only root filesystem. It can write to `TMPDIR` and `MONITOR_HUB_DATA_DIR` only.
 
+## Conformance
+
+The `plugin-conformance` command starts your plugin the way the hub does, calls it over gRPC, and reports every rule it breaks. Build it from this repository, or run it at a released version:
+
+```
+go run github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.2.0 \
+  -min-events 2 -ready-timeout 10s -env EVENTS=2 -- ./my-plugin
+```
+
+Everything after `--` is the plugin's command line. The flags go before it:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-min-events N` | `0` | The first page of events must hold at least `N` events. |
+| `-ready-timeout D` | `0` | How long to wait while the first `Events` call answers `UNAVAILABLE`, for example `10s`. The call is retried every 200 ms, and only for that status. With `0` it is not retried. |
+| `-env NAME=value` | none | An environment variable for the plugin. Repeat the flag for more. |
+
+The plugin receives only the `-env` variables, plus the ones the handshake needs. Pass whatever configuration it requires to produce events.
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| `0` | The plugin passed. A line on stdout says so. |
+| `1` | The plugin broke a rule, or could not be started and reached. Each violation is one line on stderr. |
+| `2` | The command was called wrongly. A usage line goes to stderr. |
+
+The suite checks that:
+
+- `Describe` returns a valid `name` (see [`plugin.json`](#pluginjson)), a non-empty `display_name`, and kind ids that are non-empty and unique.
+- `Status` returns a state other than `STATE_UNSPECIFIED`.
+- The first `Events(after = 0, limit = 1000)` succeeds and returns at least `-min-events` events. Each event has a positive `seq` that increases strictly, a unique non-empty `id`, a non-empty `title`, a `kind` declared by `Describe`, a `severity` other than `SEVERITY_UNSPECIFIED`, and an `occurred_at`.
+- `Events` after the last `seq` is empty, and `Events` after the first `seq` equals the first list without its first event.
+- `Check` succeeds.
+
+The whole run is limited to 30 seconds plus `-ready-timeout`. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
+
+The Rust SDK's testkit runs this command from `cargo test`. See [`sdk-rust/README.md`](../sdk-rust/README.md).
+
 ## Checklist
 
 - Exit with an error if `MONITOR_HUB_PLUGIN` is not `7c0e5a52-monitor-hub`.
 - Listen on a Unix socket, without TLS.
 - Register `monitorhub.plugin.v1.Plugin` and the health service with `plugin` set to `SERVING`.
 - Print `1|1|unix|<socket path>|grpc` as the only line on stdout.
-- Log to stderr.
+- Log to stderr, preferably as hclog JSON.
 - Keep `seq` strictly increasing, and delete events only after the hub confirms them through `after`.
 - Fail `Events` with `UNAVAILABLE` while the plugin cannot read yet.
 - Implement `plugin.GRPCController/Shutdown`, or be ready to be killed after 2 seconds.
+- Give every event a non-empty `title` and an `occurred_at`, and pass `plugin-conformance`.
