@@ -10,6 +10,8 @@ mod controller;
 
 mod handshake;
 pub mod logging;
+#[cfg(feature = "postgres")]
+pub mod migrate;
 mod serve;
 
 pub use handshake::{

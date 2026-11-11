@@ -29,4 +29,4 @@ generate-rust:
 check-rust:
 	cd sdk-rust && cargo fmt --all --check
 	cd sdk-rust && cargo clippy --workspace --all-targets --all-features -- -D warnings
-	cd sdk-rust && cargo test --workspace
+	cd sdk-rust && cargo test --workspace --all-features

@@ -1,0 +1,8 @@
+[package]
+name = "monitor-hub-plugin-testkit"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio-postgres.workspace = true

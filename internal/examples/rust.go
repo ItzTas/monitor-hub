@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,10 +31,10 @@ type cargoMessage struct {
 	Executable string `json:"executable"`
 }
 
-func buildRustExample(t *testing.T, name string) string {
+func buildRustExample(t *testing.T, name string, features ...string) string {
 	t.Helper()
 	requireTool(t, "cargo")
-	path, err := exampleBuild(name)()
+	path, err := exampleBuild(name, features)()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,25 +52,30 @@ func requireTool(t *testing.T, name string) {
 	t.Skipf("%s is not on PATH", name)
 }
 
-func exampleBuild(name string) func() (string, error) {
+func exampleBuild(name string, features []string) func() (string, error) {
+	key := strings.Join(append([]string{name}, features...), " ")
 	buildsMu.Lock()
 	defer buildsMu.Unlock()
-	if build, ok := builds[name]; ok {
+	if build, ok := builds[key]; ok {
 		return build
 	}
-	build := sync.OnceValues(func() (string, error) { return cargoBuild(name) })
-	builds[name] = build
+	build := sync.OnceValues(func() (string, error) { return cargoBuild(name, features) })
+	builds[key] = build
 	return build
 }
 
-func cargoBuild(name string) (string, error) {
+func cargoBuild(name string, features []string) (string, error) {
 	dir, err := filepath.Abs(filepath.Join("..", "..", "sdk-rust"))
 	if err != nil {
 		return "", err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), buildTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "cargo", "build", "--example", name, "--message-format=json-render-diagnostics")
+	args := []string{"build", "--example", name, "--message-format=json-render-diagnostics"}
+	if len(features) > 0 {
+		args = append(args, "--features", strings.Join(features, ","))
+	}
+	cmd := exec.CommandContext(ctx, "cargo", args...)
 	cmd.Dir = dir
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

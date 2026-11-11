@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/codegen", "crates/plugin"]
+members = ["crates/codegen", "crates/plugin", "crates/testkit"]
 
 [workspace.package]
 edition = "2024"
@@ -13,6 +13,7 @@ serde_json = "1.0.154"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = "1.54.1"
+tokio-postgres = "0.7.18"
 tokio-stream = "0.1.19"
 tonic = { version = "0.14.8", default-features = false }
 tonic-health = { version = "0.14.8", default-features = false }
