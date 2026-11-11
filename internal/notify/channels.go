@@ -11,6 +11,7 @@ func Channels(cfg core.Channels, userAgent string, sessions ...Channel) []Channe
 		{cfg.Telegram != nil, func() Channel { return newTelegram(*cfg.Telegram, telegramAPI, userAgent) }},
 		{cfg.Ntfy != nil, func() Channel { return newNtfy(*cfg.Ntfy, userAgent) }},
 		{cfg.Webhook != nil, func() Channel { return newWebhook(*cfg.Webhook, userAgent) }},
+		{cfg.AMQP != nil, func() Channel { return newAMQP(*cfg.AMQP) }},
 	}
 	var channels []Channel
 	for _, candidate := range candidates {

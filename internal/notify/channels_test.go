@@ -13,6 +13,7 @@ func TestChannelsFollowTheConfigurationWithUniqueNames(t *testing.T) {
 		Telegram: &core.Telegram{Token: core.NewSecret(botToken), ChatID: "-1001234567890"},
 		Ntfy:     &core.Ntfy{URL: "https://ntfy.sh/hub-topic"},
 		Webhook:  &core.Webhook{URL: "https://hooks.example.org/hub", Secret: core.NewSecret(webhookSecret)},
+		AMQP:     &core.AMQP{URL: core.NewSecret("amqp://guest:guest@rabbit/"), Exchange: core.DefaultAMQPExchange},
 	}
 	whatsapp := &fakeChannel{name: "whatsapp"}
 	cases := map[string]struct {
@@ -20,7 +21,8 @@ func TestChannelsFollowTheConfigurationWithUniqueNames(t *testing.T) {
 		extra []Channel
 		want  []string
 	}{
-		"every channel":       {cfg, []Channel{whatsapp}, []string{"email", "telegram", "ntfy", "webhook", "whatsapp"}},
+		"every channel":       {cfg, []Channel{whatsapp}, []string{"email", "telegram", "ntfy", "webhook", "amqp", "whatsapp"}},
+		"amqp only":           {core.Channels{AMQP: cfg.AMQP}, nil, []string{"amqp"}},
 		"ntfy only":           {core.Channels{Ntfy: cfg.Ntfy}, nil, []string{"ntfy"}},
 		"a session's channel": {core.Channels{}, []Channel{whatsapp}, []string{"whatsapp"}},
 		"none":                {core.Channels{}, nil, nil},

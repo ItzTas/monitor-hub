@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -30,6 +31,7 @@ type application struct {
 	ingest     *ingest.Service
 	dispatcher *notify.Dispatcher
 	channels   []string
+	closers    []io.Closer
 	handler    http.Handler
 	whatsapp   *whatsAppLink
 }
@@ -59,6 +61,7 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 		ingest:     ingest.NewService(ingest.NewPostgres(pool), plugins, names, logger, now),
 		dispatcher: notify.NewDispatcher(notify.NewOutbox(pool), channels, logger, notify.WithClock(now, time.After)),
 		channels:   names,
+		closers:    closers(channels),
 		handler:    withMiddleware(mux, logger),
 		whatsapp:   link,
 	}, nil
@@ -84,7 +87,22 @@ func (a *application) Run(ctx context.Context) error {
 	return g.Wait()
 }
 
+func closers(channels []notify.Channel) []io.Closer {
+	var found []io.Closer
+	for _, channel := range channels {
+		if closer, ok := channel.(io.Closer); ok {
+			found = append(found, closer)
+		}
+	}
+	return found
+}
+
 func (a *application) Close() {
 	a.whatsapp.Close()
+	for _, closer := range a.closers {
+		if err := closer.Close(); err != nil {
+			a.log.Warn("could not close a notification channel", "error", err)
+		}
+	}
 	a.pool.Close()
 }

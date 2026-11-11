@@ -131,6 +131,8 @@ func TestLoadReadsTheChannels(t *testing.T) {
 		"NTFY_TOKEN=tk_0123456789",
 		"WEBHOOK_URL=https://hooks.example.org/in?key=abc",
 		"WEBHOOK_SECRET=0123456789abcdef",
+		"AMQP_URL=amqps://hub:amqp-pw@rabbit.example.org:5671/alerts",
+		"AMQP_EXCHANGE=hub.events:v1",
 		"WHATSAPP_RECIPIENTS=+55 (95) 99123-4567, 120363012345678901@g.us,, 120363012345678901-1600000000@g.us",
 	), noFiles)
 	if err != nil {
@@ -144,6 +146,7 @@ func TestLoadReadsTheChannels(t *testing.T) {
 		Telegram: &Telegram{Token: NewSecret("123456789:AAEabcdefghijklmnopqrstuvwx"), ChatID: "-1001234567890"},
 		Ntfy:     &Ntfy{URL: "https://ntfy.example.org/hub-topic", Token: NewSecret("tk_0123456789")},
 		Webhook:  &Webhook{URL: "https://hooks.example.org/in?key=abc", Secret: NewSecret("0123456789abcdef")},
+		AMQP:     &AMQP{URL: NewSecret("amqps://hub:amqp-pw@rabbit.example.org:5671/alerts"), Exchange: "hub.events:v1"},
 		WhatsApp: &WhatsApp{Recipients: []string{"5595991234567", "120363012345678901@g.us", "120363012345678901-1600000000@g.us"}},
 	}
 	if !reflect.DeepEqual(cfg.Channels, want) {
@@ -181,26 +184,34 @@ func TestLoadRejectsInvalidChannels(t *testing.T) {
 		extra []string
 		want  []string
 	}{
-		"smtp without recipients":    {[]string{"SMTP_HOST=smtp.example.org", "SMTP_FROM=a@example.org"}, []string{"SMTP_TO is required"}},
-		"smtp without sender":        {[]string{"SMTP_HOST=smtp.example.org", "SMTP_TO=b@example.org"}, []string{"SMTP_FROM is required"}},
-		"smtp sender not an address": {append(smtp, "SMTP_FROM=not an address"), []string{`SMTP_FROM: invalid email address "not an address"`}},
-		"smtp recipients not a list": {append(smtp, "SMTP_TO=b@example.org;;c"), []string{"SMTP_TO: invalid email address list"}},
-		"smtp username alone":        {append(smtp, "SMTP_USERNAME=monitor"), []string{"SMTP_USERNAME and SMTP_PASSWORD go together: set both or neither"}},
-		"smtp password alone":        {append(smtp, "SMTP_PASSWORD=pw"), []string{"SMTP_USERNAME and SMTP_PASSWORD go together: set both or neither"}},
-		"smtp unknown tls mode":      {append(smtp, "SMTP_TLS=ssl"), []string{`SMTP_TLS: use starttls, tls or none (got "ssl")`}},
-		"smtp password in the clear": {append(smtp, "SMTP_TLS=none", "SMTP_USERNAME=monitor", "SMTP_PASSWORD=pw"), []string{"SMTP_TLS=none would send the password unencrypted; use starttls or tls"}},
-		"smtp port out of range":     {append(smtp, "SMTP_PORT=70000"), []string{`SMTP_PORT: use a whole number from 1 to 65535 (got "70000")`}},
-		"telegram token malformed":   {[]string{"TELEGRAM_TOKEN=abc", "TELEGRAM_CHAT_ID=42"}, []string{"TELEGRAM_TOKEN: this does not look like a bot token"}},
-		"telegram without chat":      {[]string{"TELEGRAM_TOKEN=123456789:AAEabcdefghijklmnopqrstuvwx"}, []string{"TELEGRAM_CHAT_ID is required"}},
-		"telegram chat malformed":    {[]string{"TELEGRAM_TOKEN=123456789:AAEabcdefghijklmnopqrstuvwx", "TELEGRAM_CHAT_ID=chat"}, []string{"TELEGRAM_CHAT_ID: use the numeric chat id"}},
-		"ntfy without topic":         {[]string{"NTFY_URL=https://ntfy.example.org/"}, []string{"NTFY_URL: end the address with the topic"}},
-		"ntfy not http":              {[]string{"NTFY_URL=ftp://ntfy.example.org/topic"}, []string{"NTFY_URL: use a full address starting with https://"}},
-		"ntfy with credentials":      {[]string{"NTFY_URL=https://user:pw@ntfy.example.org/topic"}, []string{"NTFY_URL: remove the username and password from the address"}},
-		"ntfy with a query":          {[]string{"NTFY_URL=https://ntfy.example.org/topic?x=1"}, []string{"NTFY_URL: remove everything after ? or #"}},
-		"webhook without secret":     {[]string{"WEBHOOK_URL=https://hooks.example.org/in"}, []string{"WEBHOOK_SECRET is required; it signs the webhook body"}},
-		"webhook secret too short":   {[]string{"WEBHOOK_URL=https://hooks.example.org/in", "WEBHOOK_SECRET=short"}, []string{"WEBHOOK_SECRET: use at least 16 characters"}},
-		"webhook with a fragment":    {[]string{"WEBHOOK_URL=https://hooks.example.org/in#x", "WEBHOOK_SECRET=0123456789abcdef"}, []string{"WEBHOOK_URL: remove everything after ? or #"}},
-		"every problem at once":      {[]string{"TELEGRAM_TOKEN=abc", "NTFY_URL=https://ntfy.example.org"}, []string{"TELEGRAM_TOKEN: this does not look like a bot token", "TELEGRAM_CHAT_ID is required", "NTFY_URL: end the address with the topic"}},
+		"smtp without recipients":      {[]string{"SMTP_HOST=smtp.example.org", "SMTP_FROM=a@example.org"}, []string{"SMTP_TO is required"}},
+		"smtp without sender":          {[]string{"SMTP_HOST=smtp.example.org", "SMTP_TO=b@example.org"}, []string{"SMTP_FROM is required"}},
+		"smtp sender not an address":   {append(smtp, "SMTP_FROM=not an address"), []string{`SMTP_FROM: invalid email address "not an address"`}},
+		"smtp recipients not a list":   {append(smtp, "SMTP_TO=b@example.org;;c"), []string{"SMTP_TO: invalid email address list"}},
+		"smtp username alone":          {append(smtp, "SMTP_USERNAME=monitor"), []string{"SMTP_USERNAME and SMTP_PASSWORD go together: set both or neither"}},
+		"smtp password alone":          {append(smtp, "SMTP_PASSWORD=pw"), []string{"SMTP_USERNAME and SMTP_PASSWORD go together: set both or neither"}},
+		"smtp unknown tls mode":        {append(smtp, "SMTP_TLS=ssl"), []string{`SMTP_TLS: use starttls, tls or none (got "ssl")`}},
+		"smtp password in the clear":   {append(smtp, "SMTP_TLS=none", "SMTP_USERNAME=monitor", "SMTP_PASSWORD=pw"), []string{"SMTP_TLS=none would send the password unencrypted; use starttls or tls"}},
+		"smtp port out of range":       {append(smtp, "SMTP_PORT=70000"), []string{`SMTP_PORT: use a whole number from 1 to 65535 (got "70000")`}},
+		"telegram token malformed":     {[]string{"TELEGRAM_TOKEN=abc", "TELEGRAM_CHAT_ID=42"}, []string{"TELEGRAM_TOKEN: this does not look like a bot token"}},
+		"telegram without chat":        {[]string{"TELEGRAM_TOKEN=123456789:AAEabcdefghijklmnopqrstuvwx"}, []string{"TELEGRAM_CHAT_ID is required"}},
+		"telegram chat malformed":      {[]string{"TELEGRAM_TOKEN=123456789:AAEabcdefghijklmnopqrstuvwx", "TELEGRAM_CHAT_ID=chat"}, []string{"TELEGRAM_CHAT_ID: use the numeric chat id"}},
+		"ntfy without topic":           {[]string{"NTFY_URL=https://ntfy.example.org/"}, []string{"NTFY_URL: end the address with the topic"}},
+		"ntfy not http":                {[]string{"NTFY_URL=ftp://ntfy.example.org/topic"}, []string{"NTFY_URL: use a full address starting with https://"}},
+		"ntfy with credentials":        {[]string{"NTFY_URL=https://user:pw@ntfy.example.org/topic"}, []string{"NTFY_URL: remove the username and password from the address"}},
+		"ntfy with a query":            {[]string{"NTFY_URL=https://ntfy.example.org/topic?x=1"}, []string{"NTFY_URL: remove everything after ? or #"}},
+		"webhook without secret":       {[]string{"WEBHOOK_URL=https://hooks.example.org/in"}, []string{"WEBHOOK_SECRET is required; it signs the webhook body"}},
+		"webhook secret too short":     {[]string{"WEBHOOK_URL=https://hooks.example.org/in", "WEBHOOK_SECRET=short"}, []string{"WEBHOOK_SECRET: use at least 16 characters"}},
+		"webhook with a fragment":      {[]string{"WEBHOOK_URL=https://hooks.example.org/in#x", "WEBHOOK_SECRET=0123456789abcdef"}, []string{"WEBHOOK_URL: remove everything after ? or #"}},
+		"amqp url without a host":      {[]string{"AMQP_URL=amqp:///vhost"}, []string{"AMQP_URL: use amqp://user:password@host:5672/vhost or amqps://..."}},
+		"amqp url not amqp":            {[]string{"AMQP_URL=http://rabbit.example.org/"}, []string{"AMQP_URL: use amqp://user:password@host:5672/vhost or amqps://..."}},
+		"amqp url with a space":        {[]string{"AMQP_URL=amqp://guest:pa ss@rabbit/"}, []string{"AMQP_URL: use amqp://user:password@host:5672/vhost or amqps://..."}},
+		"amqp url that does not parse": {[]string{"AMQP_URL=amqp://guest:pw@rabbit:port/"}, []string{"AMQP_URL: use amqp://user:password@host:5672/vhost or amqps://..."}},
+		"amqp exchange with a space":   {[]string{"AMQP_URL=amqp://guest:guest@rabbit/", "AMQP_EXCHANGE=my exchange"}, []string{`AMQP_EXCHANGE: use letters, digits, '-', '_', '.' and ':', without the reserved amq. prefix (got "my exchange")`}},
+		"amqp exchange reserved":       {[]string{"AMQP_URL=amqp://guest:guest@rabbit/", "AMQP_EXCHANGE=amq.direct"}, []string{"AMQP_EXCHANGE: use letters, digits"}},
+		"amqp both url forms":          {[]string{"AMQP_URL=amqp://guest:guest@rabbit/", "AMQP_URL_FILE=/run/secrets/amqp"}, []string{"set either AMQP_URL or AMQP_URL_FILE, not both"}},
+		"amqp url file missing":        {[]string{"AMQP_URL_FILE=/run/secrets/amqp"}, []string{"AMQP_URL_FILE: /run/secrets/amqp does not exist"}},
+		"every problem at once":        {[]string{"TELEGRAM_TOKEN=abc", "NTFY_URL=https://ntfy.example.org"}, []string{"TELEGRAM_TOKEN: this does not look like a bot token", "TELEGRAM_CHAT_ID is required", "NTFY_URL: end the address with the topic"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -271,6 +282,39 @@ func TestChannelErrorsNeverShowSecrets(t *testing.T) {
 	for _, value := range []string{"smtp-secret-1", "telegram-secret-2", "ntfy-secret-3", "ntfy-secret-4", "webhook-secret-5", "hook-6"} {
 		if strings.Contains(err.Error(), value) {
 			t.Errorf("the error shows %q:\n%v", value, err)
+		}
+	}
+}
+
+func TestLoadAMQPDefaultsTheExchangeAndSwitchesOnWithTheURLOnly(t *testing.T) {
+	cfg, err := Load(environ("AMQP_URL=amqp://guest:guest@rabbit/"), noFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &AMQP{URL: NewSecret("amqp://guest:guest@rabbit/"), Exchange: "monitor-hub"}
+	if !reflect.DeepEqual(cfg.Channels.AMQP, want) || DefaultAMQPExchange != "monitor-hub" {
+		t.Errorf("amqp = %+v, want %+v", cfg.Channels.AMQP, want)
+	}
+	if cfg, err := Load(environ("AMQP_EXCHANGE=other"), noFiles); err != nil || cfg.Channels.AMQP != nil {
+		t.Errorf("an exchange without a URL: amqp = %+v, err = %v", cfg.Channels.AMQP, err)
+	}
+}
+
+func TestLoadReadsTheAMQPURLFromAFile(t *testing.T) {
+	cfg, err := Load(environ("AMQP_URL_FILE=/run/secrets/amqp"), files(map[string]string{"/run/secrets/amqp": "amqp://hub:file-pw@rabbit/\n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Channels.AMQP.URL.Reveal(); got != "amqp://hub:file-pw@rabbit/" {
+		t.Errorf("url = %q", got)
+	}
+}
+
+func TestAMQPProblemsNeverShowTheURL(t *testing.T) {
+	for _, address := range []string{"http://hub:amqp-secret-7@rabbit/", "amqp://hub:amqp-secret-7@rabbit:port/", "amqp://hub:amqp-secret-7 x@rabbit/"} {
+		_, err := Load(environ("AMQP_URL="+address), noFiles)
+		if err == nil || strings.Contains(err.Error(), "amqp-secret-7") || strings.Contains(err.Error(), address) {
+			t.Errorf("%s: error = %v", address, err)
 		}
 	}
 }
