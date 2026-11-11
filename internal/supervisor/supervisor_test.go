@@ -210,7 +210,7 @@ func startGroup(t *testing.T) int {
 func TestAwaitGroupExitReportsMembersStillRunningAtTheLimit(t *testing.T) {
 	pgid := startGroup(t)
 
-	left, gone := awaitGroupExit(pgid, 50*time.Millisecond)
+	left, gone := awaitGroupExit(liveMembers, pgid, 50*time.Millisecond)
 
 	if gone || !slices.Equal(left, []int{pgid}) {
 		t.Errorf("awaitGroupExit = %v, %t; want [%d], false", left, gone, pgid)
@@ -223,7 +223,7 @@ func TestAwaitGroupExitReturnsOnceTheMembersAreKilledEvenIfNobodyReapsThem(t *te
 	time.AfterFunc(delay, func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
 	started := time.Now()
 
-	left, gone := awaitGroupExit(pgid, 10*time.Second)
+	left, gone := awaitGroupExit(liveMembers, pgid, 10*time.Second)
 
 	waited := time.Since(started)
 	if !gone || left != nil || waited < delay || waited > 5*time.Second {
@@ -231,6 +231,51 @@ func TestAwaitGroupExitReturnsOnceTheMembersAreKilledEvenIfNobodyReapsThem(t *te
 	}
 	if state, _, ok := readStat(pgid); !ok || state != 'Z' {
 		t.Errorf("member %d is in state %q, want an unreaped zombie still in the group", pgid, state)
+	}
+}
+
+func TestRunReturnsOnlyOnceThePluginGroupHasNoLiveMember(t *testing.T) {
+	linger := 300 * time.Millisecond
+	var (
+		mu    sync.Mutex
+		first time.Time
+	)
+	s := New([]catalog.Entry{entry("testplugin", pluginDir, "testplugin")}, nil, t.TempDir(), slog.New(slog.DiscardHandler))
+	s.groupMembers = func(pgid int) ([]int, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if first.IsZero() {
+			first = time.Now()
+		}
+		if time.Since(first) < linger {
+			return []int{pgid}, nil
+		}
+		return liveMembers(pgid)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	waitDescribe(t, s, 10*time.Second)
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run returned %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return within 10s of cancellation")
+	}
+	returned := time.Now()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if first.IsZero() {
+		t.Fatal("Run returned without checking the plugin's process group")
+	}
+	if waited := returned.Sub(first); waited < linger || waited > linger+time.Second {
+		t.Errorf("Run returned %s after the first group check, want right after the member left at %s", waited, linger)
 	}
 }
 

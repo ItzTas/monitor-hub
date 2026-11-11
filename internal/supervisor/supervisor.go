@@ -40,6 +40,7 @@ type Supervisor struct {
 	log           *slog.Logger
 	restartDelays []time.Duration
 	stableAfter   time.Duration
+	groupMembers  func(pgid int) ([]int, error)
 
 	mu      sync.RWMutex
 	clients map[string]pluginpb.PluginClient
@@ -53,6 +54,7 @@ func New(entries []catalog.Entry, environ []string, dataRoot string, log *slog.L
 		log:           log,
 		restartDelays: []time.Duration{time.Second, 5 * time.Second, 30 * time.Second, 2 * time.Minute, 5 * time.Minute},
 		stableAfter:   10 * time.Minute,
+		groupMembers:  liveMembers,
 		clients:       map[string]pluginpb.PluginClient{},
 	}
 }
@@ -239,8 +241,8 @@ func (s *Supervisor) stop(name string, client *plugin.Client, cmd *exec.Cmd, gra
 	if !ok {
 		return
 	}
-	if left, gone := awaitGroupExit(pgid, groupExitLimit); !gone {
-		s.log.Warn("plugin processes still running after the kill", "plugin", name, "process_group", pgid, "pids", left, "waited", groupExitLimit)
+	if left, gone := awaitGroupExit(s.groupMembers, pgid, groupExitLimit); !gone {
+		s.log.Warn("plugin processes still running after the kill; continuing", "plugin", name, "process_group", pgid, "pids", left, "waited", groupExitLimit)
 	}
 }
 
@@ -259,10 +261,10 @@ func killGroup(cmd *exec.Cmd) {
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
 
-func awaitGroupExit(pgid int, limit time.Duration) ([]int, bool) {
+func awaitGroupExit(members func(int) ([]int, error), pgid int, limit time.Duration) ([]int, bool) {
 	deadline := time.Now().Add(limit)
 	for {
-		left, err := liveMembers(pgid)
+		left, err := members(pgid)
 		if err == nil && len(left) == 0 {
 			return nil, true
 		}
