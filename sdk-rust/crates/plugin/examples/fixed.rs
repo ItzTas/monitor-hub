@@ -100,14 +100,14 @@ fn panic_demo() -> Result<(), LoggingError> {
     panic!("demo panic");
 }
 
-fn demo(events: i64) -> Result<(), LoggingError> {
+fn start_logging(events: i64) -> Result<(), LoggingError> {
     if switched_on("PANIC_DEMO") {
         return panic_demo();
     }
     if switched_on("LOG_DEMO") {
         return log_demo(events);
     }
-    Ok(())
+    logging::init("info")
 }
 
 #[tokio::main]
@@ -116,15 +116,15 @@ async fn main() -> ExitCode {
         .ok()
         .and_then(|raw| raw.trim().parse().ok())
         .unwrap_or(0);
-    if let Err(err) = demo(events) {
-        eprintln!("{err}");
+    if let Err(err) = start_logging(events) {
+        tracing::error!("{err}");
         return ExitCode::FAILURE;
     }
     match serve(Fixed { events }).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,
         Err(err) => {
-            eprintln!("{err}");
+            tracing::error!("{err}");
             ExitCode::FAILURE
         }
     }

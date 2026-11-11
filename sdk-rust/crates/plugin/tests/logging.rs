@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -47,12 +48,12 @@ fn example() -> &'static Path {
     })
 }
 
-fn spawn(switch: &str, socket_dir: &Path) -> Child {
+fn spawn(switches: &[&str], socket_dir: &Path) -> Child {
     Command::new(example())
         .env_clear()
         .env("TMPDIR", socket_dir)
         .env(MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE)
-        .env(switch, "1")
+        .envs(switches.iter().map(|switch| (switch, "1")))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -73,11 +74,12 @@ fn read_stdout(child: &mut Child) -> (mpsc::Receiver<String>, thread::JoinHandle
     (rx, reader)
 }
 
-fn run_demo() -> Run {
-    let dir = TempDir::new().expect("create temp dir");
-    let mut child = spawn("LOG_DEMO", dir.path());
+fn serve_then_stop(mut child: Child, at_handshake: impl FnOnce(&Path)) -> Run {
     let (first_line, reader) = read_stdout(&mut child);
     let handshake = first_line.recv_timeout(HANDSHAKE_TIMEOUT);
+    if let Ok(line) = &handshake {
+        at_handshake(&socket_path(line));
+    }
     let kill = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
         .status()
@@ -85,6 +87,20 @@ fn run_demo() -> Run {
     assert!(kill.success());
     handshake.expect("handshake line in time");
     finish(child, reader)
+}
+
+fn socket_path(stdout: &str) -> PathBuf {
+    stdout
+        .strip_prefix("1|1|unix|")
+        .and_then(|rest| rest.strip_suffix("|grpc\n"))
+        .filter(|path| !path.contains('\n'))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("stdout is not exactly the handshake line: {stdout:?}"))
+}
+
+fn run_demo() -> Run {
+    let dir = TempDir::new().expect("create temp dir");
+    serve_then_stop(spawn(&["LOG_DEMO"], dir.path()), |_| {})
 }
 
 fn finish(child: Child, reader: thread::JoinHandle<String>) -> Run {
@@ -147,22 +163,13 @@ fn each_event_is_one_json_line_on_stderr() {
 fn logging_never_writes_to_stdout() {
     let run = run_demo();
 
-    let handshake = run
-        .stdout
-        .strip_prefix("1|1|unix|")
-        .and_then(|rest| rest.strip_suffix("|grpc\n"))
-        .unwrap_or_else(|| panic!("stdout is not exactly the handshake line: {:?}", run.stdout));
-    assert!(
-        !handshake.contains('\n'),
-        "stdout has more than the handshake line: {:?}",
-        run.stdout
-    );
+    socket_path(&run.stdout);
 }
 
 #[test]
 fn a_panic_is_one_error_line_on_stderr() {
     let dir = TempDir::new().expect("create temp dir");
-    let mut child = spawn("PANIC_DEMO", dir.path());
+    let mut child = spawn(&["PANIC_DEMO"], dir.path());
     let (_, reader) = read_stdout(&mut child);
 
     let run = finish(child, reader);
@@ -191,4 +198,47 @@ fn a_second_init_is_an_error() {
     assert_eq!(init("Info"), Ok(()));
 
     assert_eq!(init("debug"), Err(LoggingError::AlreadyInitialized));
+}
+
+#[test]
+fn a_socket_cleanup_failure_is_a_json_line() {
+    let dir = TempDir::new().expect("create temp dir");
+    let mut socket = PathBuf::new();
+
+    let run = serve_then_stop(spawn(&[], dir.path()), |path| {
+        fs::remove_file(path).expect("remove the socket");
+        fs::create_dir(path).expect("put a directory where the socket was");
+        socket = path.to_owned();
+    });
+
+    assert_eq!(run.output.status.code(), Some(0));
+    assert_eq!(socket_path(&run.stdout), socket);
+    let lines = json_lines(&run.stderr);
+    assert_eq!(lines.len(), 1, "stderr: {:?}", run.stderr);
+    let line = &lines[0];
+    assert_eq!(text(line, "@level"), "warn");
+    assert_eq!(text(line, "@message"), "cannot remove the plugin socket");
+    assert_eq!(text(line, "socket"), socket.to_str().expect("UTF-8 path"));
+    text(line, "error");
+}
+
+#[test]
+fn a_serve_failure_is_a_json_error_line() {
+    let dir = TempDir::new().expect("create temp dir");
+    let missing = dir.path().join("missing");
+    let mut child = spawn(&[], &missing);
+    let (_, reader) = read_stdout(&mut child);
+
+    let run = finish(child, reader);
+
+    assert_eq!(run.output.status.code(), Some(1));
+    assert_eq!(run.stdout, "");
+    let lines = json_lines(&run.stderr);
+    assert_eq!(lines.len(), 1, "stderr: {:?}", run.stderr);
+    assert_eq!(text(&lines[0], "@level"), "error");
+    let message = text(&lines[0], "@message");
+    assert!(
+        message.contains(missing.to_str().expect("UTF-8 path")),
+        "message does not name the socket dir: {message}"
+    );
 }

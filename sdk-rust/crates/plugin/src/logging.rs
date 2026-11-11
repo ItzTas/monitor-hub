@@ -8,7 +8,7 @@ use serde_json::{Map, Number, Value};
 use thiserror::Error;
 use tracing::field::{Field, Visit};
 use tracing::level_filters::LevelFilter;
-use tracing::{Event, Subscriber};
+use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 use tracing_subscriber::registry::Registry;
 
@@ -63,23 +63,32 @@ fn subscriber(
     Registry::default().with(filter).with(JsonLines { sink })
 }
 
+pub(crate) fn write_event(level: Level, module: &str, message: &str, fields: &[(&str, Value)]) {
+    write_stderr(&event_line(level, module, message, fields));
+}
+
+fn event_line(level: Level, module: &str, message: &str, fields: &[(&str, Value)]) -> Vec<u8> {
+    let mut recorded = Fields {
+        message: message.to_owned(),
+        values: Map::new(),
+    };
+    for (name, value) in fields {
+        recorded.add(name, value.clone());
+    }
+    encode(level, module, recorded)
+}
+
 fn write_stderr(line: &[u8]) {
     let _ = io::stderr().lock().write_all(line);
 }
 
 fn report_panic(info: &PanicHookInfo<'_>) {
-    let mut fields = Fields {
-        message: "panic".into(),
-        values: Map::new(),
-    };
     let payload = info.payload_as_str().unwrap_or("Box<dyn Any>");
-    fields.values.insert("panic".into(), payload.into());
+    let mut fields = vec![("panic", Value::from(payload))];
     if let Some(location) = info.location() {
-        fields
-            .values
-            .insert("location".into(), location.to_string().into());
+        fields.push(("location", location.to_string().into()));
     }
-    write_stderr(&encode("error", "panic", fields));
+    write_event(Level::ERROR, "panic", "panic", &fields);
 }
 
 struct JsonLines<F> {
@@ -95,8 +104,7 @@ where
         let metadata = event.metadata();
         let mut fields = Fields::default();
         event.record(&mut fields);
-        let level = metadata.level().as_str().to_ascii_lowercase();
-        (self.sink)(&encode(&level, metadata.target(), fields));
+        (self.sink)(&encode(*metadata.level(), metadata.target(), fields));
     }
 }
 
@@ -107,15 +115,15 @@ struct Fields {
 }
 
 impl Fields {
-    fn add(&mut self, field: &Field, value: Value) {
-        if field.name() == "message" {
+    fn add(&mut self, name: &str, value: Value) {
+        if name == "message" {
             self.message = match value {
                 Value::String(text) => text,
                 other => other.to_string(),
             };
             return;
         }
-        let mut key = field.name().to_owned();
+        let mut key = name.to_owned();
         while RESERVED.contains(&key.as_str()) || self.values.contains_key(&key) {
             key.insert_str(0, "field_");
         }
@@ -125,39 +133,45 @@ impl Fields {
 
 impl Visit for Fields {
     fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
-        self.add(field, format!("{value:?}").into());
+        self.add(field.name(), format!("{value:?}").into());
     }
 
     fn record_str(&mut self, field: &Field, value: &str) {
-        self.add(field, value.into());
+        self.add(field.name(), value.into());
     }
 
     fn record_i64(&mut self, field: &Field, value: i64) {
-        self.add(field, value.into());
+        self.add(field.name(), value.into());
     }
 
     fn record_u64(&mut self, field: &Field, value: u64) {
-        self.add(field, value.into());
+        self.add(field.name(), value.into());
     }
 
     fn record_i128(&mut self, field: &Field, value: i128) {
-        self.add(field, number_or_text(Number::from_i128(value), value));
+        self.add(
+            field.name(),
+            number_or_text(Number::from_i128(value), value),
+        );
     }
 
     fn record_u128(&mut self, field: &Field, value: u128) {
-        self.add(field, number_or_text(Number::from_u128(value), value));
+        self.add(
+            field.name(),
+            number_or_text(Number::from_u128(value), value),
+        );
     }
 
     fn record_f64(&mut self, field: &Field, value: f64) {
-        self.add(field, number_or_text(Number::from_f64(value), value));
+        self.add(field.name(), number_or_text(Number::from_f64(value), value));
     }
 
     fn record_bool(&mut self, field: &Field, value: bool) {
-        self.add(field, value.into());
+        self.add(field.name(), value.into());
     }
 
     fn record_error(&mut self, field: &Field, value: &(dyn StdError + 'static)) {
-        self.add(field, value.to_string().into());
+        self.add(field.name(), value.to_string().into());
     }
 }
 
@@ -165,13 +179,13 @@ fn number_or_text(number: Option<Number>, value: impl ToString) -> Value {
     number.map_or_else(|| value.to_string().into(), Value::Number)
 }
 
-fn encode(level: &str, module: &str, fields: Fields) -> Vec<u8> {
+fn encode(level: Level, module: &str, fields: Fields) -> Vec<u8> {
     let Fields {
         message,
         values: mut object,
     } = fields;
     let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true);
-    object.insert(LEVEL.into(), level.into());
+    object.insert(LEVEL.into(), level.as_str().to_ascii_lowercase().into());
     object.insert(MODULE.into(), module.into());
     object.insert(TIMESTAMP.into(), timestamp.into());
     object.insert(MESSAGE.into(), message.as_str().into());
@@ -238,7 +252,10 @@ mod tests {
     use serde_json::{Map, Value, json};
     use tracing::level_filters::LevelFilter;
 
-    use super::{MAX_LINE, parse_level, subscriber};
+    use tracing::Level;
+    use tracing::subscriber::NoSubscriber;
+
+    use super::{MAX_LINE, event_line, parse_level, subscriber};
 
     fn capture(filter: LevelFilter, emit: impl FnOnce()) -> Vec<String> {
         let sink = Arc::new(Mutex::new(Vec::new()));
@@ -397,6 +414,33 @@ mod tests {
             .map(|line| object(line)["@message"].clone())
             .collect();
         assert_eq!(messages, [json!("shown"), json!("shown too")]);
+    }
+
+    #[test]
+    fn event_lines_need_no_installed_subscriber() {
+        let installed = tracing::dispatcher::get_default(|current| !current.is::<NoSubscriber>());
+        assert!(!installed, "this test needs a thread without a subscriber");
+
+        let line = event_line(
+            Level::TRACE,
+            "monitor_hub_plugin::handshake",
+            "said \"bye\"\nthen left",
+            &[("socket", json!("/tmp/plugin-1")), ("plugin", json!("x"))],
+        );
+
+        let text = String::from_utf8(line).expect("UTF-8 line");
+        let body = text.strip_suffix('\n').expect("line ends with a newline");
+        assert!(!body.contains('\n'), "more than one line: {text:?}");
+        let parsed = object(body);
+        let want = json!({
+            "@level": "trace",
+            "@message": "said \"bye\"\nthen left",
+            "@module": "monitor_hub_plugin::handshake",
+            "@timestamp": parsed["@timestamp"],
+            "socket": "/tmp/plugin-1",
+            "field_plugin": "x",
+        });
+        assert_eq!(Value::Object(parsed), want);
     }
 
     #[test]

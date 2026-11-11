@@ -6,6 +6,9 @@ use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::net::UnixListener;
+use tracing::Level;
+
+use crate::logging;
 
 pub const MAGIC_COOKIE_KEY: &str = "MONITOR_HUB_PLUGIN";
 pub const MAGIC_COOKIE_VALUE: &str = "7c0e5a52-monitor-hub";
@@ -45,7 +48,15 @@ impl Drop for Socket {
         if let Err(err) = fs::remove_file(&self.path)
             && err.kind() != ErrorKind::NotFound
         {
-            eprintln!("cannot remove plugin socket {}: {err}", self.path);
+            logging::write_event(
+                Level::WARN,
+                module_path!(),
+                "cannot remove the plugin socket",
+                &[
+                    ("socket", self.path.as_str().into()),
+                    ("error", err.to_string().into()),
+                ],
+            );
         }
     }
 }

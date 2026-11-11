@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -88,6 +87,15 @@ func isPluginError(r record) bool {
 	return fromPlugin(r) && r.level == slog.LevelError
 }
 
+func parsedFromJSON(r record) bool {
+	_, ok := r.attrs["module"]
+	return ok
+}
+
+func isLifecycle(r record) bool {
+	return slices.Contains([]string{"plugin started", "plugin exited", "plugin stopped", "plugin failed to start"}, r.message)
+}
+
 func TestRustLogsKeepTheirLevels(t *testing.T) {
 	binary := buildRustExample(t, "fixed")
 	pluginDir := t.TempDir()
@@ -126,8 +134,8 @@ func TestRustLogsKeepTheirLevels(t *testing.T) {
 		t.Error("no error record from the plugin")
 	}
 	for _, r := range captured.snapshot() {
-		if fromPlugin(r) && r.level == slog.LevelDebug && strings.HasPrefix(r.message, "{") {
-			t.Errorf("a plugin line was logged as plain text: %s", r.message)
+		if fromPlugin(r) && !isLifecycle(r) && !parsedFromJSON(r) {
+			t.Errorf("a plugin line was logged as plain text: %s %q", r.level, r.message)
 		}
 	}
 	assertNoProcess(t, command)
