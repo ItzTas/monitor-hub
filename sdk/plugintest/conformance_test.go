@@ -15,10 +15,11 @@ import (
 )
 
 type fakeClient struct {
-	events    []*pluginpb.Event
-	eventsErr error
-	failures  int
-	calls     int
+	events     []*pluginpb.Event
+	eventsErr  error
+	failures   int
+	calls      int
+	onLimitOne []*pluginpb.Event
 }
 
 func (f *fakeClient) Describe(context.Context, *pluginpb.DescribeRequest, ...grpc.CallOption) (*pluginpb.DescribeResponse, error) {
@@ -41,6 +42,9 @@ func (f *fakeClient) Events(_ context.Context, req *pluginpb.EventsRequest, _ ..
 	f.calls++
 	if f.eventsErr != nil && (f.failures < 0 || f.calls <= f.failures) {
 		return nil, f.eventsErr
+	}
+	if req.GetLimit() == 1 && f.onLimitOne != nil {
+		return &pluginpb.EventsResponse{Events: f.onLimitOne}, nil
 	}
 	limit := int(req.GetLimit())
 	if limit <= 0 {
@@ -140,5 +144,27 @@ func TestCheckDoesNotWaitWithoutReadyTimeout(t *testing.T) {
 	got := check(t.Context(), c, Options{})
 	if !slices.ContainsFunc(got, func(v string) bool { return strings.HasPrefix(v, "Events failed") }) || c.calls != 1 {
 		t.Fatalf("violations = %v after %d calls, want one Events failed violation after one call", got, c.calls)
+	}
+}
+
+func TestCheckNamesWhatLimitOneReturned(t *testing.T) {
+	events := []*pluginpb.Event{event(1, "a"), event(2, "b"), event(3, "c")}
+	tests := map[string]struct {
+		onLimitOne []*pluginpb.Event
+		want       string
+	}{
+		"no event":     {[]*pluginpb.Event{}, "Events(after = 0, limit = 1) must return exactly the first event, got no events"},
+		"another one":  {[]*pluginpb.Event{event(2, "b")}, "Events(after = 0, limit = 1) must return exactly the first event (seq 1), got the event with seq 2"},
+		"same seq":     {[]*pluginpb.Event{event(1, "z")}, "Events(after = 0, limit = 1) must return exactly the first event (seq 1), got an event with that seq whose fields differ"},
+		"two events":   {events[:2], "Events(after = 0, limit = 1) must return exactly the first event, got 2 events"},
+		"three events": {events, "Events(after = 0, limit = 1) must return exactly the first event, got 3 events"},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			c := &fakeClient{events: events, onLimitOne: tt.onLimitOne}
+			if got := check(t.Context(), c, Options{}); !slices.Equal(got, []string{tt.want}) {
+				t.Fatalf("violations = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

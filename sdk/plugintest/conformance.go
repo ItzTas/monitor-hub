@@ -264,8 +264,8 @@ func checkLimits(ctx context.Context, c pluginpb.PluginClient, events []*pluginp
 	if err != nil {
 		out = append(out, fmt.Sprintf("Events(after = 0, limit = 1) failed: %v", err))
 	}
-	if err == nil && (len(one.GetEvents()) != 1 || !proto.Equal(one.GetEvents()[0], events[0])) {
-		out = append(out, fmt.Sprintf("Events(after = 0, limit = 1) must return exactly the first event, got %d events", len(one.GetEvents())))
+	if err == nil {
+		out = append(out, checkLimitOne(one.GetEvents(), events[0])...)
 	}
 	page, err := c.Events(ctx, &pluginpb.EventsRequest{After: 0, Limit: 0})
 	if err != nil {
@@ -275,6 +275,27 @@ func checkLimits(ctx context.Context, c pluginpb.PluginClient, events []*pluginp
 		out = append(out, fmt.Sprintf("Events(after = 0, limit = 0) returned %d events, want at most %d: a limit of 0 or less means %d", n, defaultLimit, defaultLimit))
 	}
 	return out
+}
+
+func checkLimitOne(got []*pluginpb.Event, first *pluginpb.Event) []string {
+	const want = "Events(after = 0, limit = 1) must return exactly the first event"
+	if len(got) != 1 {
+		return []string{fmt.Sprintf("%s, got %s", want, countEvents(len(got)))}
+	}
+	if proto.Equal(got[0], first) {
+		return nil
+	}
+	if got[0].GetSeq() == first.GetSeq() {
+		return []string{fmt.Sprintf("%s (seq %d), got an event with that seq whose fields differ", want, first.GetSeq())}
+	}
+	return []string{fmt.Sprintf("%s (seq %d), got the event with seq %d", want, first.GetSeq(), got[0].GetSeq())}
+}
+
+func countEvents(n int) string {
+	if text, ok := map[int]string{0: "no events", 1: "1 event"}[n]; ok {
+		return text
+	}
+	return fmt.Sprintf("%d events", n)
 }
 
 func checkCheck(ctx context.Context, c pluginpb.PluginClient) []string {
