@@ -58,6 +58,7 @@ func TestRunStopsEverythingAndLogsNoSecret(t *testing.T) {
 	logs := &syncBuffer{}
 	app := b.assemble(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx) }()
 	waitForPlugin(t, app)
