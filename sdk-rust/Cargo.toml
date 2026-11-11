@@ -6,8 +6,10 @@ members = ["crates/codegen", "crates/plugin"]
 edition = "2024"
 
 [workspace.dependencies]
+chrono = { version = "0.4.45", default-features = false }
 prost = "0.14.4"
 prost-types = "0.14.4"
+serde_json = "1.0.154"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = "1.54.1"
@@ -16,3 +18,5 @@ tonic = { version = "0.14.8", default-features = false }
 tonic-health = { version = "0.14.8", default-features = false }
 tonic-prost = { version = "0.14.8", default-features = false }
 tonic-prost-build = { version = "0.14.8", default-features = false }
+tracing = { version = "0.1.44", default-features = false }
+tracing-subscriber = { version = "0.3.23", default-features = false }

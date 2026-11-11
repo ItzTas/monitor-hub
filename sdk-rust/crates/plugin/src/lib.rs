@@ -9,6 +9,7 @@ pub mod proto;
 mod controller;
 
 mod handshake;
+pub mod logging;
 mod serve;
 
 pub use handshake::{

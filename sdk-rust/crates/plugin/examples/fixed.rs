@@ -1,6 +1,7 @@
 use std::env;
 use std::process::ExitCode;
 
+use monitor_hub_plugin::logging::{self, LoggingError};
 use monitor_hub_plugin::proto::plugin_server::Plugin;
 use monitor_hub_plugin::proto::{
     CheckRequest, CheckResponse, DescribeRequest, DescribeResponse, Event, EventKind,
@@ -80,12 +81,45 @@ fn event(seq: i64) -> Event {
     }
 }
 
+fn switched_on(name: &str) -> bool {
+    env::var(name).is_ok_and(|value| value == "1")
+}
+
+fn log_demo(events: i64) -> Result<(), LoggingError> {
+    logging::init("trace")?;
+    tracing::trace!("log demo starting");
+    tracing::debug!(events, "fixed events configured");
+    tracing::info!(answer = 42, "hello from rust");
+    tracing::warn!(ready = false, "warning from rust");
+    tracing::error!(reason = "demo", "error from rust");
+    Ok(())
+}
+
+fn panic_demo() -> Result<(), LoggingError> {
+    logging::init("info")?;
+    panic!("demo panic");
+}
+
+fn demo(events: i64) -> Result<(), LoggingError> {
+    if switched_on("PANIC_DEMO") {
+        return panic_demo();
+    }
+    if switched_on("LOG_DEMO") {
+        return log_demo(events);
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let events = env::var("EVENTS")
         .ok()
         .and_then(|raw| raw.trim().parse().ok())
         .unwrap_or(0);
+    if let Err(err) = demo(events) {
+        eprintln!("{err}");
+        return ExitCode::FAILURE;
+    }
     match serve(Fixed { events }).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,
