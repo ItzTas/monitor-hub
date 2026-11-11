@@ -1,6 +1,7 @@
 use std::env;
-use std::fs;
+use std::fs::{self, Permissions};
 use std::io::{self, ErrorKind, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{self, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,7 +34,14 @@ impl Socket {
         let path = socket_path()?;
         let listener = UnixListener::bind(&path)
             .map_err(|err| io::Error::new(err.kind(), format!("listen on {path}: {err}")))?;
-        Ok((Self { path }, listener))
+        let socket = Self { path };
+        fs::set_permissions(&socket.path, Permissions::from_mode(0o600)).map_err(|err| {
+            io::Error::new(
+                err.kind(),
+                format!("set the mode of {}: {err}", socket.path),
+            )
+        })?;
+        Ok((socket, listener))
     }
 
     pub(crate) fn announce(&self) -> io::Result<()> {

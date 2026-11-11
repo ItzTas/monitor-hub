@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::ops::{Deref, DerefMut};
-use std::os::unix::fs::FileTypeExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -233,6 +233,29 @@ fn handshake_line_names_a_listening_socket() {
         Some(0)
     );
     assert!(!socket.exists(), "socket {socket:?} left behind");
+}
+
+#[test]
+fn the_socket_is_readable_and_writable_by_its_owner_only() {
+    let dir = TempDir::new().expect("create temp dir");
+    let mut cmd = Command::new("/bin/sh");
+    cmd.args(["-c", "umask 0 && exec \"$0\""])
+        .arg(example())
+        .env_clear()
+        .env("TMPDIR", dir.path())
+        .env(MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut plugin = spawn(cmd);
+
+    let socket = handshake(&mut plugin);
+
+    let mode = fs::metadata(&socket)
+        .expect("stat socket")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600, "mode {mode:o}");
 }
 
 #[tokio::test]
