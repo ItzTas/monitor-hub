@@ -125,7 +125,7 @@ The hub starts each plugin in its own process group and kills that whole group o
 
 The hub polls every plugin every 15 seconds. Each poll calls `Describe` first. When `Describe` fails, or returns a `name` other than the plugin's name in `plugin.json`, the hub logs a warning and skips the rest of that poll. Otherwise it calls `Status` and reads `Events` at the same time. Each of these calls has a 30-second time limit.
 
-The hub calls `Check` only when someone asks it, through the hub's API, to run a cycle now. That call has a 10-second time limit.
+The hub calls `Plugin.Check` (the `Check` of `monitorhub.plugin.v1.Plugin`, not the health service's `Check` from [Startup](#3-serve-the-grpc-services)) only when someone asks it, through the hub's API, to run a cycle now. That call has a 10-second time limit.
 
 `Describe`, `Status` and `Check` must succeed at all times, including while `Events` still answers `UNAVAILABLE`. A plugin that is not ready reports it through `Status` (`STATE_FAILING` with a reason in `message`) and through `Check` (`accepted = false`), not by failing those calls.
 
@@ -188,7 +188,7 @@ The other `Event` fields. Two are required, and different parts enforce them: th
 
 ### The first read is the baseline
 
-The hub treats the first `Events` call that completes without an error as the baseline. Those events are stored for history and are never notified. Everything after that is a candidate for a notification.
+The baseline is the hub's whole first read of a plugin: every `Events` page from `after = 0` up to the first page shorter than 500. The events of that read are stored for history and are never notified. The baseline ends when a read reaches its short page without an error; if a read fails halfway, the next poll goes on reading as part of the baseline. Everything stored after that is a candidate for a notification.
 
 This has one consequence for plugins. If your plugin cannot read its events yet, because it is not logged in or its database is not ready, **fail the `Events` call with gRPC status `UNAVAILABLE`**. Do not answer with an empty list. An empty answer is a success, so it completes the baseline, and every event that shows up later gets notified as if it were new.
 

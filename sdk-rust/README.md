@@ -240,7 +240,7 @@ Log an error as a field cast to `&dyn std::error::Error`:
 tracing::error!(error = &err as &dyn std::error::Error, "migration failed");
 ```
 
-The field then holds the error's whole `source()` chain, joined with `": "`, for example `migration 00002_items.sql failed: db error: ERROR: relation "items" already exists`. A cause whose text the line already ends with is written once. Logging the error with `%err` or `"{err}"` writes only the top error, which for `MigrateError` and `tokio_postgres::Error` leaves out the reason.
+The field then holds the error's whole `source()` chain, joined with `": "`, for example `migration 00002_items.sql failed: db error: ERROR: relation "items" already exists`. A cause whose text the line already ends with is written once. Logging the error with `%err` or `"{err}"` writes only the first link of that chain. For `ServeError`, `MigrateError` and `tokio_postgres::Error` the first link leaves out the reason: `"{err}"` on a `ServeError::Socket` prints only `cannot create the plugin socket`.
 
 `init` returns `LoggingError::UnknownLevel` for any other level and `LoggingError::AlreadyInitialized` when a global subscriber already exists. When it fails nothing is installed, so a `tracing::error!` at that point goes nowhere. A plugin that reads its level from configuration should print the error to stderr itself and exit, as the example above does.
 
@@ -257,22 +257,30 @@ monitor-hub-plugin = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk
 `monitor_hub_plugin::migrate` applies goose migration files and records them in the same `goose_db_version` table goose uses, so a database can move between this runner and goose. Embed the files in the binary:
 
 ```rust
-use monitor_hub_plugin::migrate::{MigrateError, Migration, up};
+use std::error::Error;
+use std::time::Duration;
 
+use monitor_hub_plugin::migrate::{Migration, up};
+use tokio::time::timeout;
+
+const CONNECT_LIMIT: Duration = Duration::from_secs(10);
 const MIGRATIONS: &[Migration] = &[Migration {
     version: 1,
     name: "00001_create_items.sql",
     sql: include_str!("../migrations/00001_create_items.sql"),
 }];
 
-async fn migrate(url: &str) -> Result<Vec<i64>, MigrateError> {
-    let (mut client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+async fn migrate(url: &str) -> Result<Vec<i64>, Box<dyn Error + Send + Sync>> {
+    let (mut client, connection) =
+        timeout(CONNECT_LIMIT, tokio_postgres::connect(url, tokio_postgres::NoTls)).await??;
     tokio::spawn(async move {
         let _ = connection.await;
     });
-    up(&mut client, MIGRATIONS).await
+    Ok(up(&mut client, MIGRATIONS).await?)
 }
 ```
+
+The connect runs under a time limit because `tokio_postgres::connect` has none by default (see [Start-up time](#start-up-time)).
 
 `up` returns the versions it applied, in ascending order. `version` is the number in the file name. It must be at least 1 and unique.
 
@@ -362,7 +370,10 @@ fn the_plugin_conforms() {
 `run` finds the command in this order:
 
 1. The `PLUGIN_CONFORMANCE` environment variable: the path of an already built `plugin-conformance` binary.
-2. `go install github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.2.1`, when `go` is on `PATH`. The Go tag is `sdk/v0.2.1`, and the constant `SDK_GO_VERSION` holds it. The binary goes to `$XDG_CACHE_HOME/monitor-hub/plugin-conformance/v0.2.1/`, or `$HOME/.cache/monitor-hub/plugin-conformance/v0.2.1/` when `XDG_CACHE_HOME` is unset or not an absolute path. It is installed once per version and reused by every later test run. `run` creates each of those directories with mode 0700 and refuses one that is a symbolic link or belongs to another user. `go install` writes to a temporary directory next to the binary, which is then renamed into place, so test processes that install at the same time do not corrupt each other. `go install` is stopped after ten minutes. When neither `XDG_CACHE_HOME` nor `HOME` is usable, the binary goes to a private temporary directory, one per test process, which stays behind after the process ends.
+2. `go install github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.2.1`, when `go` is on `PATH`. The Go tag is `sdk/v0.2.1`, and the constant `SDK_GO_VERSION` holds it. The binary goes to `monitor-hub/plugin-conformance/v0.2.1/` under a cache base: `$XDG_CACHE_HOME` when it is an absolute path, otherwise `$HOME/.cache` when `HOME` is absolute.
+   - `run` uses the base only when it exists or can be created, is a real directory and not a symbolic link, belongs to you, and is not writable by group or others. It creates a missing base with mode 0700. Each directory below the base must belong to you too, and `run` sets it to mode 0700. `run` checks the base itself but not its parents: a base inside a directory that other users can rename is your responsibility.
+   - The binary is installed once per version. Later test runs reuse it while it is a regular file that you own and can execute; otherwise `run` installs it again. `go install` writes to a staging directory next to the binary, which is then renamed into place, so test processes that install at the same time do not corrupt each other. `go install` is stopped after ten minutes, and the next install removes staging directories older than that, such as those left by a killed run.
+   - In every other case the binary goes to a private temporary directory, one per test process, which stays behind after the process ends: when neither variable gives an absolute path, or when the base or a directory below it fails the checks above, for example `HOME=/` in a container started with `--user`. `run` then says once on stderr why it did not use the cache. Unsetting both `XDG_CACHE_HOME` and `HOME` always selects the temporary directory; `go` itself then needs `GOCACHE` and `GOPATH` set.
 3. Otherwise `Outcome::Skipped`, or a panic when `CI` is set and not empty.
 
 `Outcome::Failed` carries one of three things:
