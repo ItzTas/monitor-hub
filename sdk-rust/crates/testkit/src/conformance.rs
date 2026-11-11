@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
-use std::io::{self, Read};
+use std::fs;
+use std::io::{self, ErrorKind, Read};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::{self, Child, Command, ExitStatus, Stdio};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -31,10 +34,13 @@ pub enum Outcome {
     Failed(String),
 }
 
-struct Invocation {
-    program: OsString,
-    prefix: Vec<String>,
-    through_go: bool,
+enum Source {
+    Binary(OsString),
+    Go {
+        package: String,
+        version: String,
+        env: Vec<(String, String)>,
+    },
 }
 
 struct Finished {
@@ -53,21 +59,41 @@ impl Drop for Running {
 }
 
 pub fn run(conformance: &Conformance) -> Outcome {
-    if conformance.command.is_empty() {
-        return Outcome::Failed("Conformance.command is empty: there is no plugin to run".into());
+    if let Some(problem) = problem(conformance) {
+        return Outcome::Failed(problem);
     }
-    let Some(invocation) = locate() else {
+    let Some(source) = locate() else {
         return unavailable(&format!(
             "set {COMMAND_ENV} to a built plugin-conformance binary or put go on PATH"
         ));
     };
+    run_from(source, conformance)
+}
+
+fn problem(conformance: &Conformance) -> Option<String> {
+    if conformance.command.is_empty() {
+        return Some("Conformance.command is empty: there is no plugin to run".into());
+    }
+    let (name, _) = conformance
+        .env
+        .iter()
+        .find(|(name, _)| name.is_empty() || name.contains('='))?;
+    Some(format!(
+        "Conformance.env has the invalid variable name {name:?}: a name must not be empty or contain '='"
+    ))
+}
+
+fn run_from(source: Source, conformance: &Conformance) -> Outcome {
+    let program = match obtain(source) {
+        Ok(program) => program,
+        Err(message) => return Outcome::Failed(message),
+    };
     let limit = conformance.ready_timeout + ALLOWANCE;
-    match execute(&invocation, &arguments(&invocation, conformance), limit) {
-        Ok(finished) => outcome(&invocation, finished),
-        Err(Failure::Start(err)) => Outcome::Failed(format!(
-            "cannot start {}: {err}",
-            invocation.program.to_string_lossy()
-        )),
+    match execute(&program, &arguments(conformance), limit) {
+        Ok(finished) => outcome(finished),
+        Err(Failure::Start(err)) => {
+            Outcome::Failed(format!("cannot start {}: {err}", program.to_string_lossy()))
+        }
         Err(Failure::Timeout(stderr)) => Outcome::Failed(format!(
             "plugin-conformance did not finish within {limit:?} and was stopped\n{stderr}"
         )),
@@ -81,22 +107,69 @@ fn unavailable(reason: &str) -> Outcome {
     Outcome::Skipped(reason.to_owned())
 }
 
-fn locate() -> Option<Invocation> {
+fn locate() -> Option<Source> {
     if let Some(path) = env::var_os(COMMAND_ENV).filter(|value| !value.is_empty()) {
-        return Some(Invocation {
-            program: path,
-            prefix: Vec::new(),
-            through_go: false,
-        });
+        return Some(Source::Binary(path));
     }
-    on_path("go").then(|| {
-        let version = SDK_GO_VERSION.rsplit('/').next().unwrap_or(SDK_GO_VERSION);
-        Invocation {
-            program: "go".into(),
-            prefix: vec!["run".into(), format!("{GO_PACKAGE}@{version}")],
-            through_go: true,
-        }
+    on_path("go").then(|| Source::Go {
+        package: GO_PACKAGE.to_owned(),
+        version: SDK_GO_VERSION
+            .rsplit('/')
+            .next()
+            .unwrap_or(SDK_GO_VERSION)
+            .to_owned(),
+        env: Vec::new(),
     })
+}
+
+fn obtain(source: Source) -> Result<OsString, String> {
+    match source {
+        Source::Binary(path) => Ok(path),
+        Source::Go {
+            package,
+            version,
+            env,
+        } => install(&package, &version, &env).map(PathBuf::into_os_string),
+    }
+}
+
+fn install(package: &str, version: &str, extra: &[(String, String)]) -> Result<PathBuf, String> {
+    static BUILT: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+    let key = format!("{package}@{version}");
+    let mut built = BUILT
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some(binary) = built.get(&key) {
+        return Ok(binary.clone());
+    }
+    let failed = |detail: &str| {
+        format!("the conformance command {key} could not be fetched or built:\n{detail}")
+    };
+    let dir = env::temp_dir().join(format!("monitor-hub-conformance-{}", process::id()));
+    match fs::create_dir(&dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+        Err(err) => return Err(failed(&format!("cannot create {}: {err}", dir.display()))),
+    }
+    let output = Command::new("go")
+        .args(["install", &key])
+        .env("GOBIN", &dir)
+        .envs(extra.iter().map(|(name, value)| (name, value)))
+        .stdin(Stdio::null())
+        .output();
+    let detail = match &output {
+        Ok(output) if output.status.success() => None,
+        Ok(output) => Some(String::from_utf8_lossy(&output.stderr).trim().to_owned()),
+        Err(err) => Some(format!("cannot run go: {err}")),
+    };
+    if let Some(detail) = detail {
+        let _ = fs::remove_dir(&dir);
+        return Err(failed(&detail));
+    }
+    let binary = dir.join(package.rsplit('/').next().unwrap_or(package));
+    built.insert(key, binary.clone());
+    Ok(binary)
 }
 
 fn on_path(program: &str) -> bool {
@@ -106,8 +179,8 @@ fn on_path(program: &str) -> bool {
     env::split_paths(&paths).any(|dir| Path::new(&dir).join(program).is_file())
 }
 
-fn arguments(invocation: &Invocation, conformance: &Conformance) -> Vec<String> {
-    let mut args = invocation.prefix.clone();
+fn arguments(conformance: &Conformance) -> Vec<String> {
+    let mut args = Vec::new();
     args.push("-min-events".into());
     args.push(conformance.min_events.to_string());
     args.push("-ready-timeout".into());
@@ -126,8 +199,8 @@ enum Failure {
     Timeout(String),
 }
 
-fn execute(invocation: &Invocation, args: &[String], limit: Duration) -> Result<Finished, Failure> {
-    let mut child = Command::new(&invocation.program)
+fn execute(program: &OsString, args: &[String], limit: Duration) -> Result<Finished, Failure> {
+    let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -174,8 +247,10 @@ fn wait(child: &mut Child, limit: Duration) -> Option<ExitStatus> {
 fn stop(child: &mut Child) {
     signal_group(child, "TERM");
     let deadline = Instant::now() + GRACE;
+    let mut reaped = false;
     while Instant::now() < deadline {
-        if matches!(child.try_wait(), Ok(Some(_))) {
+        reaped = reaped || matches!(child.try_wait(), Ok(Some(_)));
+        if reaped && !group_alive(child) {
             return;
         }
         thread::sleep(POLL);
@@ -185,22 +260,27 @@ fn stop(child: &mut Child) {
     let _ = child.wait();
 }
 
-fn signal_group(child: &Child, signal: &str) {
-    let _ = Command::new("kill")
+fn signal_group(child: &Child, signal: &str) -> bool {
+    Command::new("kill")
         .args(["-s", signal, "--"])
         .arg(format!("-{}", child.id()))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status();
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
-fn outcome(invocation: &Invocation, finished: Finished) -> Outcome {
+fn group_alive(child: &Child) -> bool {
+    signal_group(child, "0")
+}
+
+fn outcome(finished: Finished) -> Outcome {
     let Finished { status, stderr } = finished;
     if status.success() {
         return Outcome::Passed;
     }
     let output = stderr.trim();
-    let code = reported_code(invocation, status, output);
+    let code = status.code();
     if code == Some(EXIT_USAGE) {
         return Outcome::Failed(format!(
             "plugin-conformance rejected its arguments (a bug in the conformance runner, not a plugin violation):\n{output}"
@@ -215,21 +295,48 @@ fn outcome(invocation: &Invocation, finished: Finished) -> Outcome {
     ))
 }
 
-fn reported_code(invocation: &Invocation, status: ExitStatus, stderr: &str) -> Option<i32> {
-    let code = status.code()?;
-    if !invocation.through_go || code != EXIT_VIOLATIONS {
-        return Some(code);
-    }
-    let last = stderr.lines().next_back()?;
-    match last.strip_prefix("exit status ") {
-        Some(inner) => inner.parse().ok(),
-        None => Some(code),
-    }
-}
-
 fn describe(status: ExitStatus) -> String {
     if let Some(signal) = status.signal() {
         return format!("killed by signal {signal}");
     }
     status.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_command_that_cannot_be_fetched_is_not_a_plugin_violation() {
+        if !on_path("go") {
+            assert!(
+                env::var_os("CI").is_none_or(|value| value.is_empty()),
+                "go is required when CI is set"
+            );
+            eprintln!("skipping: go is not available");
+            return;
+        }
+        let source = Source::Go {
+            package: GO_PACKAGE.to_owned(),
+            version: "v9.9.9".to_owned(),
+            env: vec![
+                ("GOPROXY".to_owned(), "off".to_owned()),
+                ("GOFLAGS".to_owned(), "-mod=mod".to_owned()),
+            ],
+        };
+        let conformance = Conformance {
+            command: vec!["unused".into()],
+            env: Vec::new(),
+            min_events: 0,
+            ready_timeout: Duration::ZERO,
+        };
+        let Outcome::Failed(message) = run_from(source, &conformance) else {
+            panic!("a version that cannot exist must fail");
+        };
+        assert!(message.starts_with("the conformance command "), "{message}");
+        assert!(
+            message.contains("could not be fetched or built:"),
+            "{message}"
+        );
+    }
 }

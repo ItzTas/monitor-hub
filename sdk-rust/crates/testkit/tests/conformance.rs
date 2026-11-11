@@ -111,3 +111,19 @@ fn a_violation_is_reported_with_the_command_output() {
     };
     assert!(output.contains("got 2 events, want at least 5"), "{output}");
 }
+
+#[test]
+fn an_env_name_that_is_empty_or_holds_an_equals_sign_is_rejected() {
+    for name in ["", "A=B"] {
+        let conformance = Conformance {
+            command: vec!["unused".into()],
+            env: vec![(name.into(), "1".into())],
+            min_events: 0,
+            ready_timeout: Duration::ZERO,
+        };
+        let Outcome::Failed(message) = run(&conformance) else {
+            panic!("the name {name:?} must be rejected");
+        };
+        assert!(message.contains(&format!("{name:?}")), "{message}");
+    }
+}
