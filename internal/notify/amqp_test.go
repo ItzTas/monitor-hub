@@ -2,6 +2,8 @@ package notify
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -187,6 +189,25 @@ func TestAMQPPublishesTheWebhookDocumentAsPersistentJSON(t *testing.T) {
 	}
 }
 
+func TestAMQPMessageIdIsTheStartOfTheBodyHash(t *testing.T) {
+	first, second, other := seiMessage("activity"), seiMessage("activity"), seiMessage("document")
+	ids := map[string]string{}
+	for name, msg := range map[string]Message{"first": first, "second": second, "other": other} {
+		got, err := newAMQPMessage(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(got.publishing.Body)
+		if want := hex.EncodeToString(sum[:])[:32]; got.publishing.MessageId != want {
+			t.Errorf("%s: MessageId %q, want %q", name, got.publishing.MessageId, want)
+		}
+		ids[name] = got.publishing.MessageId
+	}
+	if ids["first"] != ids["second"] || ids["first"] == ids["other"] {
+		t.Errorf("ids = %v", ids)
+	}
+}
+
 func TestAMQPChannelIsNamedAndNeedsNoGate(t *testing.T) {
 	a := testAMQP("amqp://guest:guest@broker/", nil)
 	if _, gated := Channel(a).(gate); gated || a.Name() != "amqp" {
@@ -197,6 +218,8 @@ func TestAMQPChannelIsNamedAndNeedsNoGate(t *testing.T) {
 func TestAMQPReusesTheConnectionAndReconnectsAfterAFailedPublish(t *testing.T) {
 	broker := &fakeBroker{}
 	a := testAMQP("amqp://guest:guest@broker/", broker)
+	clock := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return clock }
 	for range 2 {
 		if err := a.Send(t.Context(), seiMessage("activity")); err != nil {
 			t.Fatal(err)
@@ -214,11 +237,38 @@ func TestAMQPReusesTheConnectionAndReconnectsAfterAFailedPublish(t *testing.T) {
 		t.Errorf("the failed connection was closed %d times, want 1", broker.link(0).closes)
 	}
 
+	clock = clock.Add(a.retryAfter)
 	if err := a.Send(t.Context(), seiMessage("activity")); err != nil {
 		t.Fatal(err)
 	}
 	if broker.dialCount() != 2 || len(broker.link(1).sent()) != 1 {
 		t.Errorf("dials %d, messages on the new connection %d", broker.dialCount(), len(broker.link(1).sent()))
+	}
+}
+
+func TestAMQPFailsFastAfterAFailedPublishAndAPublishClearsTheWindow(t *testing.T) {
+	broker := &fakeBroker{prepare: func(l *fakeLink) { l.err = errors.New("exchange declared differently") }}
+	a := testAMQP("amqp://hub-user:"+amqpPassword+"@broker/", broker)
+	clock := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return clock }
+	first := a.Send(t.Context(), seiMessage("activity"))
+	second := a.Send(t.Context(), seiMessage("activity"))
+
+	if first == nil || second == nil || second.Error() != first.Error() || broker.dialCount() != 1 {
+		t.Fatalf("first %v, second %v, dials %d", first, second, broker.dialCount())
+	}
+	assertNoSecret(t, second, "amqp://hub-user:"+amqpPassword+"@broker/")
+
+	clock = clock.Add(a.retryAfter)
+	broker.mu.Lock()
+	broker.prepare = nil
+	broker.mu.Unlock()
+	if err := a.Send(t.Context(), seiMessage("activity")); err != nil {
+		t.Fatal(err)
+	}
+	broker.link(1).dead = true
+	if err := a.Send(t.Context(), seiMessage("activity")); err != nil || broker.dialCount() != 3 {
+		t.Errorf("after a publish succeeded: Send = %v, dials %d", err, broker.dialCount())
 	}
 }
 
@@ -582,6 +632,10 @@ func TestAMQPBrokerRoutesEachNotificationUnderItsPluginAndKind(t *testing.T) {
 		body, err := json.Marshal(webhookPayload{Events: msg.Events})
 		if err != nil {
 			t.Fatal(err)
+		}
+		sum := sha256.Sum256(body)
+		if all[i].MessageId != hex.EncodeToString(sum[:])[:32] {
+			t.Errorf("message %d: id %q", i, all[i].MessageId)
 		}
 		if all[i].ContentType != "application/json" || all[i].DeliveryMode != amqp.Persistent || string(all[i].Body) != string(body) {
 			t.Errorf("message %d: content type %q, delivery mode %d, body %s", i, all[i].ContentType, all[i].DeliveryMode, all[i].Body)

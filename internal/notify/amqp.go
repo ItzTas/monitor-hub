@@ -2,6 +2,8 @@ package notify
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -110,9 +112,9 @@ func (a *amqpChannel) Send(ctx context.Context, msg Message) error {
 		return err
 	}
 	if err := link.publish(ctx, a.exchange, message); err != nil {
-		_ = a.drop()
-		return a.redacted("", err)
+		return a.failed(parent, a.redacted("", err))
 	}
+	a.failure = nil
 	return nil
 }
 
@@ -136,14 +138,18 @@ func (a *amqpChannel) connection(ctx, parent context.Context) (amqpLink, error) 
 	}
 	link, err := a.dial(ctx, a.url.Reveal())
 	if err != nil {
-		err = a.redacted("could not connect to the broker", err)
-		if parent.Err() == nil && a.stop.Err() == nil {
-			a.failure, a.retryAt = err, a.now().Add(a.retryAfter)
-		}
-		return nil, err
+		return nil, a.failed(parent, a.redacted("could not connect to the broker", err))
 	}
-	a.failure, a.link = nil, link
+	a.link = link
 	return link, nil
+}
+
+func (a *amqpChannel) failed(parent context.Context, err error) error {
+	_ = a.drop()
+	if parent.Err() == nil && a.stop.Err() == nil {
+		a.failure, a.retryAt = err, a.now().Add(a.retryAfter)
+	}
+	return err
 }
 
 func (a *amqpChannel) drop() error {
@@ -199,12 +205,14 @@ func newAMQPMessage(msg Message) (amqpMessage, error) {
 	if !msg.Test {
 		key, kind = amqpRouting(msg.Events)
 	}
+	sum := sha256.Sum256(body)
 	return amqpMessage{
 		key: key,
 		publishing: amqp.Publishing{
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,
 			Type:         kind,
+			MessageId:    hex.EncodeToString(sum[:])[:32],
 			Body:         body,
 		},
 	}, nil
