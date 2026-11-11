@@ -1,3 +1,4 @@
 .env
 /monitor-hub
 /tmp/
+sdk-rust/target/

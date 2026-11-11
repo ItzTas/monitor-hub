@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = ["crates/codegen", "crates/plugin"]
+
+[workspace.package]
+edition = "2024"
+
+[workspace.dependencies]
+prost = "0.14.4"
+prost-types = "0.14.4"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+tokio = "1.54.1"
+tokio-stream = "0.1.19"
+tonic = { version = "0.14.8", default-features = false }
+tonic-health = { version = "0.14.8", default-features = false }
+tonic-prost = { version = "0.14.8", default-features = false }
+tonic-prost-build = { version = "0.14.8", default-features = false }

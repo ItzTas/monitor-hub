@@ -1,0 +1,8 @@
+[package]
+name = "monitor-hub-codegen"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+tonic-prost-build.workspace = true

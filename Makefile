@@ -1,6 +1,6 @@
 MODULES := . sdk
 
-.PHONY: check lint test generate
+.PHONY: check lint test generate generate-rust check-rust
 
 check: lint test
 
@@ -22,3 +22,11 @@ test:
 generate:
 	go tool buf generate
 	go tool sqlc generate
+
+generate-rust:
+	cd sdk-rust && cargo run --quiet -p monitor-hub-codegen
+
+check-rust:
+	cd sdk-rust && cargo fmt --all --check
+	cd sdk-rust && cargo clippy --workspace --all-targets --all-features -- -D warnings
+	cd sdk-rust && cargo test --workspace
