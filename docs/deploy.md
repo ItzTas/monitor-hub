@@ -411,6 +411,14 @@ Use this if the hub misbehaves and you want the old services back. The old stack
    cd /opt/stacks/monitor-hub && docker compose down
    ```
 
+   Then list the gazette alerts the hub never confirmed. The script in the next item marks them as delivered too, and they are on no other list, so after it nobody sends them:
+
+   ```bash
+   docker exec <postgres-container> psql -U diario_alerr -d diario_alerr -c 'SELECT seq, id, title, link, published_at FROM alerts WHERE seq > (SELECT acked_seq FROM monitor_state) ORDER BY seq;'
+   ```
+
+   These are alerts the plugin recorded after the hub's last read, and, while the hub was ahead of this database (section 8), every alert the plugin recorded since it was reset. The plugin learns what the hub stored only on the hub's next poll, so the list also holds the alerts of the last read, which may appear in step 1 too. Pass every row on yourself. A rollback usually follows a hub that misbehaved, and that is when this list can be long.
+
 3. Gazette database. The old Go program announces every stored alert that has no row in `alert_deliveries` for one of its channels, `telegram` and `ntfy`. The plugin never writes that table, so every alert it stored would be announced again. Before you start the old gazette stack, run the plugin's rollback script, `sql/rollback/mark-alerts-delivered.sql` in the diario-alerr repository at tag `v2.0.0`:
 
    ```bash
@@ -436,7 +444,7 @@ Use this if the hub misbehaves and you want the old services back. The old stack
 
    Check each with its old `/healthz` and its logs.
 
-Coming forward again after a rollback is a new take-over. Before the hub starts, reset its stored position for each plugin you move back, as the next section describes. Otherwise the hub resumes from a position that no longer matches the plugin's database. For the gazette, every alert the Go program stored in the meantime has a higher `seq` than the hub's old position, so the hub would announce all of them again, though Go already sent them. After the reset, follow steps 4 and 5 again, including the query in step 5.
+Coming forward again after a rollback is a new take-over. Before the hub starts, reset its stored position for each plugin you move back, as the next section describes. Otherwise the hub resumes from a position that no longer matches the plugin's database. For the gazette, every alert the Go program stored in the meantime has a higher `seq` than the hub's old position, so the hub would announce all of them again, though Go already sent them. After the reset, follow steps 4 and 5 again, including the query in step 5. In that query, `sent_by_go` shows `ntfy,telegram` for every alert that existed at the rollback, because the rollback script wrote those rows, even where Go never sent it. The column only tells you something about alerts recorded after the rollback.
 
 ## 8. Operating rules
 
