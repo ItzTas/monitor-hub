@@ -170,7 +170,7 @@ Every plugin ships a manifest named `plugin.json`:
 | Field | Type | Meaning |
 |---|---|---|
 | `protocol_version` | number | Must be `1`. |
-| `name` | string | Matches `^[a-z][a-z0-9-]{1,30}$`. It must equal the name of the plugin's directory. |
+| `name` | string | Matches `^[a-z][a-z0-9-]{1,30}$`: lowercase letters, digits and single hyphens, starting with a letter, 2 to 31 characters. It must not end with a hyphen or contain two hyphens in a row, because one plugin's environment prefix must never be the beginning of another's. It must equal the name of the plugin's directory. |
 | `command` | string array | The command to run. It must not be empty. |
 | `apk` | string array | Alpine packages the plugin needs. The image build installs them. |
 

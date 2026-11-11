@@ -71,3 +71,19 @@ func TestCheckCatchesDuplicateID(t *testing.T) {
 		t.Fatalf("violations = %v, want duplicate event id", got)
 	}
 }
+
+func TestValidName(t *testing.T) {
+	tests := map[string]bool{
+		"diario":       true,
+		"diario-alerr": true,
+		"sei-":         false,
+		"ab--c":        false,
+		"Diario":       false,
+		"x":            false,
+	}
+	for name, want := range tests {
+		if got := validName(name); got != want {
+			t.Errorf("validName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

@@ -12,6 +12,8 @@ func TestReadManifestRejects(t *testing.T) {
 	tests := map[string]string{
 		"protocol version 2": `{"protocol_version":2,"name":"diario","command":["x"]}`,
 		"uppercase name":     `{"protocol_version":1,"name":"Diario","command":["x"]}`,
+		"trailing hyphen":    `{"protocol_version":1,"name":"sei-","command":["x"]}`,
+		"double hyphen":      `{"protocol_version":1,"name":"ab--c","command":["x"]}`,
 		"short name":         `{"protocol_version":1,"name":"x","command":["x"]}`,
 		"empty command":      `{"protocol_version":1,"name":"diario","command":[]}`,
 		"unknown field":      `{"protocol_version":1,"name":"diario","command":["x"],"extra":1}`,
@@ -114,21 +116,29 @@ func TestEnvPrefix(t *testing.T) {
 
 func TestEnvironment(t *testing.T) {
 	tests := map[string]struct {
+		name    string
 		environ []string
 		want    []string
 	}{
 		"prefixed and reserved": {
+			name:    "diario",
 			environ: []string{"DIARIO__WATCH_TERMS=a,b", "TELEGRAM_TOKEN=s", "SEI__SEI_URL=u", "PATH=/bin", "TZ=America/Boa_Vista"},
 			want:    []string{"MONITOR_HUB_DATA_DIR=/data/plugins/diario", "PATH=/bin", "TMPDIR=/tmp", "TZ=America/Boa_Vista", "WATCH_TERMS=a,b"},
 		},
+		"related plugin names stay isolated": {
+			name:    "sei",
+			environ: []string{"SEI_EXTRA__TOKEN=a", "SEI__URL=u"},
+			want:    []string{"MONITOR_HUB_DATA_DIR=/data/plugins/sei", "TMPDIR=/tmp", "URL=u"},
+		},
 		"reserved names cannot be overridden": {
+			name:    "diario",
 			environ: []string{"PATH=/bin", "DIARIO__PATH=/evil", "DIARIO__MONITOR_HUB_DATA_DIR=/x"},
 			want:    []string{"MONITOR_HUB_DATA_DIR=/data/plugins/diario", "PATH=/bin", "TMPDIR=/tmp"},
 		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			got := Environment("diario", tt.environ, "/data")
+			got := Environment(tt.name, tt.environ, "/data")
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}

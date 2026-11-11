@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 const protocolVersion = 1
@@ -50,7 +51,7 @@ func (m Manifest) validate() error {
 	if m.ProtocolVersion != protocolVersion {
 		return fmt.Errorf("unsupported protocol_version %d", m.ProtocolVersion)
 	}
-	if !namePattern.MatchString(m.Name) {
+	if !namePattern.MatchString(m.Name) || strings.HasSuffix(m.Name, "-") || strings.Contains(m.Name, "--") {
 		return fmt.Errorf("invalid plugin name %q", m.Name)
 	}
 	if len(m.Command) == 0 || m.Command[0] == "" {

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,13 +62,17 @@ func check(c pluginpb.PluginClient, minEvents int) []string {
 	return append(out, checkCheck(ctx, c)...)
 }
 
+func validName(name string) bool {
+	return namePattern.MatchString(name) && !strings.HasSuffix(name, "-") && !strings.Contains(name, "--")
+}
+
 func checkDescribe(ctx context.Context, c pluginpb.PluginClient) ([]string, []string) {
 	d, err := c.Describe(ctx, &pluginpb.DescribeRequest{})
 	if err != nil {
 		return nil, []string{fmt.Sprintf("Describe failed: %v", err)}
 	}
 	var out, kinds []string
-	if !namePattern.MatchString(d.GetName()) {
+	if !validName(d.GetName()) {
 		out = append(out, fmt.Sprintf("name %q does not match %s", d.GetName(), namePattern))
 	}
 	if d.GetDisplayName() == "" {
