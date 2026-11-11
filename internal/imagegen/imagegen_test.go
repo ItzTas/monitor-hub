@@ -403,3 +403,14 @@ func TestDockerReaderRejectsAnInvalidImageBeforeRunningDocker(t *testing.T) {
 		t.Errorf("docker calls = %v, want none", docker.verbs())
 	}
 }
+
+func TestGenerateRejectsAnInvalidNameBeforeReading(t *testing.T) {
+	reader := &fakeReader{}
+	_, err := Generate(t.Context(), []PluginImage{{Name: "Sei Monitor", Image: seiImage}}, reader)
+	if err == nil || !strings.Contains(err.Error(), `"Sei Monitor"`) {
+		t.Fatalf("Generate error = %v, want one naming the entry", err)
+	}
+	if len(reader.calls) != 0 {
+		t.Errorf("reader called with %v, want no calls", reader.calls)
+	}
+}

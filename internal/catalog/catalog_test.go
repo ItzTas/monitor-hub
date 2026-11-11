@@ -145,3 +145,31 @@ func TestEnvironment(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateNameAcceptsAndRejects(t *testing.T) {
+	for name, ok := range map[string]bool{"sei": true, "diario-alerr": true, "a": false, "Sei": false, "sei-": false, "se--i": false, "sei monitor": false, "sei\n": false, "": false} {
+		if err := ValidateName(name); (err == nil) != ok {
+			t.Errorf("ValidateName(%q) = %v, want ok=%v", name, err, ok)
+		}
+	}
+}
+
+func TestManifestValidate(t *testing.T) {
+	good := Manifest{ProtocolVersion: 1, Name: "sei", Command: []string{"./sei"}, Apk: []string{"poppler-utils"}}
+	if err := good.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	for name, mutate := range map[string]func(*Manifest){
+		"protocol":   func(m *Manifest) { m.ProtocolVersion = 2 },
+		"name":       func(m *Manifest) { m.Name = "Sei" },
+		"command":    func(m *Manifest) { m.Command = nil },
+		"apk":        func(m *Manifest) { m.Apk = []string{"curl && id"} },
+		"apk option": func(m *Manifest) { m.Apk = []string{"-f"} },
+	} {
+		m := good
+		mutate(&m)
+		if err := m.Validate(); err == nil {
+			t.Errorf("Validate accepted a manifest with a bad %s", name)
+		}
+	}
+}

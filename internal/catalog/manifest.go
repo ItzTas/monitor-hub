@@ -41,18 +41,25 @@ func ReadManifest(r io.Reader) (Manifest, error) {
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Manifest{}, errors.New("unexpected data after the manifest object")
 	}
-	if err := m.validate(); err != nil {
+	if err := m.Validate(); err != nil {
 		return Manifest{}, err
 	}
 	return m, nil
 }
 
-func (m Manifest) validate() error {
+func ValidateName(name string) error {
+	if !namePattern.MatchString(name) || strings.HasSuffix(name, "-") || strings.Contains(name, "--") {
+		return fmt.Errorf("invalid plugin name %q", name)
+	}
+	return nil
+}
+
+func (m Manifest) Validate() error {
 	if m.ProtocolVersion != protocolVersion {
 		return fmt.Errorf("unsupported protocol_version %d", m.ProtocolVersion)
 	}
-	if !namePattern.MatchString(m.Name) || strings.HasSuffix(m.Name, "-") || strings.Contains(m.Name, "--") {
-		return fmt.Errorf("invalid plugin name %q", m.Name)
+	if err := ValidateName(m.Name); err != nil {
+		return err
 	}
 	if len(m.Command) == 0 || m.Command[0] == "" {
 		return errors.New("command must not be empty")

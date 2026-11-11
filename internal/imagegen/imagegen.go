@@ -122,6 +122,9 @@ func Render(entries []PluginImage, manifests []catalog.Manifest) ([]byte, error)
 func validateEntries(entries []PluginImage) error {
 	seen := map[string]bool{}
 	for _, entry := range entries {
+		if err := catalog.ValidateName(entry.Name); err != nil {
+			return fmt.Errorf("plugin %q: %w", entry.Name, err)
+		}
 		if !imagePattern.MatchString(entry.Image) {
 			return fmt.Errorf("plugin %q: invalid image reference %q", entry.Name, entry.Image)
 		}
@@ -134,22 +137,13 @@ func validateEntries(entries []PluginImage) error {
 }
 
 func checkManifest(entry PluginImage, m catalog.Manifest) error {
-	if err := validateManifest(m); err != nil {
+	if err := m.Validate(); err != nil {
 		return fmt.Errorf("plugin %q: invalid manifest: %w", entry.Name, err)
 	}
 	if m.Name != entry.Name {
 		return fmt.Errorf("plugin %q: the manifest of %s is named %q", entry.Name, entry.Image, m.Name)
 	}
 	return nil
-}
-
-func validateManifest(m catalog.Manifest) error {
-	data, err := json.Marshal(m)
-	if err != nil {
-		return err
-	}
-	_, err = catalog.ReadManifest(bytes.NewReader(data))
-	return err
 }
 
 func apkList(packages map[string]struct{}) string {
