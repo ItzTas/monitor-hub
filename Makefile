@@ -1,6 +1,6 @@
 MODULES := . sdk
 
-.PHONY: check lint test generate generate-rust generate-python check-rust
+.PHONY: check lint test generate generate-rust generate-python check-rust dockerfile dockerfile-check
 
 check: lint test
 
@@ -33,3 +33,9 @@ check-rust:
 
 generate-python:
 	uvx --from grpcio-tools==1.78.0 python -m grpc_tools.protoc -Iproto/monitorhub/plugin/v1 --python_out=examples/python-plugin/gen --pyi_out=examples/python-plugin/gen --grpc_python_out=examples/python-plugin/gen proto/monitorhub/plugin/v1/plugin.proto
+
+dockerfile:
+	go run ./cmd/imagegen
+
+dockerfile-check:
+	go run ./cmd/imagegen -check

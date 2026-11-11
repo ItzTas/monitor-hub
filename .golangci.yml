@@ -25,6 +25,10 @@ linters:
         text: G204|G702
         linters:
           - gosec
+      - path: (^|/)internal/imagegen/imagegen\.go$
+        text: G204
+        linters:
+          - gosec
       - path: (^|/)internal/examples/rust\.go$
         text: G204
         linters:
