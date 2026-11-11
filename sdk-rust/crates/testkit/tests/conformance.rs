@@ -5,6 +5,7 @@ use std::time::Duration;
 use std::{env, fs};
 
 use monitor_hub_plugin_testkit::conformance::{Conformance, Outcome, run};
+use tempfile::TempDir;
 
 #[path = "../src/ci.rs"]
 mod ci;
@@ -21,40 +22,38 @@ fn unavailable(reason: &str) -> Option<&'static Setup> {
     None
 }
 
-fn build_command() -> Result<PathBuf, String> {
+fn build_command() -> Option<PathBuf> {
     let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sdk");
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let binary = dir.join("plugin-conformance");
     let staging = dir.join(format!("plugin-conformance.{}", process::id()));
-    let output = Command::new("go")
+    let output = match Command::new("go")
         .current_dir(sdk)
         .args(["build", "-o"])
         .arg(&staging)
         .arg("./cmd/plugin-conformance")
         .output()
-        .map_err(|err| format!("cannot run go: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "go build failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    fs::rename(&staging, &binary).map_err(|err| format!("cannot move the built command: {err}"))?;
-    Ok(binary)
+    {
+        Ok(output) => output,
+        Err(err) => {
+            unavailable(&format!("cannot run go: {err}"));
+            return None;
+        }
+    };
+    assert!(
+        output.status.success(),
+        "go build ./cmd/plugin-conformance failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::rename(&staging, &binary).expect("move the built command into place");
+    Some(binary)
 }
 
 fn setup() -> Option<&'static Setup> {
     static SETUP: OnceLock<Option<Setup>> = OnceLock::new();
     SETUP
         .get_or_init(|| {
-            let binary = match build_command() {
-                Ok(binary) => binary,
-                Err(reason) => {
-                    assert!(!ci::active(), "required when CI is set: {reason}");
-                    eprintln!("skipping: {reason}");
-                    return None;
-                }
-            };
+            let binary = build_command()?;
             unsafe { env::set_var("PLUGIN_CONFORMANCE", binary) };
             Some(Setup {
                 example: example::fixed().to_owned(),
@@ -86,6 +85,33 @@ fn a_violation_is_reported_with_the_command_output() {
         panic!("a plugin with two events must fail min_events 5");
     };
     assert!(output.contains("got 2 events, want at least 5"), "{output}");
+}
+
+#[test]
+fn a_plugin_that_fails_before_the_handshake_shows_its_stderr_first() {
+    let Some(setup) = setup() else { return };
+    let dir = TempDir::new().expect("create temp dir");
+    let mut conformance = conformance(setup, 0);
+    let missing = dir.path().join("missing");
+    conformance
+        .env
+        .push(("TMPDIR".into(), missing.to_string_lossy().into_owned()));
+
+    let Outcome::Failed(output) = run(&conformance) else {
+        panic!("a plugin that cannot create its socket must fail");
+    };
+
+    let lines: Vec<&str> = output.lines().collect();
+    let plugin = lines.iter().position(|line| {
+        line.starts_with("plugin: {") && line.contains("cannot create the plugin socket")
+    });
+    let own = lines
+        .iter()
+        .position(|line| line.starts_with("plugin-conformance: "));
+    assert!(
+        matches!((plugin, own), (Some(plugin), Some(own)) if plugin < own),
+        "{output}"
+    );
 }
 
 #[test]
