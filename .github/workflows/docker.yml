@@ -14,6 +14,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  POSTGRES_MAJOR: "18"
+  GOLANGCI_LINT_VERSION: v2.15.0
+
 jobs:
   test:
     name: Check and test
@@ -34,7 +38,6 @@ jobs:
     env:
       CI: "true"
       TEST_AMQP_URL: amqp://monitor:monitor@localhost:5672/
-      GOLANGCI_LINT_VERSION: v2.15.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -45,11 +48,33 @@ jobs:
             go.sum
             sdk/go.sum
 
-      - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@"${GOLANGCI_LINT_VERSION}"
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          install-mode: binary
+          install-only: true
 
-      - name: Put the PostgreSQL binaries on PATH
-        run: printf '%s\n' /usr/lib/postgresql/*/bin | sort -V | tail -n 1 >> "$GITHUB_PATH"
+      - name: Install PostgreSQL from the PGDG repository
+        run: |
+          . /etc/os-release
+          sudo install -d -m 0755 /usr/share/keyrings
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/keyrings/postgresql.asc > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/postgresql.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "postgresql-${POSTGRES_MAJOR}"
+          sudo systemctl disable --now postgresql
+          echo "/usr/lib/postgresql/${POSTGRES_MAJOR}/bin" >> "$GITHUB_PATH"
+
+      - name: Check the PostgreSQL major version
+        run: |
+          for tool in initdb postgres; do
+            version="$("$tool" --version)"
+            echo "$version"
+            case "$version" in
+              *" ${POSTGRES_MAJOR}."* | *" ${POSTGRES_MAJOR}") ;;
+              *) echo "$tool is not PostgreSQL ${POSTGRES_MAJOR}" >&2; exit 1 ;;
+            esac
+          done
 
       - name: Install procps and the Python plugin example's runtime
         run: |
@@ -111,4 +136,4 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max' || '' }}
