@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +23,21 @@ type server struct {
 }
 
 func main() {
+	if os.Getenv("SPAWN_CHILD") == "1" {
+		spawnChild()
+	}
 	sdk.Serve(&server{})
+}
+
+func spawnChild() {
+	cmd := exec.CommandContext(context.Background(), "sleep", "86400")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	_ = os.Setenv("CHILD_PID", strconv.Itoa(cmd.Process.Pid))
 }
 
 func (*server) Describe(context.Context, *pluginpb.DescribeRequest) (*pluginpb.DescribeResponse, error) {

@@ -9,7 +9,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -46,7 +49,7 @@ func entry(name, dir string, command ...string) catalog.Entry {
 	}
 }
 
-func startSupervisor(t *testing.T, environ []string) (*Supervisor, string) {
+func startSupervisor(t *testing.T, environ []string) (*Supervisor, string, func()) {
 	t.Helper()
 	dataRoot := t.TempDir()
 	s := New([]catalog.Entry{entry("testplugin", pluginDir, "testplugin")}, environ, dataRoot, slog.New(slog.DiscardHandler))
@@ -55,16 +58,23 @@ func startSupervisor(t *testing.T, environ []string) (*Supervisor, string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
-	t.Cleanup(func() {
+	stop := sync.OnceFunc(func() {
 		cancel()
-		if err := <-done; err != nil {
-			t.Errorf("Run returned %v", err)
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("Run returned %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Error("Run did not return within 10s of cancellation")
+			return
 		}
 		if _, ok := s.Client("testplugin"); ok {
 			t.Error("client still available after Run returned")
 		}
 	})
-	return s, dataRoot
+	t.Cleanup(stop)
+	return s, dataRoot, stop
 }
 
 func waitDescribe(t *testing.T, s *Supervisor, timeout time.Duration) pluginpb.PluginClient {
@@ -100,14 +110,14 @@ func TestPluginSeesOnlyItsEnvironment(t *testing.T) {
 	t.Setenv("TELEGRAM_TOKEN", "secret")
 
 	t.Run("hub secret", func(t *testing.T) {
-		s, _ := startSupervisor(t, []string{"TELEGRAM_TOKEN=secret", "TESTPLUGIN__ECHO=TELEGRAM_TOKEN"})
+		s, _, _ := startSupervisor(t, []string{"TELEGRAM_TOKEN=secret", "TESTPLUGIN__ECHO=TELEGRAM_TOKEN"})
 		if got := statusMessage(t, waitDescribe(t, s, 10*time.Second)); got != "" {
 			t.Fatalf("plugin saw TELEGRAM_TOKEN=%q", got)
 		}
 	})
 
 	t.Run("data dir", func(t *testing.T) {
-		s, dataRoot := startSupervisor(t, []string{"TELEGRAM_TOKEN=secret", "TESTPLUGIN__ECHO=MONITOR_HUB_DATA_DIR"})
+		s, dataRoot, _ := startSupervisor(t, []string{"TELEGRAM_TOKEN=secret", "TESTPLUGIN__ECHO=MONITOR_HUB_DATA_DIR"})
 		want := dataRoot + "/plugins/testplugin"
 		if got := statusMessage(t, waitDescribe(t, s, 10*time.Second)); got != want {
 			t.Fatalf("MONITOR_HUB_DATA_DIR = %q, want %q", got, want)
@@ -123,7 +133,7 @@ func TestPluginSeesOnlyItsEnvironment(t *testing.T) {
 }
 
 func TestCrashedPluginIsRestarted(t *testing.T) {
-	s, _ := startSupervisor(t, []string{"TESTPLUGIN__CRASH_ON_CHECK=1"})
+	s, _, _ := startSupervisor(t, []string{"TESTPLUGIN__CRASH_ON_CHECK=1"})
 	c := waitDescribe(t, s, 10*time.Second)
 	if _, err := c.Check(t.Context(), &pluginpb.CheckRequest{}); err == nil {
 		t.Fatal("Check succeeded, want the plugin to crash")
@@ -131,8 +141,67 @@ func TestCrashedPluginIsRestarted(t *testing.T) {
 	waitDescribe(t, s, 5*time.Second)
 }
 
+func childEnviron(extra ...string) []string {
+	return append([]string{"PATH=" + os.Getenv("PATH"), "TESTPLUGIN__SPAWN_CHILD=1", "TESTPLUGIN__ECHO=CHILD_PID"}, extra...)
+}
+
+func childPID(t *testing.T, c pluginpb.PluginClient) int {
+	t.Helper()
+	pid, err := strconv.Atoi(statusMessage(t, c))
+	if err != nil {
+		t.Fatalf("child pid: %v", err)
+	}
+	return pid
+}
+
+func readStat(pid int) (byte, int, bool) {
+	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return 0, 0, false
+	}
+	fields := strings.Fields(string(raw[strings.LastIndexByte(string(raw), ')')+1:]))
+	pgid, err := strconv.Atoi(fields[2])
+	return fields[0][0], pgid, err == nil
+}
+
+func running(pid int) bool {
+	state, _, ok := readStat(pid)
+	return ok && state != 'Z'
+}
+
+func TestCrashWithChildHoldingStdioIsRestarted(t *testing.T) {
+	s, _, _ := startSupervisor(t, childEnviron("TESTPLUGIN__CRASH_ON_CHECK=1"))
+	c := waitDescribe(t, s, 10*time.Second)
+	child := childPID(t, c)
+	if _, err := c.Check(t.Context(), &pluginpb.CheckRequest{}); err == nil {
+		t.Fatal("Check succeeded, want the plugin to crash")
+	}
+	waitDescribe(t, s, 5*time.Second)
+	if running(child) {
+		t.Fatalf("child %d of the crashed plugin is still running", child)
+	}
+}
+
+func TestShutdownKillsPluginProcessGroup(t *testing.T) {
+	s, _, stop := startSupervisor(t, childEnviron())
+	child := childPID(t, waitDescribe(t, s, 10*time.Second))
+	_, pgid, ok := readStat(child)
+	if !ok {
+		t.Fatalf("child %d not found", child)
+	}
+	if pgid == syscall.Getpgrp() {
+		t.Errorf("plugin shares the hub's process group %d", pgid)
+	}
+	stop()
+	for _, pid := range []int{pgid, child} {
+		if running(pid) {
+			t.Errorf("process %d still running after Run returned", pid)
+		}
+	}
+}
+
 func TestUnknownPluginIsAbsent(t *testing.T) {
-	s, _ := startSupervisor(t, nil)
+	s, _, _ := startSupervisor(t, nil)
 	waitDescribe(t, s, 10*time.Second)
 	if _, ok := s.Client("nope"); ok {
 		t.Fatal("Client(\"nope\") reported a plugin")

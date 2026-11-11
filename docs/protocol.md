@@ -94,6 +94,8 @@ To stop a plugin, the hub:
 
 The clean way is to implement `Shutdown`: stop the gRPC server, delete the socket file, and exit.
 
+The hub starts each plugin in its own process group and kills that whole group once the plugin exits or is killed, so child processes the plugin started do not outlive it.
+
 ## The `Plugin` service
 
 ### `Describe`

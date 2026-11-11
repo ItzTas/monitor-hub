@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/ItzTas/monitor-hub/internal/catalog"
@@ -19,9 +20,15 @@ import (
 	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
+	"google.golang.org/grpc"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
-const exitPollInterval = 250 * time.Millisecond
+const (
+	exitPollInterval = 500 * time.Millisecond
+	healthTimeout    = 5 * time.Second
+	stopGrace        = 3 * time.Second
+)
 
 type Supervisor struct {
 	entries       []catalog.Entry
@@ -98,43 +105,47 @@ func (s *Supervisor) supervise(ctx context.Context, entry catalog.Entry) {
 func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) time.Duration {
 	name := entry.Manifest.Name
 	var ready atomic.Bool
-	client, err := s.newClient(ctx, entry, &ready)
+	client, cmd, err := s.newClient(ctx, entry, &ready)
 	if err != nil {
 		s.log.Error("plugin failed to start", "plugin", name, "error", err)
 		return 0
 	}
-	defer client.Kill()
-	rpc, err := dispense(client)
+	conn, rpc, err := dispense(client)
 	if err != nil {
 		s.log.Error("plugin failed to start", "plugin", name, "error", err)
+		stop(client, cmd, false)
 		return 0
 	}
 	ready.Store(true)
 	s.setClient(name, rpc)
-	defer s.dropClient(name)
 	s.log.Info("plugin started", "plugin", name)
 	started := time.Now()
-	waitExit(ctx, client)
-	return time.Since(started)
+	waitExit(ctx, client, conn)
+	uptime := time.Since(started)
+	s.dropClient(name)
+	stop(client, cmd, ctx.Err() != nil)
+	return uptime
 }
 
-func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *atomic.Bool) (*plugin.Client, error) {
+func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *atomic.Bool) (*plugin.Client, *exec.Cmd, error) {
 	env := catalog.Environment(entry.Manifest.Name, s.environ, s.dataRoot)
 	if err := os.MkdirAll(envValue(env, sdk.DataDirEnv), 0o700); err != nil {
-		return nil, fmt.Errorf("create data dir: %w", err)
+		return nil, nil, fmt.Errorf("create data dir: %w", err)
 	}
 	path, err := resolveCommand(entry, env)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cmd := exec.CommandContext(ctx, path, entry.Manifest.Command[1:]...)
 	cmd.Dir = entry.Dir
 	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		if ready.Load() {
-			return nil
+			return os.ErrProcessDone
 		}
-		return cmd.Process.Kill()
+		killGroup(cmd)
+		return nil
 	}
 	return plugin.NewClient(&plugin.ClientConfig{
 		HandshakeConfig:  sdk.Handshake,
@@ -147,31 +158,61 @@ func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *
 			Output: s.logOutput,
 			Level:  hclog.Debug,
 		}),
-	}), nil
+	}), cmd, nil
 }
 
-func dispense(client *plugin.Client) (pluginpb.PluginClient, error) {
+func dispense(client *plugin.Client) (*grpc.ClientConn, pluginpb.PluginClient, error) {
 	rpc, err := client.Client()
 	if err != nil {
-		return nil, fmt.Errorf("connect: %w", err)
+		return nil, nil, fmt.Errorf("connect: %w", err)
 	}
 	raw, err := rpc.Dispense(sdk.PluginKey)
 	if err != nil {
-		return nil, fmt.Errorf("dispense: %w", err)
+		return nil, nil, fmt.Errorf("dispense: %w", err)
 	}
-	return raw.(pluginpb.PluginClient), nil
+	return rpc.(*plugin.GRPCClient).Conn, raw.(pluginpb.PluginClient), nil
 }
 
-func waitExit(ctx context.Context, client *plugin.Client) {
+func waitExit(ctx context.Context, client *plugin.Client, conn *grpc.ClientConn) {
 	ticker := time.NewTicker(exitPollInterval)
 	defer ticker.Stop()
-	for !client.Exited() {
+	for !client.Exited() && healthy(ctx, conn) {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
 	}
+}
+
+func healthy(ctx context.Context, conn *grpc.ClientConn) bool {
+	ctx, cancel := context.WithTimeout(ctx, healthTimeout)
+	defer cancel()
+	_, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{Service: plugin.GRPCServiceName})
+	return err == nil
+}
+
+func stop(client *plugin.Client, cmd *exec.Cmd, graceful bool) {
+	done := make(chan struct{})
+	go func() {
+		client.Kill()
+		close(done)
+	}()
+	if graceful {
+		select {
+		case <-done:
+		case <-time.After(stopGrace):
+		}
+	}
+	killGroup(cmd)
+	<-done
+}
+
+func killGroup(cmd *exec.Cmd) {
+	if cmd.Process == nil || cmd.Process.Pid <= 0 {
+		return
+	}
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }
 
 func (s *Supervisor) setClient(name string, c pluginpb.PluginClient) {
