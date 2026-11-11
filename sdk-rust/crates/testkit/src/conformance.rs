@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use crate::ci;
 
-pub const SDK_GO_VERSION: &str = "sdk/v0.2.0";
+pub const SDK_GO_VERSION: &str = "sdk/v0.2.1";
 
 const GO_PACKAGE: &str = "github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance";
 const BINARY: &str = "plugin-conformance";
