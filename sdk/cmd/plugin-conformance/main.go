@@ -71,7 +71,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	command := args[sep+1:]
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...) //nolint:gosec
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Env = env
 	violations, err := plugintest.Check(ctx, cmd, opts)
 	if err != nil {
