@@ -17,10 +17,10 @@ Placeholders are written in angle brackets and are yours to fill in:
 The compose file sets three limits. They are estimates, not measurements, and the reasons are:
 
 - `mem_limit: 768m`. The gazette plugin downloads PDFs of up to 256 MiB into `/tmp`, and a tmpfs counts against the container's memory.
-- `/tmp` is a 320m tmpfs: 256 MiB for the largest PDF plus room for the plugins' sockets. It is `noexec` because sockets do not need exec.
+- `/tmp` is a 320m tmpfs: room for one PDF at the plugin's 256 MiB limit, plus the plugins' sockets. The plugin scans two editions at once, so two PDFs that large do not fit together. Real editions are a few megabytes. Holding two at the limit would take 512m of the 768m memory limit and leave 256m for the hub, both plugins and two `pdftotext` runs, so the tmpfs stays at one. It is `noexec` because sockets do not need exec.
 - `pids_limit: 256`. The hub starts the plugin processes and `pdftotext`, and threads count as pids.
 
-Watch them for a few days with `docker stats monitor-hub`. If the container is killed during a gazette check, raise the memory limit first. If a PDF download fails with "no space left", raise the tmpfs size. The pids limit should not need to change.
+Watch them for a few days with `docker stats monitor-hub`. If the container is killed during a gazette check, raise the memory limit first. If a PDF download fails with `No space left on device`, raise the tmpfs size and the memory limit by the same amount. The pids limit should not need to change.
 
 The image's own healthcheck stays in force. The reverse-proxy labels (`caddy` and `caddy.reverse_proxy`) and the `x-arcane` block follow the gazette's old compose file, with `hub.lan` as the address.
 
@@ -434,7 +434,7 @@ Coming forward again after a rollback is a new take-over. Before the hub starts,
 
 ## 8. Operating rules
 
-- **Resetting a plugin's database.** Do it only together with the hub's stored position for that plugin, and with the hub stopped. Reset alone, the plugin's numbering restarts below the hub's position, new alerts are never delivered, and they are pruned unread. Reset the hub's side too. This deletes the hub's stored events for that plugin, so back up the hub's database first. The table and columns are from `sql/schema/00001_hub.sql`.
+- **Resetting a plugin's database.** Do it only together with the hub's stored position for that plugin, and with the hub stopped. Reset alone, the plugin's numbering restarts below the hub's position, and its new alerts up to that position are never delivered. The gazette plugin tells you when this happens: it logs `the hub is ahead of this database: reset the hub's position for this plugin` at `error` level once per process, and `/api/plugins` shows `diario` as `failing` with the same text in `message`. Until the two agree it returns no events and confirms none, so it deletes none of them either. Reset the hub's side too. This deletes the hub's stored events for that plugin, so back up the hub's database first. The table and columns are from `sql/schema/00001_hub.sql`.
 
   ```bash
   docker exec -i <postgres-container> psql -U monitor_hub -d monitor_hub <<'SQL'
@@ -443,10 +443,33 @@ Coming forward again after a rollback is a new take-over. Before the hub starts,
   SQL
   ```
 
-  The delete is needed because the hub refuses to store an event id it already has. The next read is a new baseline, so nothing is announced. This statement has not been run against a production database.
+  The delete is needed because the hub silently drops an event whose id it already stored for that plugin, and a new database reuses ids such as `welcome`. The next read is a new baseline: what the plugin held when it started is stored and not announced. On a new gazette database the welcome and the first cycle's alerts are announced on the hub's second read, about 15 seconds later. This statement was run on a throwaway copy of the hub's schema, not on a production database.
 
 - **No retention in the hub.** The hub never deletes events or deliveries. Rows for a channel that is never paired or never works pile up. Prune them by hand if the database grows.
-- **Gazette client limits.** The plugin stops with a clear error on a gazette listing of more than 100 pages, a listing page over 4 MiB, a PDF over 256 MiB, or more than 64 MiB of text from one PDF. The 320m tmpfs is sized for the PDF limit.
+- **Nobody is told when a plugin is failing.** The hub sends no notification about a plugin's state. A `failing` plugin shows only in `/api/plugins`, with the reason in `message`, and in the plugin's own lines in the hub log. Look at it now and then:
+
+  ```bash
+  curl -s -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/plugins
+  docker compose logs --since 24h monitor-hub | grep 'plugin=diario' | grep -E 'level=(WARN|ERROR)'
+  ```
+
+- **Gazette client limits.** The plugin stops with a clear error on a gazette listing of more than 100 pages, a listing page over 4 MiB, a PDF over 256 MiB, or more than 64 MiB of text from one PDF.
+- **An edition that can never be read.** One edition the plugin cannot read, such as a broken PDF or one over the limits above, stops every later edition from being recorded, as in the Go program, and each cycle downloads them all again. `diario` stays `failing` with `could not read edition <title>: ...`. To get past it, read that edition yourself, then mark it as seen with its numeric id. The id is the `id` the gazette's media API gives for that title: the address is `DEFAULT_GAZETTE_API_URL` in `src/config.rs` of the diario-alerr repository, and adding `?mime_type=application/pdf&_fields=id,date_gmt,title&after=<day before>T00:00:00` lists the editions published after that time.
+
+  ```bash
+  docker exec <postgres-container> psql -U diario_alerr -d diario_alerr -c 'INSERT INTO seen_editions (edition_id) VALUES (<id>);'
+  ```
+
+  Then ask for a check (step 5) and expect `idle` with a fresh `last_success_at`.
+- **Two scans at once, and `/tmp`.** The plugin scans two editions at a time. Each download is a file named `edition-<six letters or digits>.pdf` in `/tmp` until `pdftotext` has read it. The 320m tmpfs holds one PDF at the 256 MiB limit, not two (see "The files"). A plugin process that is killed mid-scan leaves its file behind, and the plugin deletes such files the next time it starts.
+- **Two behaviors kept from the Go program.** An edition whose `date_gmt` is in the future moves the plugin's cursor there for good. After that the listing comes back empty, every cycle succeeds, and no edition is seen until you move the cursor back by hand:
+
+  ```bash
+  docker exec <postgres-container> psql -U diario_alerr -d diario_alerr -c 'SELECT cursor_at FROM monitor_state;'
+  docker exec <postgres-container> psql -U diario_alerr -d diario_alerr -c "UPDATE monitor_state SET cursor_at = '<publication time of the last real edition>';"
+  ```
+
+  A `cursor_at` in the future means this happened. The other one: a PDF without a text layer, such as a scan saved as images, reads as "no match", with no alert and no error.
 - **A plugin that never starts.** If `running` stays false, the plugin's configuration error is in the hub log. A misspelled `SEI__` or `DIARIO__` name is not an error: the plugin never sees it and uses the default or reports the variable missing.
 - **Secrets from files.** `_FILE` variables need the file inside the container. The compose file mounts none, so add a volume before using one.
 
