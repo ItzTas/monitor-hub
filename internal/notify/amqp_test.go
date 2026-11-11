@@ -476,20 +476,44 @@ func TestAMQPFailsFastForAWindowAfterAFailedConnect(t *testing.T) {
 }
 
 func TestAMQPErrorsNeverShowTheURLOrItsPassword(t *testing.T) {
-	address := "amqp://hub-user:" + amqpPassword + "@broker.example.org:5672/vhost"
-	cases := map[string]error{
-		"a dial error that echoes the address":            fmt.Errorf("could not connect to the broker: parse %q: boom", address),
-		"an error that echoes the password in both forms": fmt.Errorf("could not publish: %s hub-user %s", amqpPassword, url.QueryEscape(amqpPassword)),
+	password := "p@ss/wörd 9:f+x"
+	written := "p%40ss%2fw%c3%b6rd%209%3af+x"
+	address := "amqp://hub-user:" + written + "@broker.example.org:5672/vhost"
+	cases := map[string]struct{ shown, want string }{
+		"the address":                               {fmt.Sprintf("parse %q: invalid port", address), `parse "[redacted]": invalid port`},
+		"the user and password as written":          {"hub-user:" + written + "@broker.example.org", "[redacted]@broker.example.org"},
+		"the password as written":                   {written, "[redacted]"},
+		"the password as written in upper case hex": {"p%40ss%2Fw%C3%B6rd%209%3Af+x", "[redacted]"},
+		"the password decoded":                      {password, "[redacted]"},
+		"the password query escaped":                {url.QueryEscape(password), "[redacted]"},
+		"the password query escaped in lower hex":   {"p%40ss%2fw%c3%b6rd+9%3af%2bx", "[redacted]"},
+		"the password path escaped":                 {url.PathEscape(password), "[redacted]"},
+		"the password path escaped in lower hex":    {"p@ss%2fw%c3%b6rd%209:f+x", "[redacted]"},
 	}
-	for name, cause := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			broker := &fakeBroker{dialErr: cause}
-			a := testAMQP(address, broker)
+			a := testAMQP(address, &fakeBroker{dialErr: fmt.Errorf("refused %s for hub-user", tc.shown)})
 
 			err := a.Send(t.Context(), seiMessage("activity"))
 
-			assertNoSecret(t, err, address)
+			want := "could not connect to the broker: refused " + tc.want + " for hub-user"
+			if err == nil || err.Error() != want {
+				t.Errorf("error = %v, want %s", err, want)
+			}
 		})
+	}
+}
+
+func TestAMQPErrorsKeepTheBrokerUserWhereItIsPartOfTheExchangeName(t *testing.T) {
+	reason := "PRECONDITION_FAILED - inequivalent arg 'type' for exchange 'monitor-hub' in vhost '/': received 'topic' but current is 'fanout'"
+	failure := fmt.Errorf("could not declare the exchange monitor-hub: %w", &amqp.Error{Code: amqp.PreconditionFailed, Reason: reason, Server: true})
+	a := newAMQP(core.AMQP{URL: core.NewSecret("amqp://monitor:" + amqpPassword + "@broker/"), Exchange: "monitor-hub"})
+	a.dial = (&fakeBroker{prepare: func(l *fakeLink) { l.err = failure }}).dial
+
+	err := a.Send(t.Context(), seiMessage("activity"))
+
+	if err == nil || err.Error() != failure.Error() {
+		t.Errorf("error = %v, want %v", err, failure)
 	}
 }
 
@@ -499,7 +523,7 @@ func assertNoSecret(t *testing.T, err error, address string) {
 		t.Fatal("want an error")
 	}
 	for _, shown := range []string{err.Error(), fmt.Sprintf("%+v", err), fmt.Sprintf("%#v", err), fmt.Sprintf("%v", errors.Unwrap(err))} {
-		for _, secret := range []string{amqpPassword, "hub-user", address} {
+		for _, secret := range []string{amqpPassword, address} {
 			if strings.Contains(shown, secret) {
 				t.Errorf("the error shows %q: %s", secret, shown)
 			}
@@ -767,7 +791,7 @@ func TestAMQPBrokerErrorsLeavePasswordOut(t *testing.T) {
 		want string
 	}{
 		"wrong password":         {wrongPassword.String(), "could not connect to the broker: "},
-		"exchange of other type": {broker.url, "could not declare the exchange " + broker.exchange + ": "},
+		"exchange of other type": {broker.url, "could not declare the exchange "},
 	}
 	for name, tt := range tests {
 		err := broker.sender(t, tt.url).Send(t.Context(), NewTestMessage())

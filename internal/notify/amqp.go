@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,8 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -179,18 +182,39 @@ func (a *amqpChannel) redacted(prefix string, err error) error {
 }
 
 func (a *amqpChannel) scrub(text string) string {
-	address := a.url.Reveal()
-	secrets := []string{address}
-	if parsed, err := url.Parse(address); err == nil && parsed.User != nil {
-		password, _ := parsed.User.Password()
-		secrets = append(secrets, parsed.User.String(), password, url.QueryEscape(password), parsed.User.Username())
-	}
-	for _, secret := range secrets {
-		if secret != "" {
-			text = strings.ReplaceAll(text, secret, redactedText)
-		}
+	for _, secret := range credentialForms(a.url.Reveal()) {
+		text = strings.ReplaceAll(text, secret, redactedText)
 	}
 	return text
+}
+
+func credentialForms(address string) []string {
+	forms := []string{address}
+	_, rest, _ := strings.Cut(address, "://")
+	if end := strings.IndexAny(rest, "/?#"); end >= 0 {
+		rest = rest[:end]
+	}
+	at := strings.LastIndexByte(rest, '@')
+	if at < 0 {
+		return forms
+	}
+	userinfo := rest[:at]
+	_, written, _ := strings.Cut(userinfo, ":")
+	if written == "" {
+		return forms
+	}
+	forms = append(forms, userinfo, written)
+	if password, err := url.PathUnescape(written); err == nil {
+		forms = append(forms, password, url.QueryEscape(password), url.PathEscape(password))
+	}
+	escape := regexp.MustCompile(`%[0-9A-Fa-f]{2}`)
+	cased := make([]string, 0, 2*len(forms))
+	for _, form := range forms {
+		cased = append(cased, escape.ReplaceAllStringFunc(form, strings.ToUpper), escape.ReplaceAllStringFunc(form, strings.ToLower))
+	}
+	forms = append(forms, cased...)
+	slices.SortFunc(forms, func(a, b string) int { return cmp.Or(cmp.Compare(len(b), len(a)), strings.Compare(a, b)) })
+	return slices.Compact(forms)
 }
 
 func newAMQPMessage(msg Message) (amqpMessage, error) {
