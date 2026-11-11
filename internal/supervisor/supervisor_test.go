@@ -157,19 +157,9 @@ func childPID(t *testing.T, c pluginpb.PluginClient) int {
 	return pid
 }
 
-func readStat(pid int) (byte, int, bool) {
-	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
-	if err != nil {
-		return 0, 0, false
-	}
-	fields := strings.Fields(string(raw[strings.LastIndexByte(string(raw), ')')+1:]))
-	pgid, err := strconv.Atoi(fields[2])
-	return fields[0][0], pgid, err == nil
-}
-
 func running(pid int) bool {
 	state, _, ok := readStat(pid)
-	return ok && state != 'Z'
+	return ok && state != 'Z' && state != 'X'
 }
 
 func TestCrashWithChildHoldingStdioIsRestarted(t *testing.T) {
@@ -200,6 +190,47 @@ func TestShutdownKillsPluginProcessGroup(t *testing.T) {
 		if running(pid) {
 			t.Errorf("process %d still running after Run returned", pid)
 		}
+	}
+}
+
+func startGroup(t *testing.T) int {
+	t.Helper()
+	cmd := exec.CommandContext(context.Background(), "sleep", "60")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return cmd.Process.Pid
+}
+
+func TestAwaitGroupExitReportsMembersStillRunningAtTheLimit(t *testing.T) {
+	pgid := startGroup(t)
+
+	left, gone := awaitGroupExit(pgid, 50*time.Millisecond)
+
+	if gone || !slices.Equal(left, []int{pgid}) {
+		t.Errorf("awaitGroupExit = %v, %t; want [%d], false", left, gone, pgid)
+	}
+}
+
+func TestAwaitGroupExitReturnsOnceTheMembersAreKilledEvenIfNobodyReapsThem(t *testing.T) {
+	pgid := startGroup(t)
+	delay := 100 * time.Millisecond
+	time.AfterFunc(delay, func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+	started := time.Now()
+
+	left, gone := awaitGroupExit(pgid, 10*time.Second)
+
+	waited := time.Since(started)
+	if !gone || left != nil || waited < delay || waited > 5*time.Second {
+		t.Errorf("awaitGroupExit = %v, %t after %s; want nil, true soon after the kill at %s", left, gone, waited, delay)
+	}
+	if state, _, ok := readStat(pgid); !ok || state != 'Z' {
+		t.Errorf("member %d is in state %q, want an unreaped zombie still in the group", pgid, state)
 	}
 }
 

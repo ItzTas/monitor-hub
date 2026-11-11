@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,8 +27,10 @@ import (
 )
 
 const (
-	exitPollInterval = 500 * time.Millisecond
-	stopGrace        = 3 * time.Second
+	exitPollInterval  = 500 * time.Millisecond
+	stopGrace         = 3 * time.Second
+	groupExitLimit    = 2 * time.Second
+	groupPollInterval = 5 * time.Millisecond
 )
 
 type Supervisor struct {
@@ -118,7 +122,7 @@ func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Dur
 	defer closePidfd(cmd)
 	rpc, err := dispense(client)
 	if err != nil {
-		stop(client, cmd, false)
+		s.stop(name, client, cmd, false)
 		return 0, err
 	}
 	ready.Store(true)
@@ -132,7 +136,7 @@ func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Dur
 	}
 	uptime := time.Since(started)
 	s.dropClient(name)
-	stop(client, cmd, ctx.Err() != nil)
+	s.stop(name, client, cmd, ctx.Err() != nil)
 	<-exited
 	if ctx.Err() != nil {
 		s.log.Info("plugin stopped", "plugin", name)
@@ -217,7 +221,7 @@ func closePidfd(cmd *exec.Cmd) {
 	}
 }
 
-func stop(client *plugin.Client, cmd *exec.Cmd, graceful bool) {
+func (s *Supervisor) stop(name string, client *plugin.Client, cmd *exec.Cmd, graceful bool) {
 	done := make(chan struct{})
 	go func() {
 		client.Kill()
@@ -231,13 +235,76 @@ func stop(client *plugin.Client, cmd *exec.Cmd, graceful bool) {
 	}
 	killGroup(cmd)
 	<-done
+	pgid, ok := processGroup(cmd)
+	if !ok {
+		return
+	}
+	if left, gone := awaitGroupExit(pgid, groupExitLimit); !gone {
+		s.log.Warn("plugin processes still running after the kill", "plugin", name, "process_group", pgid, "pids", left, "waited", groupExitLimit)
+	}
+}
+
+func processGroup(cmd *exec.Cmd) (int, bool) {
+	if cmd.Process == nil || cmd.Process.Pid <= 0 {
+		return 0, false
+	}
+	return cmd.Process.Pid, true
 }
 
 func killGroup(cmd *exec.Cmd) {
-	if cmd.Process == nil || cmd.Process.Pid <= 0 {
+	pgid, ok := processGroup(cmd)
+	if !ok {
 		return
 	}
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+}
+
+func awaitGroupExit(pgid int, limit time.Duration) ([]int, bool) {
+	deadline := time.Now().Add(limit)
+	for {
+		left, err := liveMembers(pgid)
+		if err == nil && len(left) == 0 {
+			return nil, true
+		}
+		if time.Now().After(deadline) {
+			return left, false
+		}
+		time.Sleep(groupPollInterval)
+	}
+}
+
+func liveMembers(pgid int) ([]int, error) {
+	if errors.Is(unix.Kill(-pgid, 0), unix.ESRCH) {
+		return nil, nil
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	var live []int
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		if state, group, ok := readStat(pid); ok && group == pgid && state != 'Z' && state != 'X' {
+			live = append(live, pid)
+		}
+	}
+	return live, nil
+}
+
+func readStat(pid int) (byte, int, bool) {
+	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return 0, 0, false
+	}
+	fields := strings.Fields(string(raw[bytes.LastIndexByte(raw, ')')+1:]))
+	if len(fields) < 3 || fields[0] == "" {
+		return 0, 0, false
+	}
+	pgid, err := strconv.Atoi(fields[2])
+	return fields[0][0], pgid, err == nil
 }
 
 func (s *Supervisor) setClient(name string, c pluginpb.PluginClient) {
