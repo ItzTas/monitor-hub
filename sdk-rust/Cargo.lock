@@ -612,6 +612,7 @@ dependencies = [
 name = "monitor-hub-plugin-testkit"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "tempfile",
  "tokio",
  "tokio-postgres",

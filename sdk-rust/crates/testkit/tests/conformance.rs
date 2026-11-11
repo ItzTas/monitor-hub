@@ -8,6 +8,8 @@ use monitor_hub_plugin_testkit::conformance::{Conformance, Outcome, run};
 
 #[path = "../src/ci.rs"]
 mod ci;
+#[path = "../../plugin/tests/support/example.rs"]
+mod example;
 
 struct Setup {
     example: PathBuf,
@@ -41,30 +43,6 @@ fn build_command() -> Result<PathBuf, String> {
     Ok(binary)
 }
 
-fn build_example() -> PathBuf {
-    let status = Command::new(env!("CARGO"))
-        .args([
-            "build",
-            "--quiet",
-            "-p",
-            "monitor-hub-plugin",
-            "--example",
-            "fixed",
-        ])
-        .status()
-        .expect("run cargo build");
-    assert!(
-        status.success(),
-        "cargo build --example fixed failed: {status}"
-    );
-    let test_binary = env::current_exe().expect("test binary path");
-    test_binary
-        .parent()
-        .and_then(Path::parent)
-        .expect("target profile dir")
-        .join("examples/fixed")
-}
-
 fn setup() -> Option<&'static Setup> {
     static SETUP: OnceLock<Option<Setup>> = OnceLock::new();
     SETUP
@@ -79,7 +57,7 @@ fn setup() -> Option<&'static Setup> {
             };
             unsafe { env::set_var("PLUGIN_CONFORMANCE", binary) };
             Some(Setup {
-                example: build_example(),
+                example: example::fixed().to_owned(),
             })
         })
         .as_ref()

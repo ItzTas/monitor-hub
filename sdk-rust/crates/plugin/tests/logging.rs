@@ -1,11 +1,10 @@
-use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
-use std::sync::{OnceLock, mpsc};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::DateTime;
 use monitor_hub_plugin::logging::{LoggingError, init};
@@ -13,43 +12,20 @@ use monitor_hub_plugin::{MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE};
 use serde_json::{Map, Value};
 use tempfile::TempDir;
 
+#[path = "support/example.rs"]
+mod example;
+
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct Run {
     stdout: String,
     stderr: String,
-    output: Output,
-}
-
-fn example() -> &'static Path {
-    static PATH: OnceLock<PathBuf> = OnceLock::new();
-    PATH.get_or_init(|| {
-        let status = Command::new(env!("CARGO"))
-            .args([
-                "build",
-                "--quiet",
-                "-p",
-                "monitor-hub-plugin",
-                "--example",
-                "fixed",
-            ])
-            .status()
-            .expect("run cargo build");
-        assert!(
-            status.success(),
-            "cargo build --example fixed failed: {status}"
-        );
-        let test_binary = env::current_exe().expect("test binary path");
-        let profile = test_binary
-            .parent()
-            .and_then(Path::parent)
-            .expect("target profile dir");
-        profile.join("examples/fixed")
-    })
+    status: ExitStatus,
 }
 
 fn spawn(switches: &[&str], socket_dir: &Path) -> Child {
-    Command::new(example())
+    Command::new(example::fixed())
         .env_clear()
         .env("TMPDIR", socket_dir)
         .env(MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE)
@@ -103,12 +79,33 @@ fn run_demo() -> Run {
     serve_then_stop(spawn(&["LOG_DEMO"], dir.path()), |_| {})
 }
 
-fn finish(child: Child, reader: thread::JoinHandle<String>) -> Run {
-    let output = child.wait_with_output().expect("wait for the example");
+fn finish(mut child: Child, reader: thread::JoinHandle<String>) -> Run {
+    let mut stderr = child.stderr.take().expect("piped stderr");
+    let stderr = thread::spawn(move || {
+        let mut text = String::new();
+        stderr.read_to_string(&mut text).expect("read stderr");
+        text
+    });
+    let status = wait_exit(&mut child);
     Run {
         stdout: reader.join().expect("stdout reader"),
-        stderr: String::from_utf8(output.stderr.clone()).expect("stderr is UTF-8"),
-        output,
+        stderr: stderr.join().expect("stderr reader"),
+        status,
+    }
+}
+
+fn wait_exit(child: &mut Child) -> ExitStatus {
+    let deadline = Instant::now() + EXIT_TIMEOUT;
+    loop {
+        if let Some(status) = child.try_wait().expect("poll the example") {
+            return status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the example did not exit within {EXIT_TIMEOUT:?}");
+        }
+        thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -174,7 +171,7 @@ fn a_panic_is_one_error_line_on_stderr() {
 
     let run = finish(child, reader);
 
-    assert_eq!(run.output.status.code(), Some(101));
+    assert_eq!(run.status.code(), Some(101));
     assert_eq!(run.stdout, "");
     let lines = json_lines(&run.stderr);
     assert_eq!(lines.len(), 1, "stderr: {:?}", run.stderr);
@@ -218,7 +215,7 @@ fn a_socket_cleanup_failure_is_a_json_line() {
         socket = path.to_owned();
     });
 
-    assert_eq!(run.output.status.code(), Some(0));
+    assert_eq!(run.status.code(), Some(0));
     assert_eq!(socket_path(&run.stdout), socket);
     let lines = json_lines(&run.stderr);
     assert_eq!(lines.len(), 1, "stderr: {:?}", run.stderr);
@@ -238,7 +235,7 @@ fn a_serve_failure_is_a_json_error_line() {
 
     let run = finish(child, reader);
 
-    assert_eq!(run.output.status.code(), Some(1));
+    assert_eq!(run.status.code(), Some(1));
     assert_eq!(run.stdout, "");
     let error = serve_error(&run.stderr);
     let want = format!(
@@ -253,7 +250,7 @@ fn a_serve_failure_is_a_json_error_line() {
 fn a_handshake_write_failure_is_a_json_error_line_and_leaves_no_socket() {
     let dir = TempDir::new().expect("create temp dir");
     let full = File::create("/dev/full").expect("open /dev/full");
-    let child = Command::new(example())
+    let child = Command::new(example::fixed())
         .env_clear()
         .env("TMPDIR", dir.path())
         .env(MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE)
@@ -265,7 +262,7 @@ fn a_handshake_write_failure_is_a_json_error_line_and_leaves_no_socket() {
 
     let run = finish(child, thread::spawn(String::new));
 
-    assert_eq!(run.output.status.code(), Some(1));
+    assert_eq!(run.status.code(), Some(1));
     assert_eq!(
         serve_error(&run.stderr),
         "cannot write the handshake line: No space left on device (os error 28)"

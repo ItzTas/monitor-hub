@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::ops::{Deref, DerefMut};
@@ -6,7 +5,7 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::{OnceLock, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -17,6 +16,9 @@ use tonic::transport::{Channel, Endpoint};
 use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::health_client::HealthClient;
+
+#[path = "support/example.rs"]
+mod example;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -45,35 +47,8 @@ impl Drop for Plugin {
     }
 }
 
-fn example() -> &'static Path {
-    static PATH: OnceLock<PathBuf> = OnceLock::new();
-    PATH.get_or_init(|| {
-        let status = Command::new(env!("CARGO"))
-            .args([
-                "build",
-                "--quiet",
-                "-p",
-                "monitor-hub-plugin",
-                "--example",
-                "fixed",
-            ])
-            .status()
-            .expect("run cargo build");
-        assert!(
-            status.success(),
-            "cargo build --example fixed failed: {status}"
-        );
-        let test_binary = env::current_exe().expect("test binary path");
-        let profile = test_binary
-            .parent()
-            .and_then(Path::parent)
-            .expect("target profile dir");
-        profile.join("examples/fixed")
-    })
-}
-
 fn command(socket_dir: &Path) -> Command {
-    let mut cmd = Command::new(example());
+    let mut cmd = Command::new(example::fixed());
     cmd.env_clear()
         .env("TMPDIR", socket_dir)
         .stdin(Stdio::null())
@@ -240,7 +215,7 @@ fn the_socket_is_readable_and_writable_by_its_owner_only() {
     let dir = TempDir::new().expect("create temp dir");
     let mut cmd = Command::new("/bin/sh");
     cmd.args(["-c", "umask 0 && exec \"$0\""])
-        .arg(example())
+        .arg(example::fixed())
         .env_clear()
         .env("TMPDIR", dir.path())
         .env(MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE)
