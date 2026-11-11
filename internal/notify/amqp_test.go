@@ -683,7 +683,11 @@ func newTestBroker(t *testing.T) *testBroker {
 		t.Fatalf("open a channel on the test broker: %v", err)
 	}
 	broker := &testBroker{url: address, exchange: fmt.Sprintf("monitor-hub-test-%d", time.Now().UnixNano()), channel: channel}
-	t.Cleanup(func() { _ = channel.ExchangeDelete(broker.exchange, false, false) })
+	t.Cleanup(func() {
+		if err := channel.ExchangeDelete(broker.exchange, false, false); err != nil {
+			t.Errorf("delete the test exchange %s: %v", broker.exchange, err)
+		}
+	})
 	return broker
 }
 
