@@ -8,7 +8,7 @@ services:
     container_name: monitor-hub
     cpus: "1.0"
     # Estimate, not a measurement: the hub, two plugin processes and, while the gazette plugin
-    # reads a PDF, up to 320m of tmpfs plus pdftotext. Watch it with `docker stats`.
+    # reads PDFs, up to 320m of tmpfs plus pdftotext. Watch it with `docker stats`.
     mem_limit: 768m
     # Estimate. Threads count as pids; the hub, the plugins and pdftotext should need well under
     # this. The limit only stops a runaway fork.
@@ -16,8 +16,10 @@ services:
     restart: unless-stopped
     read_only: true
     tmpfs:
-      # Plugin sockets and the gazette plugin's PDF downloads (up to 256 MiB each). Sockets need
-      # no exec, so this stays noexec.
+      # Plugin sockets and the gazette plugin's PDF downloads. That plugin scans two editions at
+      # once, each PDF up to 256 MiB; real editions are a few megabytes. 320m holds one PDF at the
+      # limit, not two: two would take 512m of the 768m above and leave 256m for the hub, both
+      # plugins and two pdftotext runs. Sockets need no exec, so this stays noexec.
       - /tmp:size=320m,mode=1777,noexec,nosuid,nodev
     cap_drop:
       - ALL
