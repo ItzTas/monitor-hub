@@ -504,16 +504,78 @@ func TestAMQPErrorsNeverShowTheURLOrItsPassword(t *testing.T) {
 	}
 }
 
+func TestAMQPErrorsRedactAShortPasswordOnlyWhereAURLShowsIt(t *testing.T) {
+	password := "m/n:o p"
+	written := "m%2fn%3ao%20p"
+	echoed := func(user, spelling string) string {
+		return "amqp://" + user + ":" + spelling + "@broker.example.org/vhost"
+	}
+	cases := map[string]struct{ shown, want string }{
+		"the address as written":                         {echoed("hub-user", written), "[redacted]"},
+		"the address in upper case hex":                  {echoed("hub-user", "m%2Fn%3Ao%20p"), "amqp://[redacted]@broker.example.org/vhost"},
+		"the address with the password decoded":          {echoed("hub-user", password), "amqp://[redacted]@broker.example.org/vhost"},
+		"the address with the password query escaped":    {echoed("hub-user", url.QueryEscape(password)), "amqp://[redacted]@broker.example.org/vhost"},
+		"the address query escaped in lower hex":         {echoed("hub-user", "m%2fn%3ao+p"), "amqp://[redacted]@broker.example.org/vhost"},
+		"the address with the password path escaped":     {echoed("hub-user", url.PathEscape(password)), "amqp://[redacted]@broker.example.org/vhost"},
+		"the address path escaped in lower hex":          {echoed("hub-user", "m%2fn:o%20p"), "amqp://[redacted]@broker.example.org/vhost"},
+		"the address with the user spelled differently":  {echoed("hub%2Duser", written), "amqp://hub%2Duser:[redacted]@broker.example.org/vhost"},
+		"the password alone, outside any address":        {password, password},
+		"the password alone, as written outside any url": {written, written},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := testAMQP(echoed("hub-user", written), &fakeBroker{dialErr: fmt.Errorf("refused %s for hub-user", tc.shown)})
+
+			err := a.Send(t.Context(), seiMessage("activity"))
+
+			want := "could not connect to the broker: refused " + tc.want + " for hub-user"
+			if err == nil || err.Error() != want {
+				t.Errorf("error = %v, want %s", err, want)
+			}
+		})
+	}
+}
+
+func TestAMQPErrorsRedactTheBarePasswordFromEightCharacters(t *testing.T) {
+	cases := map[string]struct{ password, word, want string }{
+		"1 character":  {"a", "banana", "banana"},
+		"2 characters": {"an", "banana", "banana"},
+		"7 characters": {"monitor", "monitor-hub", "monitor-hub"},
+		"8 characters": {"exchange", "exchanges", "[redacted]s"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			address := "amqp://hub-user:" + tc.password + "@broker/"
+			a := testAMQP(address, &fakeBroker{dialErr: fmt.Errorf("refused %s in %s", address, tc.word)})
+
+			err := a.Send(t.Context(), seiMessage("activity"))
+
+			want := "could not connect to the broker: refused [redacted] in " + tc.want
+			if err == nil || err.Error() != want {
+				t.Errorf("error = %v, want %s", err, want)
+			}
+		})
+	}
+}
+
 func TestAMQPErrorsKeepTheBrokerUserWhereItIsPartOfTheExchangeName(t *testing.T) {
 	reason := "PRECONDITION_FAILED - inequivalent arg 'type' for exchange 'monitor-hub' in vhost '/': received 'topic' but current is 'fanout'"
 	failure := fmt.Errorf("could not declare the exchange monitor-hub: %w", &amqp.Error{Code: amqp.PreconditionFailed, Reason: reason, Server: true})
-	a := newAMQP(core.AMQP{URL: core.NewSecret("amqp://monitor:" + amqpPassword + "@broker/"), Exchange: "monitor-hub"})
-	a.dial = (&fakeBroker{prepare: func(l *fakeLink) { l.err = failure }}).dial
+	cases := map[string]string{
+		"a password of its own":            "amqp://monitor:" + amqpPassword + "@broker/",
+		"a short password equal to a word": "amqp://monitor:monitor@broker/",
+	}
+	for name, address := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := newAMQP(core.AMQP{URL: core.NewSecret(address), Exchange: "monitor-hub"})
+			a.dial = (&fakeBroker{prepare: func(l *fakeLink) { l.err = failure }}).dial
 
-	err := a.Send(t.Context(), seiMessage("activity"))
+			err := a.Send(t.Context(), seiMessage("activity"))
 
-	if err == nil || err.Error() != failure.Error() {
-		t.Errorf("error = %v, want %v", err, failure)
+			if err == nil || err.Error() != failure.Error() {
+				t.Errorf("error = %v, want %v", err, failure)
+			}
+		})
 	}
 }
 

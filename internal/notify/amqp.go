@@ -7,12 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
@@ -20,18 +22,22 @@ import (
 )
 
 const (
-	amqpName       = "amqp"
-	amqpTimeout    = 30 * time.Second
-	amqpRetryAfter = time.Minute
-	amqpHeartbeat  = 10 * time.Second
-	amqpCloseWait  = 2 * time.Second
-	amqpTestKey    = "test"
-	amqpBatchKey   = "batch"
-	maxKindLength  = 200
-	redactedText   = "[redacted]"
+	amqpName        = "amqp"
+	amqpTimeout     = 30 * time.Second
+	amqpRetryAfter  = time.Minute
+	amqpHeartbeat   = 10 * time.Second
+	amqpCloseWait   = 2 * time.Second
+	amqpTestKey     = "test"
+	amqpBatchKey    = "batch"
+	maxKindLength   = 200
+	redactedText    = "[redacted]"
+	minBarePassword = 8
 )
 
-var errAMQPClosed = errors.New("the AMQP channel is closed")
+var (
+	errAMQPClosed = errors.New("the AMQP channel is closed")
+	percentEscape = regexp.MustCompile(`%[0-9A-Fa-f]{2}`)
+)
 
 type amqpMessage struct {
 	key        string
@@ -182,39 +188,47 @@ func (a *amqpChannel) redacted(prefix string, err error) error {
 }
 
 func (a *amqpChannel) scrub(text string) string {
-	for _, secret := range credentialForms(a.url.Reveal()) {
-		text = strings.ReplaceAll(text, secret, redactedText)
-	}
-	return text
+	return credentialRedactor(a.url.Reveal()).Replace(text)
 }
 
-func credentialForms(address string) []string {
-	forms := []string{address}
+func credentialRedactor(address string) *strings.Replacer {
+	replacements := map[string]string{address: redactedText}
 	_, rest, _ := strings.Cut(address, "://")
 	if end := strings.IndexAny(rest, "/?#"); end >= 0 {
 		rest = rest[:end]
 	}
-	at := strings.LastIndexByte(rest, '@')
-	if at < 0 {
-		return forms
+	userinfo := rest[:max(strings.LastIndexByte(rest, '@'), 0)]
+	user, written, _ := strings.Cut(userinfo, ":")
+	if written != "" {
+		addPasswordForms(replacements, user, written)
 	}
-	userinfo := rest[:at]
-	_, written, _ := strings.Cut(userinfo, ":")
-	if written == "" {
-		return forms
+	olds := slices.SortedFunc(maps.Keys(replacements), func(a, b string) int {
+		return cmp.Or(cmp.Compare(len(b), len(a)), strings.Compare(a, b))
+	})
+	pairs := make([]string, 0, 2*len(olds))
+	for _, old := range olds {
+		pairs = append(pairs, old, replacements[old])
 	}
-	forms = append(forms, userinfo, written)
-	if password, err := url.PathUnescape(written); err == nil {
-		forms = append(forms, password, url.QueryEscape(password), url.PathEscape(password))
+	return strings.NewReplacer(pairs...)
+}
+
+func addPasswordForms(replacements map[string]string, user, written string) {
+	spellings := []string{written}
+	password := written
+	if decoded, err := url.PathUnescape(written); err == nil {
+		password = decoded
+		spellings = append(spellings, decoded, url.QueryEscape(decoded), url.PathEscape(decoded))
 	}
-	escape := regexp.MustCompile(`%[0-9A-Fa-f]{2}`)
-	cased := make([]string, 0, 2*len(forms))
-	for _, form := range forms {
-		cased = append(cased, escape.ReplaceAllStringFunc(form, strings.ToUpper), escape.ReplaceAllStringFunc(form, strings.ToLower))
+	bare := utf8.RuneCountInString(password) >= minBarePassword
+	for _, spelling := range spellings {
+		for _, form := range []string{spelling, percentEscape.ReplaceAllStringFunc(spelling, strings.ToUpper), percentEscape.ReplaceAllStringFunc(spelling, strings.ToLower)} {
+			replacements[user+":"+form+"@"] = redactedText + "@"
+			replacements[":"+form+"@"] = ":" + redactedText + "@"
+			if bare {
+				replacements[form] = redactedText
+			}
+		}
 	}
-	forms = append(forms, cased...)
-	slices.SortFunc(forms, func(a, b string) int { return cmp.Or(cmp.Compare(len(b), len(a)), strings.Compare(a, b)) })
-	return slices.Compact(forms)
 }
 
 func newAMQPMessage(msg Message) (amqpMessage, error) {
