@@ -116,7 +116,13 @@ async fn main() -> ExitCode {
 }
 ```
 
-`serve` does the whole startup described in the protocol, then runs until the hub asks the plugin to stop or the process receives SIGTERM or SIGINT. It returns `ServeError::NotLaunchedByHub` when the magic cookie is missing, and by then it has already printed one line to stderr saying the binary is a plugin, so do not print it again. Nothing but the handshake line may go to stdout, so never `println!` in a plugin.
+`serve` does the whole startup described in the protocol, then runs until the hub asks the plugin to stop or the process receives SIGTERM or SIGINT. Nothing but the handshake line may go to stdout, so never `println!` in a plugin.
+
+`serve` returns a `ServeError` when it stops without a clean shutdown. In every case `main` should exit with a failure code:
+
+- `NotLaunchedByHub`: the magic cookie is missing, so someone ran the binary by hand. `serve` has already printed one line to stderr (the text is in `NOT_LAUNCHED_BY_HUB`), so print nothing more.
+- `Socket(error)`: `serve` could not register its signal handlers or create the socket, for example because `TMPDIR` does not exist or the path is too long. Nothing was written to stdout. Log the error.
+- `Transport(error)`: the gRPC server failed after the handshake. Log the error.
 
 The `Plugin` trait and its messages are in `monitor_hub_plugin::proto`. The rules for `Events`, `seq`, `after` and `UNAVAILABLE` are in the protocol document.
 
@@ -130,7 +136,7 @@ The `Plugin` trait and its messages are in `monitor_hub_plugin::proto`. The rule
 monitor_hub_plugin::logging::init("info")?;
 ```
 
-`init` installs a global `tracing` subscriber that writes one JSON object per line to stderr, in the format the hub parses: `@level`, `@message`, `@module` and `@timestamp`, plus one key per event field. The level is `trace`, `debug`, `info`, `warn` or `error`, in any letter case. A field named like one of those keys, or like one of the names the hub renames (`plugin`, `module`, `time`, `level`, `msg`, `source`), is written as `field_<name>`. A line is at most 64 KiB: a longer message is cut and marked `[truncated]`. A panic is reported as one `error` line before the process exits.
+`init` installs a global `tracing` subscriber that writes one JSON object per line to stderr, in the format the hub parses: `@level`, `@message`, `@module` and `@timestamp`, plus one key per event field. The level is `trace`, `debug`, `info`, `warn` or `error`, in any letter case. A field named like one of those keys, or like one of the names the hub renames (`plugin`, `module`, `time`, `level`, `msg`, `source`), is written as `field_<name>`. A line is at most 64 KiB: a longer message is cut and marked `[truncated]`. `init` also installs a panic hook. A panic in any thread or task is reported as one `error` line with its location and message. The hook changes nothing else: a panic in `main` still ends the process, and one in a spawned task or thread does not by itself.
 
 `init` returns `LoggingError::UnknownLevel` for any other level and `LoggingError::AlreadyInitialized` when a global subscriber already exists. When it fails nothing is installed, so a `tracing::error!` at that point goes nowhere. A plugin that reads its level from configuration should print the error to stderr itself and exit, as the example above does.
 
@@ -237,10 +243,14 @@ fn the_plugin_conforms() {
 `run` finds the command in this order:
 
 1. The `PLUGIN_CONFORMANCE` environment variable: the path of an already built `plugin-conformance` binary.
-2. `go run github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.2.0`, when `go` is on `PATH`. The Go tag is `sdk/v0.2.0`, and the constant `SDK_GO_VERSION` holds it.
+2. `go install github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.2.0` into a temporary directory, once per process, then that binary, when `go` is on `PATH`. The Go tag is `sdk/v0.2.0`, and the constant `SDK_GO_VERSION` holds it.
 3. Otherwise `Outcome::Skipped`, or a panic when `CI` is set and not empty.
 
-`Outcome::Failed` carries the command's stderr, one line per violation. If the command was called wrongly, the message says so. That is a bug in the runner, not in your plugin.
+`Outcome::Failed` carries one of three things:
+
+- The conformance command's stderr, one line per violation.
+- A message that starts with "the conformance command" and says it could not be fetched or built, followed by the Go tool's output. This happens in the `go` mode, before your plugin is started.
+- A message about an unexpected end: the command was called wrongly (a bug in the runner, not in your plugin), did not finish in time, could not be started, or was killed.
 
 ## Working on the SDK
 

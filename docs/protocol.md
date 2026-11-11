@@ -156,14 +156,14 @@ State that belongs to the monitor, such as the processes already seen or the edi
 - Until the hub confirms, keep the events and keep returning them. If the hub asks again with the same `after`, return the same events again.
 - `id` is stable and unique per plugin. It identifies the thing that happened, not the delivery. Sending the same event twice is allowed: the hub deduplicates on `(plugin, id)`, so a second copy is dropped. An event that is re-sent with a new `seq` must keep its old `id`.
 
-The other `Event` fields (the conformance suite, described below, also fails an event with an empty `title` or no `occurred_at`):
+The other `Event` fields. Two are required, and different parts enforce them: the hub rejects the whole page when an event has no valid `occurred_at`, and the [conformance suite](#conformance) fails an event with an empty `title`. The hub does not check `title`.
 
 | Field | Meaning |
 |---|---|
 | `kind` | One of the kind ids from `Describe`. |
 | `severity` | `SEVERITY_INFO` or `SEVERITY_URGENT`. Never send `SEVERITY_UNSPECIFIED`. |
-| `occurred_at` | Required. When the event happened, not when it was reported. The hub rejects an event without a valid `occurred_at`. |
-| `title` | Required. The notification title. It must not be empty. |
+| `occurred_at` | Required. When the event happened, not when it was reported. The hub rejects the page that holds an event without it. |
+| `title` | The notification title. It must not be empty. The conformance suite checks this, the hub does not. |
 | `body` | Text for the notification. |
 | `url` | A link to the source, or empty. |
 | `payload` | Free-form structured data (`google.protobuf.Struct`). The hub stores it and passes it on without reading it. |
@@ -255,7 +255,7 @@ The suite checks that:
 - `Events` after the last `seq` is empty, and `Events` after the first `seq` equals the first list without its first event.
 - `Check` succeeds.
 
-The whole run is limited to 30 seconds plus `-ready-timeout`. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
+The checks are limited to 30 seconds plus `-ready-timeout`. Starting the plugin and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
 
 The Rust SDK's testkit runs this command from `cargo test`. See [`sdk-rust/README.md`](../sdk-rust/README.md).
 
