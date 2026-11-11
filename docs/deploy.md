@@ -28,45 +28,64 @@ The image's own healthcheck stays in force. The reverse-proxy labels (`caddy` an
 
 ### Pin the old stacks to their Go images
 
-Do this first. Once the Rust versions are released, the tag `latest` of both old images is the Rust plugin image, which does not run on its own. A rollback must start the Go programs, so pin the old stacks now, while they still work.
+Do this first, for two reasons.
+
+- Both old compose files follow the tag `latest`. When a Rust version reaches the default branch of its repository, CI publishes it as `latest`. The Rust image is a plugin and does not run on its own: started alone, it prints that the hub did not launch it and exits at once, and `restart: unless-stopped` turns that into a restart loop while nothing watches the gazette or SEI. Anything that pulls on the board would swap the working program for that loop.
+- A rollback must start the Go programs, so the old stacks have to point at the Go images.
+
+For diario-alerr this sets the order of the next two moves. The Rust version is released as `2.0.0`, but its pull request into `main`, https://github.com/ItzTas/diario-alerr/pull/1, is left open on purpose, because merging it moves `latest`. Pin first, then merge. The same holds for sei-monitor once its Rust version is released: its old compose file names `:latest` directly.
 
 The Go release `v1.0.0` of each repository published its image as `ghcr.io/itztas/<name>:1.0.0` (the tag has no `v`).
 
-- sei-monitor: its compose file has a literal image line. Change it in `/opt/stacks/sei-monitor/compose.yaml`:
+1. sei-monitor: its compose file has a literal image line. Change it in `/opt/stacks/sei-monitor/compose.yaml`:
 
-  ```yaml
-  image: ghcr.io/itztas/sei-monitor:1.0.0
-  ```
+   ```yaml
+   image: ghcr.io/itztas/sei-monitor:1.0.0
+   ```
 
-- diario-alerr: its compose file reads the tag from a variable. Add this line to `/opt/stacks/diario-alerr/.env`:
+2. diario-alerr: its compose file reads the tag from a variable. Add this line to `/opt/stacks/diario-alerr/.env`:
 
-  ```
-  DIARIO_ALERR_TAG=1.0.0
-  ```
+   ```
+   DIARIO_ALERR_TAG=1.0.0
+   ```
 
-The files on your host may differ from the `v1.0.0` ones: edit the image line or variable you actually have. Then restart each stack and check the image:
+   The files on your host may differ from the `v1.0.0` ones: edit the image line or variable you actually have.
 
-```bash
-cd /opt/stacks/sei-monitor && docker compose pull && docker compose up -d
-cd /opt/stacks/diario-alerr && docker compose pull && docker compose up -d
-docker ps --format '{{.Names}}\t{{.Image}}' | grep -E 'sei-monitor|diario-alerr'
-```
+3. Restart each stack and check the image:
 
-Check: both app containers show a `:1.0.0` image. Also note the image digest of each, in case a tag is ever overwritten:
+   ```bash
+   cd /opt/stacks/sei-monitor && docker compose pull && docker compose up -d
+   cd /opt/stacks/diario-alerr && docker compose pull && docker compose up -d
+   docker ps --format '{{.Names}}\t{{.Image}}' | grep -E 'sei-monitor|diario-alerr'
+   ```
 
-```bash
-docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/itztas/sei-monitor:1.0.0
-```
+   Check: both app containers show a `:1.0.0` image. Also note the image digest of each, in case a tag is ever overwritten:
+
+   ```bash
+   docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/itztas/sei-monitor:1.0.0
+   ```
+
+4. Only now merge https://github.com/ItzTas/diario-alerr/pull/1. Once its CI run has finished, pull again on the board:
+
+   ```bash
+   cd /opt/stacks/diario-alerr && docker compose pull && docker compose up -d
+   docker ps --format '{{.Names}}\t{{.Image}}' | grep diario-alerr
+   ```
+
+   Check: the container still shows `ghcr.io/itztas/diario-alerr:1.0.0` and stays up.
 
 ### The images for the hub
 
-The hub image, and the sei-monitor and diario-alerr plugin images it is built from, must exist in the registry. At the time of writing `plugins.json` in the hub repository lists no plugins. The hub image has to be built after the two plugin images are published and listed there, otherwise it starts with no plugins.
+The hub image carries the plugins listed in `plugins.json` in the hub repository. Today that file lists one, `diario`, at `ghcr.io/itztas/diario-alerr:2.0.0`, and the published `ghcr.io/itztas/monitor-hub:latest` bundles it. The `sei` entry is added when the sei-monitor plugin image is published, and the next hub image then carries both.
+
+Pull the image now so the downtime later is short, and list the plugins inside it:
 
 ```bash
 docker compose pull
+docker run --rm --entrypoint ls ghcr.io/itztas/monitor-hub:latest /opt/monitor-hub/plugins
 ```
 
-Do this now so the downtime later is short.
+Check: the list shows `diario` and `sei`. While it shows only `diario`, the hub cannot take over sei-monitor yet.
 
 ### Where the databases are
 
