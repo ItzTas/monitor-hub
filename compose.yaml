@@ -1,0 +1,44 @@
+x-arcane:
+  urls:
+    - http://hub.lan
+
+services:
+  monitor-hub:
+    image: ghcr.io/itztas/monitor-hub:${MONITOR_HUB_TAG:-latest}
+    container_name: monitor-hub
+    cpus: "1.0"
+    # Peak use: the hub, two plugin processes and, while the gazette plugin reads a PDF, up to
+    # 320m of tmpfs plus pdftotext. 384m was too small for that; 768m leaves room.
+    mem_limit: 768m
+    # Threads count as pids. The hub, the plugin processes and their runtime threads, and
+    # pdftotext need well under this; the limit only stops a runaway fork.
+    pids_limit: 256
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      # Plugin sockets and the gazette plugin's PDF downloads (up to 256 MiB each). Sockets need
+      # no exec, so this stays noexec.
+      - /tmp:size=320m,mode=1777,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    env_file: .env
+    environment:
+      TZ: ${TZ:-America/Boa_Vista}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8090}:8080"
+    volumes:
+      - data:/data
+    networks:
+      - postgres
+    labels:
+      caddy: http://hub.lan
+      caddy.reverse_proxy: 127.0.0.1:${APP_PORT:-8090}
+
+volumes:
+  data:
+
+networks:
+  postgres:
+    external: true
