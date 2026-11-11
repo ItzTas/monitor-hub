@@ -21,3 +21,8 @@ UPDATE plugins SET cursor = sqlc.arg(next) WHERE name = sqlc.arg(name) AND curso
 
 -- name: CompletePluginBaseline :exec
 UPDATE plugins SET baselined_at = now() WHERE name = $1 AND baselined_at IS NULL;
+
+-- name: ListPlugins :many
+SELECT name, display_name, version, state, message, last_check_started_at, last_success_at, next_check_at, status_seen_at
+FROM plugins
+ORDER BY name;

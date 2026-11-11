@@ -37,6 +37,54 @@ func (q *Queries) CompletePluginBaseline(ctx context.Context, name string) error
 	return err
 }
 
+const listPlugins = `-- name: ListPlugins :many
+SELECT name, display_name, version, state, message, last_check_started_at, last_success_at, next_check_at, status_seen_at
+FROM plugins
+ORDER BY name
+`
+
+type ListPluginsRow struct {
+	Name               string
+	DisplayName        string
+	Version            string
+	State              int16
+	Message            string
+	LastCheckStartedAt *time.Time
+	LastSuccessAt      *time.Time
+	NextCheckAt        *time.Time
+	StatusSeenAt       *time.Time
+}
+
+func (q *Queries) ListPlugins(ctx context.Context) ([]ListPluginsRow, error) {
+	rows, err := q.db.Query(ctx, listPlugins)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPluginsRow
+	for rows.Next() {
+		var i ListPluginsRow
+		if err := rows.Scan(
+			&i.Name,
+			&i.DisplayName,
+			&i.Version,
+			&i.State,
+			&i.Message,
+			&i.LastCheckStartedAt,
+			&i.LastSuccessAt,
+			&i.NextCheckAt,
+			&i.StatusSeenAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pluginCursor = `-- name: PluginCursor :one
 SELECT cursor, baselined_at FROM plugins WHERE name = $1
 `

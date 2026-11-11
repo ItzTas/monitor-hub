@@ -8,6 +8,8 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const insertEvent = `-- name: InsertEvent :one
@@ -46,4 +48,75 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) (int64
 	var seq int64
 	err := row.Scan(&seq)
 	return seq, err
+}
+
+const listEvents = `-- name: ListEvents :many
+SELECT e.seq, e.plugin, p.display_name, e.event_id, e.kind, e.severity, e.occurred_at, e.detected_at, e.title, e.body, e.url, e.payload
+FROM events e
+JOIN plugins p ON p.name = e.plugin
+WHERE ($1::text IS NULL OR e.plugin = $1::text)
+  AND ($2::text IS NULL OR e.kind = $2::text)
+  AND ($3::bigint IS NULL OR e.seq < $3::bigint)
+ORDER BY e.seq DESC
+LIMIT $4::bigint
+`
+
+type ListEventsParams struct {
+	Plugin  pgtype.Text
+	Kind    pgtype.Text
+	Before  pgtype.Int8
+	MaxRows int64
+}
+
+type ListEventsRow struct {
+	Seq         int64
+	Plugin      string
+	DisplayName string
+	EventID     string
+	Kind        string
+	Severity    int16
+	OccurredAt  time.Time
+	DetectedAt  time.Time
+	Title       string
+	Body        string
+	Url         string
+	Payload     []byte
+}
+
+func (q *Queries) ListEvents(ctx context.Context, arg ListEventsParams) ([]ListEventsRow, error) {
+	rows, err := q.db.Query(ctx, listEvents,
+		arg.Plugin,
+		arg.Kind,
+		arg.Before,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListEventsRow
+	for rows.Next() {
+		var i ListEventsRow
+		if err := rows.Scan(
+			&i.Seq,
+			&i.Plugin,
+			&i.DisplayName,
+			&i.EventID,
+			&i.Kind,
+			&i.Severity,
+			&i.OccurredAt,
+			&i.DetectedAt,
+			&i.Title,
+			&i.Body,
+			&i.Url,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
