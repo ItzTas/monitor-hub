@@ -15,6 +15,7 @@ require (
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/pressly/goose/v3 v3.29.0
+	github.com/wneessen/go-mail v0.8.1
 	golang.org/x/sync v0.25.0
 	golang.org/x/sys v0.49.0
 	google.golang.org/grpc v1.85.0

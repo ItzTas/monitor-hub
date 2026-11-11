@@ -16,6 +16,7 @@ type Config struct {
 	PluginsDir  string
 	DataDir     string
 	LogLevel    slog.Level
+	Channels    Channels
 }
 
 func Load(environ []string) (Config, error) {
@@ -53,6 +54,11 @@ func Load(environ []string) (Config, error) {
 			return Config{}, fmt.Errorf("%s must be an absolute path: %q", key, dir)
 		}
 	}
+	channels, err := loadChannels(env)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Channels = channels
 	return cfg, nil
 }
 

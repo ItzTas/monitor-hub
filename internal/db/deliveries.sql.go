@@ -10,6 +10,77 @@ import (
 	"time"
 )
 
+const dueDeliveries = `-- name: DueDeliveries :many
+SELECT d.event_seq, d.channel, d.status, d.attempts, d.next_attempt_at, d.sent_at, d.last_error,
+       e.plugin, p.display_name, e.kind, e.severity, e.title, e.body, e.url, e.occurred_at
+FROM deliveries d
+JOIN events e ON e.seq = d.event_seq
+JOIN plugins p ON p.name = e.plugin
+WHERE d.channel = $1 AND d.status = 'pending' AND d.next_attempt_at <= $2::timestamptz
+ORDER BY e.occurred_at, e.seq
+LIMIT $3::bigint
+`
+
+type DueDeliveriesParams struct {
+	Channel string
+	Now     time.Time
+	MaxRows int64
+}
+
+type DueDeliveriesRow struct {
+	EventSeq      int64
+	Channel       string
+	Status        string
+	Attempts      int32
+	NextAttemptAt time.Time
+	SentAt        *time.Time
+	LastError     string
+	Plugin        string
+	DisplayName   string
+	Kind          string
+	Severity      int16
+	Title         string
+	Body          string
+	Url           string
+	OccurredAt    time.Time
+}
+
+func (q *Queries) DueDeliveries(ctx context.Context, arg DueDeliveriesParams) ([]DueDeliveriesRow, error) {
+	rows, err := q.db.Query(ctx, dueDeliveries, arg.Channel, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DueDeliveriesRow
+	for rows.Next() {
+		var i DueDeliveriesRow
+		if err := rows.Scan(
+			&i.EventSeq,
+			&i.Channel,
+			&i.Status,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.SentAt,
+			&i.LastError,
+			&i.Plugin,
+			&i.DisplayName,
+			&i.Kind,
+			&i.Severity,
+			&i.Title,
+			&i.Body,
+			&i.Url,
+			&i.OccurredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const queueDeliveries = `-- name: QueueDeliveries :exec
 INSERT INTO deliveries (event_seq, channel, status, next_attempt_at)
 SELECT $1::bigint, unnest($2::text[]), 'pending', $3::timestamptz
@@ -23,5 +94,34 @@ type QueueDeliveriesParams struct {
 
 func (q *Queries) QueueDeliveries(ctx context.Context, arg QueueDeliveriesParams) error {
 	_, err := q.db.Exec(ctx, queueDeliveries, arg.EventSeq, arg.Channels, arg.NextAttemptAt)
+	return err
+}
+
+const updateDelivery = `-- name: UpdateDelivery :exec
+UPDATE deliveries
+SET status = $3, attempts = $4, next_attempt_at = $5, last_error = $6, sent_at = $7
+WHERE event_seq = $1 AND channel = $2
+`
+
+type UpdateDeliveryParams struct {
+	EventSeq      int64
+	Channel       string
+	Status        string
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     string
+	SentAt        *time.Time
+}
+
+func (q *Queries) UpdateDelivery(ctx context.Context, arg UpdateDeliveryParams) error {
+	_, err := q.db.Exec(ctx, updateDelivery,
+		arg.EventSeq,
+		arg.Channel,
+		arg.Status,
+		arg.Attempts,
+		arg.NextAttemptAt,
+		arg.LastError,
+		arg.SentAt,
+	)
 	return err
 }
