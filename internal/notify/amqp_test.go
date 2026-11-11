@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
@@ -875,12 +876,32 @@ func TestAMQPBrokerErrorsLeavePasswordOut(t *testing.T) {
 		want string
 	}{
 		"wrong password":         {wrongPassword.String(), "could not connect to the broker: "},
-		"exchange of other type": {broker.url, "could not declare the exchange "},
+		"exchange of other type": {broker.url, "could not declare the exchange " + broker.exchange + ": "},
 	}
 	for name, tt := range tests {
 		err := broker.sender(t, tt.url).Send(t.Context(), NewTestMessage())
-		if err == nil || !strings.HasPrefix(err.Error(), tt.want) || strings.Contains(err.Error(), amqpPassword) {
-			t.Errorf("%s: error = %v", name, err)
+		if err == nil || !strings.HasPrefix(err.Error(), tt.want) {
+			t.Errorf("%s: error = %v, want it to start with %q", name, err, tt.want)
+			continue
+		}
+		for _, secret := range brokerCredentials(t, tt.url) {
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("%s: the error shows %q: %v", name, secret, err)
+			}
 		}
 	}
+}
+
+func brokerCredentials(t *testing.T, address string) []string {
+	t.Helper()
+	parsed, err := url.Parse(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, _ := parsed.User.Password()
+	secrets := []string{address, parsed.User.Username() + ":" + password + "@", ":" + password + "@"}
+	if utf8.RuneCountInString(password) >= minBarePassword {
+		secrets = append(secrets, password)
+	}
+	return secrets
 }
