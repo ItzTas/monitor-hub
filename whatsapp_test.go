@@ -14,7 +14,6 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
 
-	"github.com/ItzTas/monitor-hub/internal/core"
 	"github.com/ItzTas/monitor-hub/internal/core/coretest"
 )
 
@@ -29,7 +28,7 @@ func (b *bench) value(key string) string {
 	return ""
 }
 
-func pairFakeDevice(t *testing.T, databaseURL string) {
+func sessionStore(t *testing.T, databaseURL string) (*pgxpool.Pool, *sqlstore.Container) {
 	t.Helper()
 	pool, err := pgxpool.New(t.Context(), databaseURL)
 	if err != nil {
@@ -42,10 +41,24 @@ func pairFakeDevice(t *testing.T, databaseURL string) {
 	if err := container.Upgrade(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	return pool, container
+}
+
+func pairFakeDevice(t *testing.T, databaseURL string) {
+	t.Helper()
+	_, container := sessionStore(t, databaseURL)
 	device := container.NewDevice()
 	device.ID = &types.JID{User: ownerPhone, Device: 7, Server: types.DefaultUserServer}
 	device.Account = &waAdv.ADVSignedDeviceIdentity{Details: []byte{1}, AccountSignature: make([]byte, 64), AccountSignatureKey: make([]byte, 32), DeviceSignature: make([]byte, 64)}
 	if err := container.PutDevice(t.Context(), device); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func storeFromANewerHub(t *testing.T, databaseURL string) {
+	t.Helper()
+	pool, _ := sessionStore(t, databaseURL)
+	if _, err := pool.Exec(t.Context(), "UPDATE whatsmeow_version SET version = 999, compat = 999"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -62,41 +75,58 @@ func TestWhatsAppChannelRegisteredWhenConfigured(t *testing.T) {
 	}
 }
 
-func TestUnpairedWhatsAppWaitsForThePairing(t *testing.T) {
-	b := newBench(t, "WHATSAPP_RECIPIENTS="+ownerPhone)
-	logs := &syncBuffer{}
-	app := b.assemble(slog.New(slog.NewTextHandler(logs, nil)))
-	startSupervisor(t, app)
-	ctx := t.Context()
-
-	app.ingest.PollOnce(ctx)
-	b.setEvents("3")
-	app.ingest.PollOnce(ctx)
-	app.dispatcher.RunOnce(ctx)
-
-	warning := "WhatsApp is set up but not paired; its notifications wait until you run monitor-hub whatsapp-pair and restart"
-	if strings.Count(logs.String(), warning) != 1 || !strings.Contains(logs.String(), "level=WARN") || app.whatsapp == nil || app.whatsapp.session.Paired() {
-		t.Errorf("logs:\n%s", logs.String())
+func linesWith(text, part string) int {
+	count := 0
+	for line := range strings.Lines(text) {
+		if strings.Contains(line, part) {
+			count++
+		}
 	}
-	if !slices.Equal(app.channels, []string{"ntfy", "whatsapp"}) || len(b.ntfy.messages()) != 1 {
-		t.Errorf("channels %v, ntfy received %+v", app.channels, b.ntfy.messages())
-	}
-	var waiting, attempts int
-	err := app.pool.QueryRow(ctx, "SELECT count(*), coalesce(sum(attempts), 0) FROM deliveries WHERE channel = 'whatsapp' AND status = 'pending'").Scan(&waiting, &attempts)
-	if err != nil || waiting != 1 || attempts != 0 {
-		t.Errorf("whatsapp deliveries: %d pending with %d attempts (%v)", waiting, attempts, err)
-	}
+	return count
 }
 
-func TestWhatsAppThatCannotOpenLeavesTheHubWithoutIt(t *testing.T) {
-	pool := coretest.Pool(t)
-	pool.Close()
-	var logs bytes.Buffer
+func TestWhatsAppDeliveriesWaitWhileItCannotSend(t *testing.T) {
+	tests := map[string]struct {
+		prepare func(t *testing.T, databaseURL string)
+		log     string
+		session bool
+	}{
+		"not paired": {
+			prepare: func(*testing.T, string) {},
+			log:     `level=WARN msg="WhatsApp is set up but not paired; its notifications wait until you run monitor-hub whatsapp-pair and restart"`,
+			session: true,
+		},
+		"session store cannot open": {
+			prepare: storeFromANewerHub,
+			log:     `level=ERROR msg="could not open the WhatsApp session; WhatsApp stays disabled until monitor-hub restarts" error="whatsapp: prepare the session tables: unsupported database schema version: currently on v999`,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			b := newBench(t, "WHATSAPP_RECIPIENTS="+ownerPhone)
+			tt.prepare(t, b.value("DATABASE_URL"))
+			logs := &syncBuffer{}
+			app := b.assemble(slog.New(slog.NewTextHandler(logs, nil)))
+			startSupervisor(t, app)
+			ctx := t.Context()
 
-	link, channels := whatsAppChannels(t.Context(), &core.WhatsApp{Recipients: []string{ownerPhone}}, pool, slog.New(slog.NewTextHandler(&logs, nil)))
+			app.ingest.PollOnce(ctx)
+			b.setEvents("3")
+			app.ingest.PollOnce(ctx)
+			app.dispatcher.RunOnce(ctx)
 
-	if link != nil || channels != nil || !strings.Contains(logs.String(), `level=ERROR msg="could not open the WhatsApp session; the hub runs without WhatsApp"`) {
-		t.Errorf("link %+v, channels %v, logs:\n%s", link, channels, logs.String())
+			if strings.Count(logs.String(), tt.log) != 1 || linesWith(logs.String(), "WhatsApp") != 1 || (app.whatsapp != nil) != tt.session {
+				t.Errorf("session open %v, logs:\n%s", app.whatsapp != nil, logs.String())
+			}
+			if !slices.Equal(app.channels, []string{"ntfy", "whatsapp"}) || len(b.ntfy.messages()) != 1 {
+				t.Errorf("channels %v, ntfy received %+v", app.channels, b.ntfy.messages())
+			}
+			var waiting, attempts int
+			err := app.pool.QueryRow(ctx, "SELECT count(*), coalesce(sum(attempts), 0) FROM deliveries WHERE channel = 'whatsapp' AND status = 'pending'").Scan(&waiting, &attempts)
+			if err != nil || waiting != 1 || attempts != 0 {
+				t.Errorf("whatsapp deliveries: %d pending with %d attempts (%v)", waiting, attempts, err)
+			}
+		})
 	}
 }
 

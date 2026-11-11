@@ -180,6 +180,17 @@ func TestReadyOnlyWithAPairedSession(t *testing.T) {
 	}
 }
 
+func TestUnavailableChannelNeverSends(t *testing.T) {
+	channel := Unavailable{}
+
+	err := channel.Send(t.Context(), notify.NewTestMessage())
+
+	want := "the WhatsApp session could not be opened when monitor-hub started; restart monitor-hub once the session store works"
+	if channel.Name() != "whatsapp" || channel.Ready() || err == nil || err.Error() != want {
+		t.Errorf("name %q, ready %v, Send = %v", channel.Name(), channel.Ready(), err)
+	}
+}
+
 func TestFailedSendErrorsShowNoPhoneNumber(t *testing.T) {
 	failing := online()
 	failing.sendErr = errors.New("server returned error 500")

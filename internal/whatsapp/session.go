@@ -25,11 +25,11 @@ type Session struct {
 func Open(ctx context.Context, db *sql.DB, log *slog.Logger) (*Session, error) {
 	container := sqlstore.NewWithDB(db, "postgres", newLogger(log, "whatsapp/store"))
 	if err := container.Upgrade(ctx); err != nil {
-		return nil, fmt.Errorf("whatsapp: prepare the session tables: %w", err)
+		return nil, redacted(fmt.Errorf("whatsapp: prepare the session tables: %w", err))
 	}
 	device, err := container.GetFirstDevice(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("whatsapp: read the session: %w", err)
+		return nil, redacted(fmt.Errorf("whatsapp: read the session: %w", err))
 	}
 	client := whatsmeow.NewClient(device, newLogger(log, "whatsapp"))
 	client.SetWebsocketHTTPClient(&http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone(), Timeout: loginTimeout})

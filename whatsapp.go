@@ -62,8 +62,8 @@ func whatsAppChannels(ctx context.Context, cfg *core.WhatsApp, pool *pgxpool.Poo
 	}
 	link, err := openWhatsApp(ctx, pool, logger)
 	if err != nil {
-		logger.Error("could not open the WhatsApp session; the hub runs without WhatsApp", "error", err)
-		return nil, nil
+		logger.Error("could not open the WhatsApp session; WhatsApp stays disabled until monitor-hub restarts", "error", err)
+		return nil, []notify.Channel{whatsapp.Unavailable{}}
 	}
 	if !link.session.Paired() {
 		logger.Warn("WhatsApp is set up but not paired; its notifications wait until you run monitor-hub whatsapp-pair and restart")
