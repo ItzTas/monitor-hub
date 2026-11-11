@@ -7,9 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
@@ -231,56 +229,46 @@ func TestPythonPluginHealthAndShutdown(t *testing.T) {
 	p.shutdown(t)
 }
 
-func TestPythonPluginSeqKeepsGrowingAcrossRestarts(t *testing.T) {
-	dataDir := t.TempDir()
-
-	first := startPython(t, dataDir)
-	first.check(t)
-	before := first.events(t)
-	first.shutdown(t)
-
-	second := startPython(t, dataDir)
-	second.check(t)
-	after := second.events(t)
-	second.shutdown(t)
-
-	if len(after) != len(before)+1 {
-		t.Fatalf("events after restart = %v, want one more than %v", titles(after), titles(before))
+func deleteAllEvents(t *testing.T, dataDir string) {
+	t.Helper()
+	database := filepath.Join(dataDir, "events.sqlite3")
+	if _, err := os.Stat(database); err != nil {
+		t.Fatalf("plugin database: %v", err)
 	}
-	seqs := make([]int64, 0, len(after))
-	for _, event := range after {
-		seqs = append(seqs, event.GetSeq())
-	}
-	if !slices.IsSorted(seqs) || len(slices.Compact(slices.Clone(seqs))) != len(seqs) {
-		t.Errorf("seq values %v are not strictly increasing", seqs)
-	}
-	if got, want := after[len(after)-1].GetSeq(), before[len(before)-1].GetSeq(); got <= want {
-		t.Errorf("last seq = %d, want more than %d", got, want)
+	script := "import sqlite3, sys\nconn = sqlite3.connect(sys.argv[1])\nconn.execute('DELETE FROM events')\nconn.commit()\nconn.close()"
+	out, err := exec.CommandContext(t.Context(), pythonInterpreter(t), "-I", "-c", script, database).CombinedOutput()
+	if err != nil {
+		t.Fatalf("delete events: %v\n%s", err, out)
 	}
 }
 
-func TestPythonPluginFirstEventExistsOnce(t *testing.T) {
-	t.Run("concurrent first reads", func(t *testing.T) {
-		p := startPython(t, t.TempDir())
-		var wg sync.WaitGroup
-		for range 8 {
-			wg.Go(func() {
-				_, _ = pluginpb.NewPluginClient(p.conn).Events(t.Context(), &pluginpb.EventsRequest{})
-			})
-		}
-		wg.Wait()
-		if got := titles(p.events(t)); !slices.Equal(got, []string{"ping 1"}) {
-			t.Errorf("events = %v, want [ping 1]", got)
-		}
-		p.shutdown(t)
-	})
+func TestPythonPluginNeverReusesSeqAfterEventsAreDeleted(t *testing.T) {
+	dataDir := t.TempDir()
 
-	t.Run("check first", func(t *testing.T) {
-		p := startPython(t, t.TempDir())
-		p.check(t)
-		if got := titles(p.events(t)); !slices.Equal(got, []string{"ping 1", "ping 2"}) {
-			t.Errorf("events = %v, want [ping 1 ping 2]", got)
-		}
-		p.shutdown(t)
-	})
+	first := startPython(t, dataDir)
+	for range 3 {
+		first.check(t)
+	}
+	var largest int64
+	for _, event := range first.events(t) {
+		largest = max(largest, event.GetSeq())
+	}
+	first.shutdown(t)
+
+	deleteAllEvents(t, dataDir)
+
+	second := startPython(t, dataDir)
+	if got := second.events(t); len(got) != 0 {
+		t.Fatalf("events after the delete = %v, want none (the first-run event is created once)", titles(got))
+	}
+	second.check(t)
+	got := second.events(t)
+	second.shutdown(t)
+
+	if len(got) != 1 {
+		t.Fatalf("events = %v, want exactly one", titles(got))
+	}
+	if got[0].GetSeq() <= largest {
+		t.Errorf("seq = %d, want more than %d", got[0].GetSeq(), largest)
+	}
 }
