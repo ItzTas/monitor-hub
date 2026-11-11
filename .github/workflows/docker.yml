@@ -23,6 +23,9 @@ jobs:
   test:
     name: Check and test
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
     services:
       rabbitmq:
         image: rabbitmq:4-alpine
@@ -110,6 +113,13 @@ jobs:
 
       - name: Check and test the Rust SDK
         run: make check-rust
+
+      - if: github.event.pull_request.head.repo.fork != true
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check the generated Dockerfile
         run: go run ./cmd/imagegen -check
