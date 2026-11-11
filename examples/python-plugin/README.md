@@ -34,7 +34,11 @@ The image installs `python3`, `py3-grpcio` and `py3-protobuf` from Alpine 3.24 (
 
 (`python3` is 3.14.10-r1.)
 
-The generated files in `gen/` come from `grpcio-tools==1.78.0`, run by `make generate-python`. Its gencode requires protobuf 6.31.1 or newer at runtime and grpcio 1.78.0 or newer, both satisfied by the table above. Protobuf refuses gencode newer than its runtime, so the tools version must not go past what Alpine ships. Release 1.78.1 of `grpcio-tools` would be the exact match but PyPI has yanked it, and 1.78.2 was published too recently, so 1.78.0 is the pin. Do not edit the files in `gen/` by hand.
+The generated files in `gen/` come from `grpcio-tools==1.78.0`, run by `make generate-python`. Its gencode needs protobuf 6.31.1 or newer and grpcio 1.78.0 or newer at runtime, and the table above satisfies both. `grpcio-tools` 1.78.1 would be the exact match, but PyPI has yanked it, so 1.78.0 is the pin. Do not edit the files in `gen/` by hand.
+
+The code needs Python 3.12 or newer (`typing.override`). The data directory must already exist; the hub creates it.
+
+The manifest name is `example-python`, and the protocol requires it to equal the directory name. To load the example in a hub, copy it into a plugin directory named `example-python`.
 
 When Alpine moves to a newer `py3-grpcio` or `py3-protobuf`, update the versions in this table and regenerate.
 
@@ -46,9 +50,9 @@ When Alpine moves to a newer `py3-grpcio` or `py3-protobuf`, update the versions
 
 ## How events are stored
 
-`$MONITOR_HUB_DATA_DIR/events.sqlite3` holds one table, `events(seq, id, occurred_ms, title)`. `seq` is the next integer after the highest stored one and `id` is `ping-<seq>`, so both grow across restarts. Each call opens its own connection. The table is created and seeded on first use.
+`$MONITOR_HUB_DATA_DIR/events.sqlite3` holds one table, `events(seq, id, occurred_ms, title)`. `seq` is `INTEGER PRIMARY KEY AUTOINCREMENT`: SQLite never reuses the number of a deleted row, so `seq` keeps growing across restarts and after deletions, as the protocol requires. `id` is `ping-<seq>`. Each call opens its own connection. The table is created on first use, together with the first `ping` event, which is inserted by a single statement and exists exactly once.
 
-Acknowledged events are kept: receiving `after = X` changes nothing in the database. That is the simpler choice, and it means the table grows by one row per `Check`. A real plugin would delete rows up to `X` once it receives it.
+Acknowledged events are kept: receiving `after = X` changes nothing in the database, so the table grows by one row per `Check`. Deleting the rows up to `X` is safe with this schema, and a real plugin would do it.
 
 ## Logging
 
@@ -56,7 +60,7 @@ Logs go to stderr, one JSON object per line with `@level` and `@message` (plus `
 
 ## Shutdown
 
-It implements `plugin.GRPCController/Shutdown`. The call, SIGTERM and SIGINT all lead to the same path: the gRPC server stops with a one second grace period, the socket file is removed and the process exits with code 0. The controller and health services are registered with generic handlers over wire-compatible well-known messages (`Empty`, `StringValue`, `Int32Value`), so the example needs neither a second `.proto` file nor the `grpcio-health-checking` package, which Alpine does not offer in its three packages.
+It implements `plugin.GRPCController/Shutdown`. The call, SIGTERM and SIGINT all lead to the same path: the gRPC server stops with a one second grace period, the socket file is removed and the process exits with code 0. The controller and health services are registered with generic handlers over wire-compatible well-known messages (`Empty`, `StringValue`, `Int32Value`). That way the example needs neither a second `.proto` file nor the `grpcio-health-checking` package, which is not among the three Alpine packages.
 
 ## Type checking
 

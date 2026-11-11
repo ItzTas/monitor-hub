@@ -45,7 +45,7 @@ Do not use TLS. monitor-hub runs without AutoMTLS, so the hub does not send `PLU
 Register two services on the server:
 
 - `monitorhub.plugin.v1.Plugin`, which you implement.
-- The standard [gRPC health service](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) (`grpc.health.v1.Health`), with the service name `plugin` set to `SERVING`. The hub calls `Check` with `service = "plugin"` and requires the call to succeed, which means the name must be registered. The hub does not read the status in the reply, but report `SERVING` anyway: that is the contract.
+- The standard [gRPC health service](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) (`grpc.health.v1.Health`), with the service name `plugin` set to `SERVING`. The hub calls `Check` with `service = "plugin"` and requires the call to succeed, which means the name must be registered. The hub does not read the status in the reply, but report `SERVING` anyway: that is the contract. On the wire, `HealthCheckRequest` has one field, `string service = 1`, and `HealthCheckResponse` has one field, `ServingStatus status = 1`, where `SERVING = 1`.
 
 Optionally register `plugin.GRPCController` (see [Shutdown](#shutdown)).
 
@@ -104,7 +104,7 @@ To stop a plugin, the hub:
 3. Waits up to 2 seconds for the process to exit.
 4. Kills the process if it is still running.
 
-`plugin.GRPCController` is a one-method service from go-plugin: `rpc Shutdown(Empty) returns (Empty)`, where `Empty` is a message with no fields. You do not have to implement it. If you do not, the call fails and the hub ignores the error. The hub then closes the connection, waits the 2 seconds, and kills the process.
+`plugin.GRPCController` is a one-method service from go-plugin: `rpc Shutdown(Empty) returns (Empty)`, where `Empty` is a message with no fields. The full method path is `/plugin.GRPCController/Shutdown`. You do not have to implement it. If you do not, the call fails and the hub ignores the error. The hub then closes the connection, waits the 2 seconds, and kills the process.
 
 The clean way is to implement `Shutdown`: stop the gRPC server, delete the socket file, and exit.
 
@@ -258,6 +258,10 @@ The suite checks that:
 The checks are limited to 30 seconds plus `-ready-timeout`. Starting the plugin and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
 
 The Rust SDK's testkit runs this command from `cargo test`. See [`sdk-rust/README.md`](../sdk-rust/README.md).
+
+## Writing a plugin without an SDK
+
+Generate the stubs from `plugin.proto` with your language's protoc plugin. Pin the generator to a version no newer than the protobuf and gRPC runtimes the plugin ships with, because protobuf refuses to import generated code that is newer than its runtime. [`examples/python-plugin`](../examples/python-plugin) shows this for Python.
 
 ## Checklist
 
