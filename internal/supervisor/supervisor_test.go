@@ -201,7 +201,7 @@ func TestShutdownKillsPluginProcessGroup(t *testing.T) {
 }
 
 func TestSlowPluginIsNotRestarted(t *testing.T) {
-	stall := 1500 * time.Millisecond
+	stall := 6 * time.Second
 	s, _, _ := startSupervisor(t, []string{"TESTPLUGIN__STALL_STATUS=" + stall.String()})
 	c := waitDescribe(t, s, 10*time.Second)
 	ctx, cancel := context.WithTimeout(t.Context(), stall+5*time.Second)
