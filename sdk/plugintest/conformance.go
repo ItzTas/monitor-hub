@@ -2,6 +2,7 @@ package plugintest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -14,13 +15,26 @@ import (
 	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
+var errNotReady = errors.New("events unavailable")
+
 var namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,30}$`)
 
-func Dial(t *testing.T, cmd *exec.Cmd) pluginpb.PluginClient {
-	t.Helper()
+type Options struct {
+	MinEvents    int
+	ReadyTimeout time.Duration
+}
+
+const (
+	suiteTimeout  = 30 * time.Second
+	readyInterval = 200 * time.Millisecond
+)
+
+func start(ctx context.Context, cmd *exec.Cmd) (*plugin.Client, pluginpb.PluginClient, error) {
 	client := plugin.NewClient(&plugin.ClientConfig{
 		HandshakeConfig:  sdk.Handshake,
 		Plugins:          sdk.PluginSet(),
@@ -29,34 +43,61 @@ func Dial(t *testing.T, cmd *exec.Cmd) pluginpb.PluginClient {
 		SkipHostEnv:      true,
 		Logger:           hclog.NewNullLogger(),
 	})
-	t.Cleanup(client.Kill)
+	stop := context.AfterFunc(ctx, client.Kill)
+	defer stop()
 	rpc, err := client.Client()
 	if err != nil {
-		t.Fatalf("dial plugin: %v", err)
+		client.Kill()
+		return nil, nil, fmt.Errorf("dial plugin: %w", err)
 	}
 	raw, err := rpc.Dispense(sdk.PluginKey)
 	if err != nil {
-		t.Fatalf("dispense plugin: %v", err)
+		client.Kill()
+		return nil, nil, fmt.Errorf("dispense plugin: %w", err)
 	}
-	return raw.(pluginpb.PluginClient)
+	c, ok := raw.(pluginpb.PluginClient)
+	if !ok {
+		client.Kill()
+		return nil, nil, fmt.Errorf("dispense plugin: unexpected client type %T", raw)
+	}
+	return client, c, nil
+}
+
+func Dial(t *testing.T, cmd *exec.Cmd) pluginpb.PluginClient {
+	t.Helper()
+	client, c, err := start(context.Background(), cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Kill)
+	return c
+}
+
+func Check(ctx context.Context, cmd *exec.Cmd, opts Options) ([]string, error) {
+	client, c, err := start(ctx, cmd)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Kill()
+	return check(ctx, c, opts), nil
 }
 
 func Run(t *testing.T, cmd *exec.Cmd, minEvents int) {
 	t.Helper()
-	for _, violation := range check(Dial(t, cmd), minEvents) {
+	for _, violation := range check(t.Context(), Dial(t, cmd), Options{MinEvents: minEvents}) {
 		t.Errorf("conformance: %s", violation)
 	}
 }
 
-func check(c pluginpb.PluginClient, minEvents int) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func check(ctx context.Context, c pluginpb.PluginClient, opts Options) []string {
+	ctx, cancel := context.WithTimeout(ctx, suiteTimeout+opts.ReadyTimeout)
 	defer cancel()
 
 	var out []string
 	kinds, violations := checkDescribe(ctx, c)
 	out = append(out, violations...)
 	out = append(out, checkStatus(ctx, c)...)
-	events, violations := checkEvents(ctx, c, minEvents, kinds)
+	events, violations := checkEvents(ctx, c, opts, kinds)
 	out = append(out, violations...)
 	out = append(out, checkPaging(ctx, c, events)...)
 	return append(out, checkCheck(ctx, c)...)
@@ -73,7 +114,7 @@ func checkDescribe(ctx context.Context, c pluginpb.PluginClient) ([]string, []st
 	}
 	var out, kinds []string
 	if !validName(d.GetName()) {
-		out = append(out, fmt.Sprintf("name %q does not match %s", d.GetName(), namePattern))
+		out = append(out, fmt.Sprintf("name %q is invalid: it must match %s, must not end with \"-\" and must not contain \"--\"", d.GetName(), namePattern))
 	}
 	if d.GetDisplayName() == "" {
 		out = append(out, "display_name is empty")
@@ -101,15 +142,52 @@ func checkStatus(ctx context.Context, c pluginpb.PluginClient) []string {
 	return nil
 }
 
-func checkEvents(ctx context.Context, c pluginpb.PluginClient, minEvents int, kinds []string) ([]*pluginpb.Event, []string) {
-	resp, err := c.Events(ctx, &pluginpb.EventsRequest{After: 0, Limit: 1000})
+func firstEvents(ctx context.Context, c pluginpb.PluginClient, ready time.Duration) (*pluginpb.EventsResponse, error) {
+	req := &pluginpb.EventsRequest{After: 0, Limit: 1000}
+	resp, err := c.Events(ctx, req)
+	if status.Code(err) != codes.Unavailable || ready <= 0 {
+		return resp, err
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, ready)
+	defer cancel()
+	ticker := time.NewTicker(readyInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-waitCtx.Done():
+			return nil, notReady(ctx, ready)
+		case <-ticker.C:
+		}
+		resp, err = c.Events(waitCtx, req)
+		if status.Code(err) == codes.Unavailable {
+			continue
+		}
+		if err != nil && waitCtx.Err() != nil {
+			return nil, notReady(ctx, ready)
+		}
+		return resp, err
+	}
+}
+
+func notReady(parent context.Context, ready time.Duration) error {
+	if parent.Err() != nil {
+		return parent.Err()
+	}
+	return fmt.Errorf("%w after %s", errNotReady, ready)
+}
+
+func checkEvents(ctx context.Context, c pluginpb.PluginClient, opts Options, kinds []string) ([]*pluginpb.Event, []string) {
+	resp, err := firstEvents(ctx, c, opts.ReadyTimeout)
+	if errors.Is(err, errNotReady) {
+		return nil, []string{err.Error()}
+	}
 	if err != nil {
 		return nil, []string{fmt.Sprintf("Events failed: %v", err)}
 	}
 	events := resp.GetEvents()
 	var out []string
-	if len(events) < minEvents {
-		out = append(out, fmt.Sprintf("got %d events, want at least %d", len(events), minEvents))
+	if len(events) < opts.MinEvents {
+		out = append(out, fmt.Sprintf("got %d events, want at least %d", len(events), opts.MinEvents))
 	}
 	seen := map[string]bool{}
 	var last int64

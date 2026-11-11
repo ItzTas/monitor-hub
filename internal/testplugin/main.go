@@ -14,6 +14,8 @@ import (
 	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
 	"github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -21,6 +23,7 @@ const defaultLimit = 100
 
 var (
 	baseTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	started  = time.Now()
 	worker   sync.Mutex
 )
 
@@ -102,6 +105,9 @@ func (*server) Check(context.Context, *pluginpb.CheckRequest) (*pluginpb.CheckRe
 }
 
 func (*server) Events(_ context.Context, req *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
+	if unavailableFor, err := time.ParseDuration(os.Getenv("UNAVAILABLE_FOR")); err == nil && time.Since(started) < unavailableFor {
+		return nil, status.Error(codes.Unavailable, "not ready yet")
+	}
 	limit := int(req.GetLimit())
 	if limit <= 0 {
 		limit = defaultLimit
