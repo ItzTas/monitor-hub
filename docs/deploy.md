@@ -481,9 +481,11 @@ Coming forward again after a rollback is a new take-over. Before the hub starts,
 
 ## 9. What changed for you
 
-- **AMQP.** The exchange is `monitor-hub`, the routing key is `<plugin>.<kind>` for one event and `<plugin>.batch` for several, and the body is `{"events":[...]}` instead of one bare event per message. Delivery is at-least-once, and each message carries a message id derived from its body so a consumer can drop a repeat. Rebind consumers of the old exchange.
+- **AMQP.** The exchange is `monitor-hub` unless you set `AMQP_EXCHANGE`, the routing key is `<plugin>.<kind>` for one event and `<plugin>.batch` for several, and the body is `{"events":[...]}` instead of one bare event per message. Delivery is at-least-once, and each message carries a message id derived from its body so a consumer can drop a repeat. Rebind consumers of the old exchange.
 - **The SEI web page and routes.** The SEI service's web page (`/ui/`) and its domain routes (`/processes`, `/status` with SEI details) have no replacement yet. The API is the hub's: `/api/plugins`, `/api/plugins/{name}/check`, `/api/events`, with a different response shape and the header `Authorization: Bearer <API_TOKEN>`.
 - **Feeds.** The old gazette service served its own public `/feed.xml`. The old SEI service served `/feed/<FEED_TOKEN>.xml`. The hub serves one feed for all plugins at `/feed.xml?token=<FEED_TOKEN>` (the token is needed when `FEED_TOKEN` is set), filtered with `&plugin=diario` or `&plugin=sei`. Subscribers of the old addresses must change them.
+- **The image.** `ghcr.io/itztas/monitor-hub` is public on the registry, so `docker compose pull` needs no login. It carries the plugins, so there is one image to pull instead of one per service.
+- **The first minutes.** A new plugin's first read is stored and not announced (step 5). The gazette's welcome on a new database, and its first cycle's alerts, come on the hub's second read, about 15 seconds after the first, not at the moment the plugin starts.
 
 ## 10. Known issues
 
