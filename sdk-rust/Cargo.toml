@@ -4,6 +4,7 @@ members = ["crates/codegen", "crates/plugin", "crates/testkit"]
 
 [workspace.package]
 edition = "2024"
+rust-version = "1.99.1"
 
 [workspace.dependencies]
 chrono = { version = "0.4.45", default-features = false }
