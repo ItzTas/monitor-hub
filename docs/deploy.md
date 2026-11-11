@@ -4,7 +4,7 @@ This runbook moves two services onto the hub: sei-monitor (the government proces
 
 Placeholders are written in angle brackets and are yours to fill in:
 
-- `<postgres-container>`: the name of the shared Postgres container, from `docker ps`.
+- `<postgres-container>`: the name of the Postgres container that holds the database a command names, from `docker ps`. On the shared Postgres that is one container for all three databases. With bundled databases it is a different one per database (see step 1).
 - `<hub-db-password>`: the password you choose for the hub's database role.
 - `<old-stack-network>`: the Docker network of an old stack, only when its database is still bundled in that stack (see step 1).
 - `<plugin>`: `sei` or `diario`.
@@ -110,6 +110,12 @@ If a database still lives in an old stack's own bundled Postgres (the `v1.0.0` c
 3. Both old stacks name their database service `postgres`, so the alias `postgres` is ambiguous. In the database URL use the container name of that stack's Postgres, from `docker ps`.
 4. Do not use `docker compose down` on that stack in step 4: stop only its app service.
 
+If both databases stay bundled and there is no shared Postgres at all, three more things change:
+
+5. The hub's own database (step 2) still needs a Postgres. Create it in one of the bundled ones, which then serves the hub too and must keep running. That container has no `postgres` admin user: its admin is the role its compose file sets as `POSTGRES_USER` (`diario_alerr` or `sei_monitor` in the `v1.0.0` files). Use that role with `-U` in step 2, and the container name as the host in the hub's `DATABASE_URL`.
+6. `<postgres-container>` names a different container for each database. In every command of this runbook, use the container that holds the database the command names: `sei_monitor`, `diario_alerr` or `monitor_hub`.
+7. Without a network named `postgres`, delete the `- postgres` line under the service's `networks` in `compose.yaml`, and the `postgres:` block with its `external: true` line under the top-level `networks`. Otherwise the hub fails at `up` with "network postgres not found".
+
 ### Back up both databases
 
 ```bash
@@ -122,7 +128,7 @@ Use the role and database names of your stacks. Check: both files are larger tha
 
 ## 2. Create the hub's database
 
-Run this in the shared Postgres as its admin user (`postgres` by default). Use a real password and keep it for step 3.
+Run this in the shared Postgres as its admin user (`postgres` by default), or in the bundled Postgres you picked in step 1, as its admin role. Use a real password and keep it for step 3.
 
 ```bash
 docker exec -i <postgres-container> psql -U postgres <<'SQL'
@@ -229,7 +235,7 @@ docker compose config --quiet && echo ok
 docker network inspect postgres --format '{{.Name}}'
 ```
 
-The second command prints `postgres`. Run `docker network inspect` for every extra network you added as well.
+The second command prints `postgres` (skip it if you removed that network in step 1). Run `docker network inspect` for every extra network you added as well.
 
 ## 4. Stop the old stacks
 
