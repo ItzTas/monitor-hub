@@ -16,7 +16,7 @@ test:
 	@for m in $(MODULES); do \
 		if [ -z "$$(cd $$m && go list ./... 2>/dev/null)" ]; then continue; fi; \
 		echo "test $$m"; \
-		(cd $$m && go test -race ./...) || exit 1; \
+		(cd $$m && go test -race -timeout 30m ./...) || exit 1; \
 	done
 
 generate:

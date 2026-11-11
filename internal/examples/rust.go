@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const buildTimeout = 15 * time.Minute
+const buildTimeout = 8 * time.Minute
 
 var (
 	buildsMu sync.Mutex
