@@ -7,16 +7,22 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ItzTas/monitor-hub/sdk"
 	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
+	"github.com/hashicorp/go-plugin"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const defaultLimit = 100
 
-var baseTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+var (
+	baseTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	worker   sync.Mutex
+)
 
 type server struct {
 	pluginpb.UnimplementedPluginServer
@@ -26,7 +32,27 @@ func main() {
 	if os.Getenv("SPAWN_CHILD") == "1" {
 		spawnChild()
 	}
+	if os.Getenv("STALL_STATUS") != "" {
+		serveOneAtATime()
+		return
+	}
 	sdk.Serve(&server{})
+}
+
+func serveOneAtATime() {
+	plugin.Serve(&plugin.ServeConfig{
+		HandshakeConfig: sdk.Handshake,
+		Plugins:         plugin.PluginSet{sdk.PluginKey: &sdk.GRPCPlugin{Impl: &server{}}},
+		GRPCServer: func(opts []grpc.ServerOption) *grpc.Server {
+			return plugin.DefaultGRPCServer(append(opts, grpc.ChainUnaryInterceptor(oneAtATime)))
+		},
+	})
+}
+
+func oneAtATime(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	worker.Lock()
+	defer worker.Unlock()
+	return handler(ctx, req)
 }
 
 func spawnChild() {
@@ -50,6 +76,9 @@ func (*server) Describe(context.Context, *pluginpb.DescribeRequest) (*pluginpb.D
 }
 
 func (*server) Status(context.Context, *pluginpb.StatusRequest) (*pluginpb.StatusResponse, error) {
+	if stall, err := time.ParseDuration(os.Getenv("STALL_STATUS")); err == nil {
+		time.Sleep(stall)
+	}
 	return &pluginpb.StatusResponse{
 		State:   pluginpb.State_STATE_IDLE,
 		Message: os.Getenv(os.Getenv("ECHO")),

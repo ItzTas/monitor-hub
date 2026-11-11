@@ -200,6 +200,20 @@ func TestShutdownKillsPluginProcessGroup(t *testing.T) {
 	}
 }
 
+func TestSlowPluginIsNotRestarted(t *testing.T) {
+	stall := 1500 * time.Millisecond
+	s, _, _ := startSupervisor(t, []string{"TESTPLUGIN__STALL_STATUS=" + stall.String()})
+	c := waitDescribe(t, s, 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), stall+5*time.Second)
+	defer cancel()
+	if _, err := c.Status(ctx, &pluginpb.StatusRequest{}); err != nil {
+		t.Fatalf("stalled Status failed: %v", err)
+	}
+	if now, ok := s.Client("testplugin"); !ok || now != c {
+		t.Fatal("the stalled plugin was replaced or dropped")
+	}
+}
+
 func TestUnknownPluginIsAbsent(t *testing.T) {
 	s, _, _ := startSupervisor(t, nil)
 	waitDescribe(t, s, 10*time.Second)

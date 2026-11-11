@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,13 +21,11 @@ import (
 	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
-	"google.golang.org/grpc"
-	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"golang.org/x/sys/unix"
 )
 
 const (
 	exitPollInterval = 500 * time.Millisecond
-	healthTimeout    = 5 * time.Second
 	stopGrace        = 3 * time.Second
 )
 
@@ -110,7 +109,8 @@ func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) time.Dura
 		s.log.Error("plugin failed to start", "plugin", name, "error", err)
 		return 0
 	}
-	conn, rpc, err := dispense(client)
+	defer closePidfd(cmd)
+	rpc, err := dispense(client)
 	if err != nil {
 		s.log.Error("plugin failed to start", "plugin", name, "error", err)
 		stop(client, cmd, false)
@@ -120,10 +120,15 @@ func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) time.Dura
 	s.setClient(name, rpc)
 	s.log.Info("plugin started", "plugin", name)
 	started := time.Now()
-	waitExit(ctx, client, conn)
+	exited := watchExit(client, *cmd.SysProcAttr.PidFD)
+	select {
+	case <-ctx.Done():
+	case <-exited:
+	}
 	uptime := time.Since(started)
 	s.dropClient(name)
 	stop(client, cmd, ctx.Err() != nil)
+	<-exited
 	return uptime
 }
 
@@ -139,7 +144,8 @@ func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *
 	cmd := exec.CommandContext(ctx, path, entry.Manifest.Command[1:]...)
 	cmd.Dir = entry.Dir
 	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	pidfd := -1
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, PidFD: &pidfd}
 	cmd.Cancel = func() error {
 		if ready.Load() {
 			return os.ErrProcessDone
@@ -161,35 +167,49 @@ func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *
 	}), cmd, nil
 }
 
-func dispense(client *plugin.Client) (*grpc.ClientConn, pluginpb.PluginClient, error) {
+func dispense(client *plugin.Client) (pluginpb.PluginClient, error) {
 	rpc, err := client.Client()
 	if err != nil {
-		return nil, nil, fmt.Errorf("connect: %w", err)
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	if err := rpc.Ping(); err != nil {
+		return nil, fmt.Errorf("health check: %w", err)
 	}
 	raw, err := rpc.Dispense(sdk.PluginKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("dispense: %w", err)
+		return nil, fmt.Errorf("dispense: %w", err)
 	}
-	return rpc.(*plugin.GRPCClient).Conn, raw.(pluginpb.PluginClient), nil
+	return raw.(pluginpb.PluginClient), nil
 }
 
-func waitExit(ctx context.Context, client *plugin.Client, conn *grpc.ClientConn) {
-	ticker := time.NewTicker(exitPollInterval)
-	defer ticker.Stop()
-	for !client.Exited() && healthy(ctx, conn) {
-		select {
-		case <-ctx.Done():
+func watchExit(client *plugin.Client, pidfd int) <-chan struct{} {
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		if pidfd >= 0 && waitPidfd(pidfd) {
 			return
-		case <-ticker.C:
+		}
+		for !client.Exited() {
+			time.Sleep(exitPollInterval)
+		}
+	}()
+	return exited
+}
+
+func waitPidfd(pidfd int) bool {
+	var info unix.Siginfo
+	for {
+		err := unix.Waitid(unix.P_PIDFD, pidfd, &info, unix.WEXITED|unix.WNOWAIT, nil)
+		if !errors.Is(err, unix.EINTR) {
+			return err == nil || errors.Is(err, unix.ECHILD)
 		}
 	}
 }
 
-func healthy(ctx context.Context, conn *grpc.ClientConn) bool {
-	ctx, cancel := context.WithTimeout(ctx, healthTimeout)
-	defer cancel()
-	_, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{Service: plugin.GRPCServiceName})
-	return err == nil
+func closePidfd(cmd *exec.Cmd) {
+	if pidfd := *cmd.SysProcAttr.PidFD; pidfd >= 0 {
+		_ = unix.Close(pidfd)
+	}
 }
 
 func stop(client *plugin.Client, cmd *exec.Cmd, graceful bool) {
