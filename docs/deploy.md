@@ -405,23 +405,19 @@ Use this if the hub misbehaves and you want the old services back. The old stack
    cd /opt/stacks/monitor-hub && docker compose down
    ```
 
-3. Gazette database. The old Go program announces every stored alert that has no row in `alert_deliveries` for one of its channels, `telegram` and `ntfy`. The hub never writes that table, so every alert the plugin stored would be announced again. Mark them all as delivered before you start the old gazette stack:
+3. Gazette database. The old Go program announces every stored alert that has no row in `alert_deliveries` for one of its channels, `telegram` and `ntfy`. The plugin never writes that table, so every alert it stored would be announced again. Before you start the old gazette stack, run the plugin's rollback script, `sql/rollback/mark-alerts-delivered.sql` in the diario-alerr repository at tag `v2.0.0`:
 
    ```bash
-   docker exec -i <postgres-container> psql -U diario_alerr -d diario_alerr <<'SQL'
-   INSERT INTO alert_deliveries (alert_id, channel)
-   SELECT a.id, c.channel
-   FROM alerts a
-   CROSS JOIN (VALUES ('telegram'), ('ntfy')) AS c(channel)
-   ON CONFLICT (alert_id, channel) DO NOTHING;
-   SQL
+   curl -fsSL https://raw.githubusercontent.com/ItzTas/diario-alerr/v2.0.0/sql/rollback/mark-alerts-delivered.sql -o ~/mark-alerts-delivered.sql
+   cat ~/mark-alerts-delivered.sql
+   docker exec -i <postgres-container> psql -U diario_alerr -d diario_alerr < ~/mark-alerts-delivered.sql
    ```
 
-   This marks everything stored as already delivered, so an alert the hub had not delivered yet (step 1) is lost for the old program too. Use the role and database names of your stack. Rows for a channel the old stack never enabled are ignored by the old program. The statement is safe to run twice.
+   Check: `cat` shows a single `INSERT INTO alert_deliveries` statement, and `psql` answers `INSERT 0` followed by a count. Use the role and database names of your stack.
 
-   It was tried on a throwaway Postgres 18 with the `v1.0.0` schema: two alerts without delivery rows showed up in the old program's pending query before, and none after. It has not been run against your database. The gazette repository will carry the same statement as `sql/rollback/mark-alerts-delivered.sql` once its port is finished.
+   What it costs: the script marks every stored alert as delivered on both channels, including any alert the hub had stored and not delivered yet (step 1 lists those). After the rollback nobody sends them. Rows for a channel the old stack never enabled are ignored by the old program, and the script is safe to run twice. The plugin's test `go_sends_nothing_from_the_rust_era_after_rollback` (`tests/go_compat.rs`) runs it and then the Go `v1.0.0` program on the same database. It has not been run against your database.
 
-4. Schema. The gazette plugin added one column, `monitor_state.acked_seq`, with default `0`. The old program ignores it, and the gazette ledger records a test that runs the `v1.0.0` program against a migrated database. The hub's database is not touched by the old services and can stay.
+4. Schema. The gazette plugin added one column, `monitor_state.acked_seq`, with default `0`. The old program ignores it: the plugin's `tests/go_compat.rs` starts the `v1.0.0` program on a migrated database. The hub's database is not touched by the old services and can stay.
 
 5. SEI database. The plugin adds no table or column. In the design, the plugin keeps its acknowledged position in memory only and writes no delivery rows, and the old program creates its delivery rows when it saves an event (`internal/monitor/repository.go` at `v1.0.0`). So events stored while the hub ran are not announced by the old program. Two things follow. Deliveries the old program still had pending when you stopped it in step 4 are sent after the rollback. And the plugin prunes old events by `RETENTION_DAYS`, as the old program did, so what it deleted stays deleted. This has not been tested end to end: after the rollback, watch for a burst of old notifications in the first minutes. If you see one, stop the sei stack again before it sends more.
 
@@ -434,7 +430,7 @@ Use this if the hub misbehaves and you want the old services back. The old stack
 
    Check each with its old `/healthz` and its logs.
 
-If you migrate again later, reset the hub's stored position for each plugin first, as described in the next section. Otherwise the hub resumes from a position that no longer matches the plugin's database.
+Coming forward again after a rollback is a new take-over. Before the hub starts, reset its stored position for each plugin you move back, as the next section describes. Otherwise the hub resumes from a position that no longer matches the plugin's database. For the gazette, every alert the Go program stored in the meantime has a higher `seq` than the hub's old position, so the hub would announce all of them again, though Go already sent them. After the reset, follow steps 4 and 5 again, including the query in step 5.
 
 ## 8. Operating rules
 
