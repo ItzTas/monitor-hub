@@ -64,12 +64,11 @@ fn setup() -> Option<&'static Setup> {
 }
 
 fn conformance(setup: &Setup, min_events: usize) -> Conformance {
-    Conformance {
-        command: vec![setup.example.to_string_lossy().into_owned()],
-        env: vec![("EVENTS".into(), "2".into())],
-        min_events,
-        ready_timeout: Duration::from_secs(5),
-    }
+    let mut conformance = Conformance::new(setup.example.to_string_lossy());
+    conformance.env.push(("EVENTS".into(), "2".into()));
+    conformance.min_events = min_events;
+    conformance.ready_timeout = Duration::from_secs(5);
+    conformance
 }
 
 #[test]
@@ -117,12 +116,8 @@ fn a_plugin_that_fails_before_the_handshake_shows_its_stderr_first() {
 #[test]
 fn an_env_name_that_is_empty_or_holds_an_equals_sign_is_rejected() {
     for name in ["", "A=B"] {
-        let conformance = Conformance {
-            command: vec!["unused".into()],
-            env: vec![(name.into(), "1".into())],
-            min_events: 0,
-            ready_timeout: Duration::ZERO,
-        };
+        let mut conformance = Conformance::new("unused");
+        conformance.env.push((name.into(), "1".into()));
         let Outcome::Failed(message) = run(&conformance) else {
             panic!("the name {name:?} must be rejected");
         };

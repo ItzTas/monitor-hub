@@ -32,6 +32,7 @@ pub struct Migration {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum MigrateError {
     #[error(
         "migration {migration} uses the goose annotation {annotation:?}, which is not supported"

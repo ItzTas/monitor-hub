@@ -19,6 +19,7 @@ const HEALTH_SERVICE: &str = "plugin";
 const DRAIN_LIMIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ServeError {
     #[error("{NOT_LAUNCHED_BY_HUB}")]
     NotLaunchedByHub,

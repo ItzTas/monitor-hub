@@ -27,6 +27,7 @@ const RESERVED: [&str; 10] = [
 ];
 
 #[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LoggingError {
     #[error("unknown log level {0:?}: use trace, debug, info, warn or error")]
     UnknownLevel(String),

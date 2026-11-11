@@ -30,6 +30,7 @@ const POLL: Duration = Duration::from_millis(20);
 const EXIT_VIOLATIONS: i32 = 1;
 const EXIT_USAGE: i32 = 2;
 
+#[non_exhaustive]
 pub struct Conformance {
     pub command: Vec<String>,
     pub env: Vec<(String, String)>,
@@ -37,7 +38,19 @@ pub struct Conformance {
     pub ready_timeout: Duration,
 }
 
+impl Conformance {
+    pub fn new(program: impl Into<String>) -> Self {
+        Self {
+            command: vec![program.into()],
+            env: Vec::new(),
+            min_events: 0,
+            ready_timeout: Duration::ZERO,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Outcome {
     Passed,
     Skipped(String),
@@ -559,12 +572,7 @@ mod tests {
 
         let outcome = run_from(
             Source::Go(fake.install(Some(cache.path().to_owned()), INSTALL_LIMIT)),
-            &Conformance {
-                command: vec!["unused".into()],
-                env: Vec::new(),
-                min_events: 0,
-                ready_timeout: Duration::ZERO,
-            },
+            &Conformance::new("unused"),
         );
 
         let Outcome::Failed(message) = outcome else {
