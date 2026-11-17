@@ -161,6 +161,7 @@ func TestConformanceReportsValidatorViolations(t *testing.T) {
 		"exit-2":        {want: "validate-settings exited with code 2, want 0 or 1"},
 		"killed":        {want: "validate-settings was killed by signal 9"},
 		"huge":          {want: "validate-settings wrote more than 65536 bytes on stdout"},
+		"huge-exit-2":   {want: "validate-settings exited with code 2, want 0 or 1"},
 		"not-object":    {want: "validate-settings did not print a single JSON object on stdout: the answer is not an object"},
 		"trailing-data": {want: "validate-settings did not print a single JSON object on stdout: trailing data after the JSON object"},
 		"no-problems":   {want: "validate-settings answer is invalid: problems is missing"},
@@ -265,6 +266,17 @@ func TestConformanceReportsSettingsFileViolations(t *testing.T) {
 				t.Fatalf("the command's own stderr lines = %q, want one line %q (prefix: %t)", own, tt.want, tt.prefix)
 			}
 		})
+	}
+}
+
+func TestConformanceReportsFileViolationsBeforeTheValidators(t *testing.T) {
+	code, stdout, stderr := conformance(t, settingsArgs(pluginDir(t, badSettings, "exit-2"))...)
+	if code != 1 || stdout != "" {
+		t.Fatalf("exit code = %d, stdout = %q, want 1 and empty; stderr: %s", code, stdout, stderr)
+	}
+	want := []string{badSettingsLine, "validate-settings exited with code 2, want 0 or 1"}
+	if own := ownLines(stderr); !slices.Equal(own, want) {
+		t.Fatalf("the command's own stderr lines = %q, want %q", own, want)
 	}
 }
 

@@ -67,6 +67,7 @@ func validateSettings() int {
 		"log-first":     {"starting\n" + noProblems, 0},
 		"exit-2":        {noProblems, 2},
 		"huge":          {strings.Repeat(" ", 65537) + noProblems, 0},
+		"huge-exit-2":   {strings.Repeat(" ", 65537) + noProblems, 2},
 		"not-object":    {`[]`, 0},
 		"trailing-data": {noProblems + "\n{}", 0},
 		"no-problems":   {`{}`, 0},
