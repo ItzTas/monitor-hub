@@ -35,6 +35,7 @@ pub struct Conformance {
     pub env: Vec<(String, String)>,
     pub min_events: usize,
     pub ready_timeout: Duration,
+    pub plugin_dir: Option<PathBuf>,
 }
 
 impl Conformance {
@@ -44,6 +45,7 @@ impl Conformance {
             env: Vec::new(),
             min_events: 0,
             ready_timeout: Duration::ZERO,
+            plugin_dir: None,
         }
     }
 }
@@ -358,18 +360,22 @@ fn on_path(program: &str) -> bool {
     env::split_paths(&paths).any(|dir| Path::new(&dir).join(program).is_file())
 }
 
-fn arguments(conformance: &Conformance) -> Vec<String> {
-    let mut args = Vec::new();
+fn arguments(conformance: &Conformance) -> Vec<OsString> {
+    let mut args: Vec<OsString> = Vec::new();
     args.push("-min-events".into());
-    args.push(conformance.min_events.to_string());
+    args.push(conformance.min_events.to_string().into());
     args.push("-ready-timeout".into());
-    args.push(format!("{}ms", conformance.ready_timeout.as_millis()));
+    args.push(format!("{}ms", conformance.ready_timeout.as_millis()).into());
     for (name, value) in &conformance.env {
         args.push("-env".into());
-        args.push(format!("{name}={value}"));
+        args.push(format!("{name}={value}").into());
+    }
+    if let Some(dir) = &conformance.plugin_dir {
+        args.push("-plugin-dir".into());
+        args.push(dir.into());
     }
     args.push("--".into());
-    args.extend(conformance.command.iter().cloned());
+    args.extend(conformance.command.iter().map(OsString::from));
     args
 }
 

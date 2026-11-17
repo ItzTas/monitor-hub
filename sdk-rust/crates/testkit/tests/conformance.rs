@@ -114,6 +114,38 @@ fn a_plugin_that_fails_before_the_handshake_shows_its_stderr_first() {
 }
 
 #[test]
+fn a_plugin_directory_with_valid_settings_passes() {
+    let Some(setup) = setup() else { return };
+    let mut conformance = conformance(setup, 2);
+    conformance.plugin_dir =
+        Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugin/examples/fixed-plugin"));
+
+    assert_eq!(run(&conformance), Outcome::Passed);
+}
+
+#[test]
+fn a_settings_violation_in_the_plugin_directory_fails_the_run() {
+    let Some(setup) = setup() else { return };
+    let dir = TempDir::new().expect("create temp dir");
+    fs::write(
+        dir.path().join("settings.json"),
+        r#"{"settings_version":1,"fields":[{"name":"events","label":"Events","type":"integer"}]}"#,
+    )
+    .expect("write settings.json");
+    let mut conformance = conformance(setup, 2);
+    conformance.plugin_dir = Some(dir.path().to_owned());
+
+    let Outcome::Failed(output) = run(&conformance) else {
+        panic!("a lowercase setting name must fail the run");
+    };
+
+    assert!(
+        output.contains(r#"settings.json: fields[0]: name "events" does not match"#),
+        "{output}"
+    );
+}
+
+#[test]
 fn an_env_name_that_is_empty_or_holds_an_equals_sign_is_rejected() {
     for name in ["", "A=B"] {
         let mut conformance = Conformance::new("unused");

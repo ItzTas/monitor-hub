@@ -361,9 +361,11 @@ fn the_plugin_conforms() {
 }
 ```
 
-`Conformance::new(program)` sets `command` to `[program]`, with no environment, `min_events` 0 and `ready_timeout` 0. Change the public fields by assignment: `Conformance` is `#[non_exhaustive]`, so other crates cannot build it with a struct literal, and `Outcome` is `#[non_exhaustive]` too, so a `match` on it needs a wildcard arm.
+`Conformance::new(program)` sets `command` to `[program]`, with no environment, `min_events` 0, `ready_timeout` 0 and no `plugin_dir`. Change the public fields by assignment: `Conformance` is `#[non_exhaustive]`, so other crates cannot build it with a struct literal, and `Outcome` is `#[non_exhaustive]` too, so a `match` on it needs a wildcard arm.
 
 `command` is the plugin's command line, and arguments are pushed onto it. `min_events` and `ready_timeout` become the `-min-events` and `-ready-timeout` flags. The run is stopped after `ready_timeout` plus two minutes, and no plugin process is left behind.
+
+`plugin_dir` becomes the `-plugin-dir` flag. Set it to the directory that holds your `settings.json`, for example `Some(env!("CARGO_MANIFEST_DIR").into())`. The command then reads that file by its own Go rules and runs the plugin's `validate-settings` in that directory. A plugin in any other language gets the same check from `plugin-conformance -plugin-dir`; for a Rust plugin it comes on top of `settings::check`.
 
 `env` holds the plugin's environment. Besides it, the plugin gets only the handshake variables go-plugin sets (`MONITOR_HUB_PLUGIN`, `PLUGIN_MIN_PORT`, `PLUGIN_MAX_PORT`, `PLUGIN_PROTOCOL_VERSIONS`). The hub would also pass `PATH`, `TZ`, `TMPDIR` and `MONITOR_HUB_DATA_DIR`; the conformance command does not, so add the ones the plugin needs to `env`. The plugin runs in the test's working directory, not in a plugin directory, and shares the conformance command's process group. Each entry of `env` reaches the command as a `-env NAME=value` argument, which other users of the same machine can read (with `ps`, or in `/proc/<pid>/cmdline`). Pass only throwaway test credentials, such as the URL of a test database from `database()`.
 
