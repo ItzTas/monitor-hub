@@ -127,7 +127,7 @@ func needsCookie() int {
 }
 
 func logStderr() int {
-	fmt.Fprintln(os.Stderr, "validating settings")
+	fmt.Fprint(os.Stderr, "validating settings")
 	return answerNoProblems()
 }
 

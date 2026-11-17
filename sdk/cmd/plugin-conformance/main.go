@@ -21,6 +21,7 @@ import (
 
 const (
 	pluginPrefix   = "plugin: "
+	lineLimit      = 64 << 10
 	exitOK         = 0
 	exitViolations = 1
 	exitUsage      = 2
@@ -37,15 +38,39 @@ type prefixed struct {
 func (p *prefixed) Write(b []byte) (int, error) {
 	p.line = append(p.line, b...)
 	for {
-		end := bytes.IndexByte(p.line, '\n')
-		if end < 0 {
+		line, rest, ok := nextLine(p.line)
+		if !ok {
 			return len(b), nil
 		}
-		if _, err := p.out.Write(append([]byte(pluginPrefix), p.line[:end+1]...)); err != nil {
+		p.line = rest
+		if err := p.writeLine(line); err != nil {
 			return len(b), err
 		}
-		p.line = p.line[end+1:]
 	}
+}
+
+func (p *prefixed) flush() error {
+	if len(p.line) == 0 {
+		return nil
+	}
+	line := p.line
+	p.line = nil
+	return p.writeLine(line)
+}
+
+func (p *prefixed) writeLine(line []byte) error {
+	_, err := p.out.Write(slices.Concat([]byte(pluginPrefix), line, []byte("\n")))
+	return err
+}
+
+func nextLine(pending []byte) ([]byte, []byte, bool) {
+	if end := bytes.IndexByte(pending[:min(len(pending), lineLimit+1)], '\n'); end >= 0 {
+		return pending[:end], pending[end+1:], true
+	}
+	if len(pending) > lineLimit {
+		return pending[:lineLimit], pending[lineLimit:], true
+	}
+	return nil, pending, false
 }
 
 func (e *envFlags) String() string { return strings.Join(*e, ",") }
@@ -103,8 +128,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Env = env
 	settings := checkSettings(ctx, dir, cmd.Path, stderr)
-	opts.Stderr = &prefixed{out: stderr}
+	pluginStderr := &prefixed{out: stderr}
+	opts.Stderr = pluginStderr
 	violations, err := plugintest.Check(ctx, cmd, opts)
+	_ = pluginStderr.flush()
 	writeLines(stderr, settings)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "plugin-conformance: %v\n", oneLine(err))
@@ -132,7 +159,10 @@ func checkSettings(ctx context.Context, dir, program string, stderr io.Writer) [
 	if dir == "" {
 		return nil
 	}
-	return plugintest.CheckSettings(ctx, dir, program, &prefixed{out: stderr})
+	validatorStderr := &prefixed{out: stderr}
+	violations := plugintest.CheckSettings(ctx, dir, program, validatorStderr)
+	_ = validatorStderr.flush()
+	return violations
 }
 
 func writeLines(w io.Writer, lines []string) {
