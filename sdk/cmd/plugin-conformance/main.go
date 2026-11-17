@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -23,7 +24,7 @@ const (
 	exitOK         = 0
 	exitViolations = 1
 	exitUsage      = 2
-	usage          = "usage: plugin-conformance [-min-events N] [-ready-timeout D] [-env NAME=value]... -- <command> [args...]"
+	usage          = "usage: plugin-conformance [-min-events N] [-ready-timeout D] [-plugin-dir DIR] [-env NAME=value]... -- <command> [args...]"
 )
 
 type envFlags []string
@@ -66,13 +67,15 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var (
-		env  envFlags
-		opts plugintest.Options
+		env       envFlags
+		opts      plugintest.Options
+		pluginDir string
 	)
 	fs := flag.NewFlagSet("plugin-conformance", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.IntVar(&opts.MinEvents, "min-events", 0, "minimum number of events the plugin must return")
 	fs.DurationVar(&opts.ReadyTimeout, "ready-timeout", 0, "how long to wait while Events answers UNAVAILABLE")
+	fs.StringVar(&pluginDir, "plugin-dir", "", "plugin directory: check its settings.json and run <command> validate-settings in it")
 	fs.Var(&env, "env", "environment variable NAME=value for the plugin (repeatable)")
 
 	sep := slices.Index(args, "--")
@@ -90,24 +93,52 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, usage)
 		return exitUsage
 	}
+	dir, err := settingsDir(pluginDir)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "plugin-conformance: -plugin-dir: %v\n", err)
+		return exitUsage
+	}
 
 	command := args[sep+1:]
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Env = env
+	settings := checkSettings(ctx, dir, cmd.Path, stderr)
 	opts.Stderr = &prefixed{out: stderr}
 	violations, err := plugintest.Check(ctx, cmd, opts)
+	writeLines(stderr, settings)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "plugin-conformance: %v\n", oneLine(err))
 		return exitViolations
 	}
-	if len(violations) > 0 {
-		for _, v := range violations {
-			_, _ = fmt.Fprintln(stderr, v)
-		}
+	writeLines(stderr, violations)
+	if len(settings)+len(violations) > 0 {
 		return exitViolations
 	}
 	_, _ = fmt.Fprintf(stdout, "conformance passed (at least %d events required, ready timeout %s)\n", opts.MinEvents, opts.ReadyTimeout.Round(time.Millisecond))
 	return exitOK
+}
+
+func settingsDir(dir string) (string, error) {
+	if dir == "" {
+		return "", nil
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", dir)
+	}
+	return filepath.Abs(dir)
+}
+
+func checkSettings(ctx context.Context, dir, program string, stderr io.Writer) []string {
+	if dir == "" {
+		return nil
+	}
+	return plugintest.CheckSettings(ctx, dir, program, &prefixed{out: stderr})
+}
+
+func writeLines(w io.Writer, lines []string) {
+	for _, line := range lines {
+		_, _ = fmt.Fprintln(w, line)
+	}
 }
 
 func oneLine(err error) string {

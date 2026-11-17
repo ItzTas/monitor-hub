@@ -6,9 +6,11 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ItzTas/monitor-hub/sdk"
@@ -33,6 +35,9 @@ type server struct {
 }
 
 func main() {
+	if slices.Equal(os.Args[1:], []string{"validate-settings"}) {
+		os.Exit(validateSettings())
+	}
 	if os.Getenv("SPAWN_CHILD") == "1" {
 		spawnChild()
 	}
@@ -47,6 +52,102 @@ func main() {
 		return
 	}
 	sdk.Serve(&server{})
+}
+
+func validateSettings() int {
+	mode := "valid"
+	if data, err := os.ReadFile("validator-mode"); err == nil {
+		mode = strings.TrimSpace(string(data))
+	}
+	answers := map[string]struct {
+		stdout string
+		code   int
+	}{
+		"problems":      {`{"problems":[{"name":"EVENTS","message":"set EVENTS"}]}`, 1},
+		"log-first":     {"starting\n" + noProblems, 0},
+		"exit-2":        {noProblems, 2},
+		"huge":          {strings.Repeat(" ", 65537) + noProblems, 0},
+		"not-object":    {`[]`, 0},
+		"trailing-data": {noProblems + "\n{}", 0},
+		"no-problems":   {`{}`, 0},
+		"wrong-type":    {`{"problems":"none"}`, 0},
+		"no-message":    {`{"problems":[{"name":"EVENTS"}]}`, 1},
+		"empty-message": {`{"problems":[{"name":"EVENTS","message":""}]}`, 1},
+		"mismatch":      {`{"problems":[{"name":"EVENTS","message":"set EVENTS"}]}`, 0},
+		"unlisted":      {noProblems, 1},
+	}
+	if answer, ok := answers[mode]; ok {
+		fmt.Println(answer.stdout)
+		return answer.code
+	}
+	background := exec.CommandContext(context.Background(), "/bin/sleep", "3601")
+	detached := exec.CommandContext(context.Background(), "/bin/sleep", "3602")
+	detached.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	actions := map[string]func() int{
+		"valid":         validAnswer,
+		"needs-cookie":  needsCookie,
+		"hang":          hang,
+		"killed":        killed,
+		"log-stderr":    logStderr,
+		"background":    func() int { return withChild(background, answerNoProblems) },
+		"detached":      func() int { return withChild(detached, answerNoProblems) },
+		"detached-hang": func() int { return withChild(detached, hang) },
+	}
+	action, ok := actions[mode]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "unknown validator mode %q\n", mode)
+		return 4
+	}
+	return action()
+}
+
+const noProblems = `{"problems":[]}`
+
+func answerNoProblems() int {
+	fmt.Println(noProblems)
+	return 0
+}
+
+func validAnswer() int {
+	if len(os.Environ()) != 0 {
+		return 3
+	}
+	if _, err := os.Stat("settings.json"); err != nil {
+		return 3
+	}
+	return answerNoProblems()
+}
+
+func needsCookie() int {
+	if os.Getenv(sdk.Handshake.MagicCookieKey) == sdk.Handshake.MagicCookieValue {
+		return answerNoProblems()
+	}
+	fmt.Fprintln(os.Stderr, "this binary is a monitor-hub plugin")
+	return 1
+}
+
+func logStderr() int {
+	fmt.Fprintln(os.Stderr, "validating settings")
+	return answerNoProblems()
+}
+
+func hang() int {
+	time.Sleep(time.Hour)
+	return 0
+}
+
+func killed() int {
+	_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
+	return hang()
+}
+
+func withChild(cmd *exec.Cmd, then func() int) int {
+	cmd.Stdout = os.Stdout
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 4
+	}
+	return then()
 }
 
 func serveOneAtATime() {
