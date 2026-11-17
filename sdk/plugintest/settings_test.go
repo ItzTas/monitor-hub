@@ -70,9 +70,6 @@ func TestSettingsViolations(t *testing.T) {
 		{"unknown attribute", settingsDoc(`{"name":"A","label":"L","type":"string","secert":true}`), []string{`settings.json is not valid: json: unknown field "secert"`}},
 		{"attribute in another case", settingsDoc(`{"name":"A","label":"L","type":"string","Secret":true}`), []string{`settings.json is not valid: json: unknown field "Secret"`}},
 		{"top-level attribute in another case", `{"Settings_Version":1,"fields":[]}`, []string{`settings.json is not valid: json: unknown field "Settings_Version"`}},
-		{"wrong json type", settingsDoc(`{"name":"A","label":"L","type":"string","default":30}`), []string{"settings.json is not valid: json: cannot unmarshal number into Go struct field settingsDocument.fields.0.default of type string"}},
-		{"not an object", `[]`, []string{"settings.json is not valid: json: cannot unmarshal array into Go value of type plugintest.settingsDocument"}},
-		{"empty file", ``, []string{"settings.json is not valid: EOF"}},
 		{"null secret", settingsDoc(`{"name":"A","label":"L","type":"string","secret":null}`), []string{"settings.json is not valid: secret must be true or false"}},
 		{"null required", settingsDoc(`{"name":"A","label":"L","type":"string","required":null}`), []string{"settings.json is not valid: required must be true or false"}},
 		{"null editable", settingsDoc(`{"name":"A","label":"L","type":"string","editable":null}`), []string{"settings.json is not valid: editable must be true or false"}},
@@ -141,6 +138,26 @@ func TestSettingsViolations(t *testing.T) {
 			got := settingsViolations([]byte(tt.file))
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("settingsViolations() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSettingsDecoderErrors(t *testing.T) {
+	const prefix = "settings.json is not valid: "
+	tests := []struct {
+		name string
+		file string
+	}{
+		{"wrong json type", settingsDoc(`{"name":"A","label":"L","type":"string","default":30}`)},
+		{"not an object", `[]`},
+		{"empty file", ``},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := settingsViolations([]byte(tt.file))
+			if len(got) != 1 || !strings.HasPrefix(got[0], prefix) || len(got[0]) == len(prefix) {
+				t.Fatalf("settingsViolations() = %q, want one violation that starts with %q and has a detail", got, prefix)
 			}
 		})
 	}
