@@ -405,16 +405,20 @@ fn describe(status: ExitStatus) -> String {
 mod tests {
     use std::fs::File;
     use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::sync::mpsc;
+    use std::thread;
     use std::time::{Instant, SystemTime};
 
     use tempfile::TempDir;
 
     use super::*;
+    use crate::leftovers;
     use crate::process::GRACE;
 
     const SUCCEEDS: &str = "echo call >>\"$FAKE_GO_CALLS\"\nprintf '#!/bin/sh\\n' >\"$GOBIN/plugin-conformance\"\nchmod 755 \"$GOBIN/plugin-conformance\"\n";
     const FAILS: &str = "echo 'go: module not found' >&2\nexit 1\n";
     const HANGS: &str = "exec sleep 30\n";
+    const DETACHES: &str = "setsid sleep 31.3 &\necho 'go: module not found' >&2\nexit 1\n";
 
     struct Fake {
         dir: TempDir,
@@ -692,6 +696,33 @@ mod tests {
 
         assert!(message.contains("did not finish within 200ms"), "{message}");
         assert!(started.elapsed() < GRACE, "took {:?}", started.elapsed());
+    }
+
+    struct Detached(&'static str);
+
+    impl Drop for Detached {
+        fn drop(&mut self) {
+            leftovers::kill_where(|process| leftovers::runs(process, &["sleep", self.0]));
+        }
+    }
+
+    #[test]
+    fn a_go_install_whose_child_leaves_the_group_still_returns() {
+        let _detached = Detached("31.3");
+        let fake = Fake::new(DETACHES);
+        let cache = TempDir::new().expect("create temp dir");
+        let install = fake.install(Some(cache.path().to_owned()), INSTALL_LIMIT);
+        let bound = Duration::from_secs(3);
+        let (sender, receiver) = mpsc::channel();
+
+        thread::spawn(move || {
+            let _ = sender.send(obtain(Source::Go(install)));
+        });
+        let Ok(Err(message)) = receiver.recv_timeout(bound) else {
+            panic!("a failed go install must fail within {bound:?}");
+        };
+
+        assert!(message.ends_with("go: module not found"), "{message}");
     }
 
     #[test]

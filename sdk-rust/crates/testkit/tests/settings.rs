@@ -1,7 +1,6 @@
 use std::fs::{self, Permissions};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
@@ -11,6 +10,8 @@ use tempfile::TempDir;
 
 #[path = "../../plugin/tests/support/example.rs"]
 mod example;
+#[path = "support/leftovers.rs"]
+mod leftovers;
 
 const FIXED_SETTINGS: &str = include_str!("../../plugin/examples/fixed-plugin/settings.json");
 const EMPTY_SETTINGS: &str = r#"{"settings_version":1,"fields":[]}"#;
@@ -32,6 +33,7 @@ struct Case {
     script: &'static str,
     program: &'static str,
     bound: Duration,
+    detached: Option<&'static str>,
     want: Vec<Want>,
 }
 
@@ -43,6 +45,7 @@ impl Case {
             script,
             program: VALIDATOR,
             bound: BOUND,
+            detached: None,
             want,
         }
     }
@@ -50,18 +53,23 @@ impl Case {
 
 struct Plugin {
     dir: TempDir,
+    detached: Option<&'static str>,
 }
 
 impl Plugin {
-    fn new(settings: Option<&str>, script: &str) -> Plugin {
+    fn new(case: &Case) -> Plugin {
         let dir = TempDir::new().expect("create temp dir");
-        if let Some(settings) = settings {
+        if let Some(settings) = case.settings {
             fs::write(dir.path().join("settings.json"), settings).expect("write settings.json");
         }
         let validator = dir.path().join(VALIDATOR);
-        fs::write(&validator, format!("#!/bin/sh\n{script}\n")).expect("write the validator");
+        fs::write(&validator, format!("#!/bin/sh\n{}\n", case.script))
+            .expect("write the validator");
         fs::set_permissions(&validator, Permissions::from_mode(0o755)).expect("chmod");
-        Plugin { dir }
+        Plugin {
+            dir,
+            detached: case.detached,
+        }
     }
 
     fn check(&self, case: &Case) -> Vec<String> {
@@ -89,23 +97,12 @@ impl Drop for Plugin {
         let Ok(dir) = fs::canonicalize(self.dir.path()) else {
             return;
         };
-        let Ok(entries) = fs::read_dir("/proc") else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(pid) = name
-                .to_str()
-                .filter(|name| name.bytes().all(|b| b.is_ascii_digit()))
-            else {
-                continue;
-            };
-            if fs::read_link(entry.path().join("cwd")).is_ok_and(|cwd| cwd.starts_with(&dir)) {
-                let _ = Command::new("kill")
-                    .args(["-s", "KILL", "--", pid])
-                    .status();
-            }
-        }
+        leftovers::kill_where(|process| {
+            fs::read_link(process.join("cwd")).is_ok_and(|cwd| cwd.starts_with(&dir))
+                || self
+                    .detached
+                    .is_some_and(|argument| leftovers::runs(process, &["sleep", argument]))
+        });
     }
 }
 
@@ -200,6 +197,24 @@ fn misbehaving_validators_are_reported() {
                 vec![],
             )
         },
+        Case {
+            bound: Duration::from_secs(3),
+            detached: Some("31.1"),
+            ..Case::new(
+                "detached child",
+                r#"setsid sleep 31.1 & echo '{"problems":[]}'"#,
+                vec![],
+            )
+        },
+        Case {
+            bound: Duration::from_secs(9),
+            detached: Some("31.2"),
+            ..Case::new(
+                "detached child while hanging",
+                "setsid sleep 31.2 & exec sleep 30",
+                vec![Want::Exact("validate-settings did not finish within 5s")],
+            )
+        },
         Case::new(
             "exit 2",
             r#"echo '{"problems":[]}'; exit 2"#,
@@ -282,10 +297,7 @@ fn misbehaving_validators_are_reported() {
             )
         },
     ];
-    let plugins: Vec<Plugin> = cases
-        .iter()
-        .map(|case| Plugin::new(case.settings, case.script))
-        .collect();
+    let plugins: Vec<Plugin> = cases.iter().map(Plugin::new).collect();
 
     for (case, plugin) in cases.iter().zip(&plugins) {
         let got = plugin.check(case);
