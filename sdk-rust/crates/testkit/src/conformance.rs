@@ -3,16 +3,16 @@ use std::env;
 use std::ffi::OsString;
 use std::fs::{self, DirBuilder, Permissions};
 use std::hash::BuildHasher;
-use std::io::{self, ErrorKind, Read};
+use std::io::ErrorKind;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-use std::os::unix::process::{CommandExt, ExitStatusExt};
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{self, Child, Command, ExitStatus, Stdio};
+use std::process::{self, Command, ExitStatus};
 use std::sync::{Mutex, Once, OnceLock, PoisonError};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::ci;
+use crate::process::{Failure, Finished, execute};
 
 pub const SDK_GO_VERSION: &str = "sdk/v0.2.1";
 
@@ -26,8 +26,6 @@ const UNIQUE_ATTEMPTS: u64 = 16;
 const COMMAND_ENV: &str = "PLUGIN_CONFORMANCE";
 const INSTALL_LIMIT: Duration = Duration::from_secs(600);
 const ALLOWANCE: Duration = Duration::from_secs(120);
-const GRACE: Duration = Duration::from_secs(5);
-const POLL: Duration = Duration::from_millis(20);
 const EXIT_VIOLATIONS: i32 = 1;
 const EXIT_USAGE: i32 = 2;
 
@@ -75,21 +73,6 @@ struct Install {
 enum Location {
     Cache(PathBuf),
     Temporary(String),
-}
-
-struct Finished {
-    status: ExitStatus,
-    stderr: String,
-}
-
-struct Running(Child);
-
-impl Drop for Running {
-    fn drop(&mut self) {
-        if matches!(self.0.try_wait(), Ok(None)) {
-            stop(&mut self.0);
-        }
-    }
 }
 
 pub fn run(conformance: &Conformance) -> Outcome {
@@ -390,87 +373,8 @@ fn arguments(conformance: &Conformance) -> Vec<String> {
     args
 }
 
-enum Failure {
-    Start(io::Error),
-    Timeout(String),
-}
-
-fn execute(command: &mut Command, limit: Duration) -> Result<Finished, Failure> {
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn()
-        .map_err(Failure::Start)?;
-    let stdout = drain(child.stdout.take());
-    let stderr = drain(child.stderr.take());
-    let mut running = Running(child);
-    let status = wait(&mut running.0, limit);
-    let _ = stdout.join();
-    let stderr = String::from_utf8_lossy(&stderr.join().unwrap_or_default()).into_owned();
-    match status {
-        Some(status) => Ok(Finished { status, stderr }),
-        None => Err(Failure::Timeout(stderr)),
-    }
-}
-
-fn drain<R: Read + Send + 'static>(stream: Option<R>) -> JoinHandle<Vec<u8>> {
-    thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut stream) = stream {
-            let _ = stream.read_to_end(&mut buf);
-        }
-        buf
-    })
-}
-
-fn wait(child: &mut Child, limit: Duration) -> Option<ExitStatus> {
-    let deadline = Instant::now() + limit;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Some(status),
-            Ok(None) if Instant::now() < deadline => thread::sleep(POLL),
-            _ => {
-                stop(child);
-                return None;
-            }
-        }
-    }
-}
-
-fn stop(child: &mut Child) {
-    signal_group(child, "TERM");
-    let deadline = Instant::now() + GRACE;
-    let mut reaped = false;
-    while Instant::now() < deadline {
-        reaped = reaped || matches!(child.try_wait(), Ok(Some(_)));
-        if reaped && !group_alive(child) {
-            return;
-        }
-        thread::sleep(POLL);
-    }
-    signal_group(child, "KILL");
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-fn signal_group(child: &Child, signal: &str) -> bool {
-    Command::new("kill")
-        .args(["-s", signal, "--"])
-        .arg(format!("-{}", child.id()))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-fn group_alive(child: &Child) -> bool {
-    signal_group(child, "0")
-}
-
 fn outcome(finished: Finished) -> Outcome {
-    let Finished { status, stderr } = finished;
+    let Finished { status, stderr, .. } = finished;
     if status.success() {
         return Outcome::Passed;
     }
@@ -501,11 +405,12 @@ fn describe(status: ExitStatus) -> String {
 mod tests {
     use std::fs::File;
     use std::os::unix::fs::{PermissionsExt, symlink};
-    use std::time::SystemTime;
+    use std::time::{Instant, SystemTime};
 
     use tempfile::TempDir;
 
     use super::*;
+    use crate::process::GRACE;
 
     const SUCCEEDS: &str = "echo call >>\"$FAKE_GO_CALLS\"\nprintf '#!/bin/sh\\n' >\"$GOBIN/plugin-conformance\"\nchmod 755 \"$GOBIN/plugin-conformance\"\n";
     const FAILS: &str = "echo 'go: module not found' >&2\nexit 1\n";

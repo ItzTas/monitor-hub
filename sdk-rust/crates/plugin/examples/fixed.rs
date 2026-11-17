@@ -8,6 +8,7 @@ use monitor_hub_plugin::proto::{
     CheckRequest, CheckResponse, DescribeRequest, DescribeResponse, Event, EventKind,
     EventsRequest, EventsResponse, Severity, State, StatusRequest, StatusResponse,
 };
+use monitor_hub_plugin::settings::{self, Problem, VALIDATE_SETTINGS_ARG};
 use monitor_hub_plugin::{ServeError, serve};
 use prost_types::Timestamp;
 use tonic::{Request, Response, Status};
@@ -111,8 +112,33 @@ fn start_logging(events: i64) -> Result<(), LoggingError> {
     logging::init("info")
 }
 
+fn validating() -> bool {
+    env::args_os().skip(1).eq([VALIDATE_SETTINGS_ARG])
+}
+
+fn problems() -> Vec<Problem> {
+    let events = env::var_os("EVENTS").is_none_or(|raw| {
+        raw.to_str()
+            .is_some_and(|raw| raw.is_empty() || raw.parse::<i64>().is_ok_and(|n| n >= 0))
+    });
+    let mut problems = Vec::new();
+    if !events {
+        problems.push(Problem::new("EVENTS", "use a whole number of 0 or more"));
+    }
+    for name in ["LOG_DEMO", "PANIC_DEMO"] {
+        let switch = env::var_os(name).is_none_or(|raw| ["", "0", "1"].iter().any(|ok| raw == *ok));
+        if !switch {
+            problems.push(Problem::new(name, "use 0 or 1"));
+        }
+    }
+    problems
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
+    if validating() {
+        return settings::answer(&problems());
+    }
     let events = env::var("EVENTS")
         .ok()
         .and_then(|raw| raw.trim().parse().ok())

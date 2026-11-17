@@ -613,6 +613,7 @@ dependencies = [
 name = "monitor-hub-plugin-testkit"
 version = "0.1.1"
 dependencies = [
+ "monitor-hub-plugin",
  "serde_json",
  "tempfile",
  "tokio",

@@ -1,0 +1,30 @@
+{
+  "settings_version": 1,
+  "fields": [
+    {
+      "name": "EVENTS",
+      "label": "Events",
+      "help": "How many fixed events the example reports.",
+      "type": "integer",
+      "default": "0"
+    },
+    {
+      "name": "LOG_DEMO",
+      "label": "Log demo",
+      "help": "Set to 1 to write one log line at each level on start.",
+      "type": "choice",
+      "options": ["0", "1"],
+      "default": "0",
+      "group": "Demos"
+    },
+    {
+      "name": "PANIC_DEMO",
+      "label": "Panic demo",
+      "help": "Set to 1 to panic on start.",
+      "type": "choice",
+      "options": ["0", "1"],
+      "default": "0",
+      "group": "Demos"
+    }
+  ]
+}

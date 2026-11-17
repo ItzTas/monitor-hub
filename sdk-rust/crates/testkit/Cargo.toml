@@ -5,9 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+monitor-hub-plugin = { path = "../plugin" }
+serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tokio-postgres.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 tempfile.workspace = true
