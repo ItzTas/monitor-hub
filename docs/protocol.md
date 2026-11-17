@@ -104,6 +104,22 @@ The recommended format is the JSON that hclog writes, one object per line:
 
 The Rust SDK writes exactly this format to stderr: `monitor_hub_plugin::logging::init` installs a `tracing` subscriber, and a panic becomes one `error` line. It prefixes a field that would collide with the keys above with `field_` itself.
 
+### Start-up errors
+
+When a plugin exits before its handshake line, its last `error` line on stderr should say why. The hub's settings page, which comes in a later release, will show that reason after a save restarts the plugin. The hub will keep the last JSON line with `@level` `error` that the plugin wrote before it exited and show the line's `error` attribute, cut to 500 characters. When the line has no `error` attribute, it will show `@message` instead.
+
+So write the reason in the `error` attribute of an `error` line, and exit. Never put a secret value in it, such as a password, a token or a database URL that holds a password.
+
+```json
+{"@level":"error","@message":"fatal","@timestamp":"2026-01-01T00:00:00.000000Z","error":"connecting to the database: connection refused"}
+```
+
+With the Rust SDK, log the error as a field cast to `&dyn Error`. The field then holds the error's whole `source()` chain:
+
+```rust
+tracing::error!(error = &err as &dyn std::error::Error, "fatal");
+```
+
 ## Shutdown
 
 To stop a plugin, the hub:
@@ -245,12 +261,159 @@ On top of that, go-plugin adds `MONITOR_HUB_PLUGIN` and the `PLUGIN_*` variables
 
 Nothing else from the hub's environment is passed. A plugin cannot read the hub's database URL, notification tokens or another plugin's settings.
 
+## Settings
+
+A plugin can declare its settings in two parts that go together: a `settings.json` file and a `validate-settings` argument. The hub's settings page will draw the plugin's form from the file, and run the plugin with the argument to check new values before it saves them.
+
+That page comes in a later release. The hub in this release does not read `settings.json`, and neither does an older hub, so a plugin can ship the file now. Both parts are optional. A plugin without the file keeps working as before, but nothing about it will be editable from the page.
+
+### `settings.json`
+
+The file sits next to `plugin.json`, in the plugin directory. An example:
+
+```json
+{
+  "settings_version": 1,
+  "fields": [
+    {
+      "name": "WATCH_TERMS",
+      "label": "Watch terms",
+      "help": "Names or registration numbers to look for in each edition, separated by commas.",
+      "type": "list",
+      "required": true
+    },
+    {
+      "name": "CHECK_INTERVAL_MINUTES",
+      "label": "Check interval (minutes)",
+      "type": "number",
+      "default": "30"
+    },
+    {
+      "name": "DATABASE_URL",
+      "label": "Database address",
+      "type": "string",
+      "secret": true,
+      "required": true
+    }
+  ]
+}
+```
+
+| Key | Type | Meaning |
+|---|---|---|
+| `settings_version` | number | Must be `1`. |
+| `fields` | array | One object per setting. It may be empty. |
+
+Each field has these attributes:
+
+| Attribute | Type | Required | Meaning |
+|---|---|---|---|
+| `name` | string | yes | The environment variable the plugin reads, without the hub's prefix. |
+| `label` | string | yes | The field's label. |
+| `help` | string | no | One or two sentences shown under the field. |
+| `type` | string | yes | `string`, `list`, `integer`, `number`, `duration` or `choice`. A `choice` field becomes a list of options. The other types become a text box, and the type only hints at the keyboard and the example. A `list` is the comma-separated text the plugin reads. |
+| `secret` | boolean | no | `true`: the hub never shows or returns the value. It works with any type. |
+| `required` | boolean | no | Only marks the field on the page. The plugin's validation decides whether something is missing. |
+| `default` | string | no | The value the plugin uses when the field is empty. The page only shows it. |
+| `options` | string array | for `choice` | The accepted values. |
+| `group` | string | no | A section title. Fields with the same `group` are shown together. |
+| `editable` | boolean | no | `false`: the page shows the field and where its value comes from, but cannot change it. The default is `true`. |
+| `reason` | string | with `editable: false` | Why the field cannot be edited. The page shows it. |
+
+The file is UTF-8 without a byte order mark and holds exactly one JSON object. Whitespace around the object is fine. Anything else after it is an error. `settings_version` and `fields` must be present, and so must `name`, `label` and `type` in every field.
+
+`null` counts as absent for `help`, `default`, `options`, `group` and `reason`. For `secret`, `required` and `editable` it is an error: write `true` or `false`, or leave the attribute out. Keys must match exactly, letter case included, so `"Secret"` is an unknown attribute.
+
+Each field must follow these rules. A broken rule is reported as `settings.json: fields[<index>]: ` followed by the text in the second column.
+
+| Rule | Text |
+|---|---|
+| `name` matches `^[A-Z][A-Z0-9_]*$`. Any other character breaks the rule, a trailing newline included. | `name "x" does not match ^[A-Z][A-Z0-9_]*$` |
+| `name` is not reserved. The reserved names are `PATH`, `TZ`, `TMPDIR` and every name that starts with `MONITOR_HUB_`, `PLUGIN_` or `LD_`. | `name "PATH" is reserved by the hub` |
+| No two fields have the same `name`. | `name "X" is declared more than once` |
+| `label` holds more than whitespace. | `label is empty` |
+| A `choice` field has at least one option. | `a choice field needs at least one option` |
+| Only a `choice` field has `options`, even an empty list. | `options are only for choice fields` |
+| Every option holds more than whitespace. | `an option is empty` |
+| No option is listed twice. | `option "a" is listed more than once` |
+| The `default` of a `choice` field is one of its options. | `default "z" is not one of the options` |
+| A `secret` field has no `default`, not even `""`. | `a secret field cannot have a default` |
+| A field with `editable: false` has a `reason` that holds more than whitespace. | `editable: false needs a non-empty reason` |
+| Only a field with `editable: false` has a `reason`, even an empty one. | `reason is only for fields with editable: false` |
+| A `group`, when present, holds more than whitespace. | `group is empty` |
+
+Options are compared exactly, character by character. `"a"` and `"A"`, or `"a"` and `"a "`, are two different options, and a `default` must be equal to one of them. Only the first broken rule of a field is reported.
+
+The Rust SDK and the conformance command reject an unknown attribute and an unknown `type`, so that a typo such as `secert` cannot leave a secret on show. The hub's reader will ignore them instead and treat an unknown `type` as `string`, so that a new optional attribute does not break an older hub. A change that an older hub cannot safely ignore raises `settings_version`.
+
+The hub does not check values against these attributes, beyond what the form control allows: a `choice` field offers only its options. Rules such as "set exactly one of these three" belong in the plugin's `validate-settings`.
+
+Every value is text, the same text the plugin reads from its environment. A `list` value is separated by commas. An empty value means "not set": the page can save an empty value to hide one that comes from `.env`, so read an empty variable as a missing one.
+
+A `settings.json` that cannot be read, or that breaks a rule, will not stop the hub or the plugin. The hub will log the error and treat the plugin as if it declared nothing.
+
+The Rust SDK's reader and the conformance command apply the same rules and give the same text for every rule in the table above. They differ in a few places, and the Rust reader is the stricter one. Write the file so that both accept it.
+
+- A key repeated in one object, such as two `name` keys in a field, and a lone surrogate escape in a string, such as `"\ud800"`, are errors in Rust. The conformance command accepts both.
+- Rust stops at the first broken field. The conformance command reports every broken field, one line each.
+- When the JSON itself is wrong (bad syntax, a wrong value type, an unknown attribute), each side writes `settings.json is not valid: ` followed by its own decoder's message, so the details differ. Rust reports an unknown `type` the same way. The conformance command reports it as a field rule: `type "password" is not one of string, list, integer, number, duration, choice`.
+
+### `validate-settings`
+
+A plugin that ships `settings.json` must also accept `<command[0]> validate-settings`. The hub finds `command[0]` the way it finds the plugin's command: first in the plugin directory, then through `PATH`. It runs it in the plugin directory with `validate-settings` as its only argument. The rest of `command` is not passed, and no field can name another program.
+
+So `command[0]` must be the plugin's own program. A plugin started through an interpreter, such as [`examples/python-plugin`](../examples/python-plugin) with `["python3", "main.py"]`, would get `python3 validate-settings`. Before such a plugin ships `settings.json`, it needs an executable of its own, for example a script with a shebang line.
+
+The values to check arrive in the environment, under the names the plugin reads when it starts. The hub will build that environment the same way it builds the one the plugin runs with. The magic cookie may be missing, so look for `validate-settings` before anything checks the cookie.
+
+The plugin writes one JSON object on stdout and exits:
+
+```json
+{"problems": [{"name": "WATCH_TERMS", "message": "set at least one name or registration number"}]}
+```
+
+| Exit code | `problems` | Meaning |
+|---|---|---|
+| `0` | empty | The values are valid. |
+| `1` | at least one | The values are invalid. |
+| anything else | | The validator failed. |
+
+A validator that exits with `0` but lists problems, exits with `1` but lists none, prints something other than one JSON object, or runs for more than 5 seconds has failed too. When the validator fails, the hub will save nothing and say that the plugin could not validate the values.
+
+- `problems` is required. Each problem has a non-empty `message`, and a `name` that is either a field the file declares or empty, for a problem with several fields together. `name` may be left out. Other keys are ignored.
+- List every problem at once, not only the first.
+- Finish within 5 seconds.
+- Write the answer and nothing else on stdout, at most 64 KiB (65536 bytes). Whitespace around the object is fine. Logs go to stderr.
+- Do not require the magic cookie, open a database, use the network, run a program named in the settings (a password command, for example) or write to disk.
+- Never put the value of a `secret` field in a message.
+
+Validation cannot prove everything. A wrong password or an unreachable database only shows when the plugin starts, which is what [Start-up errors](#start-up-errors) are for.
+
+With the Rust SDK, `monitor_hub_plugin::settings::answer` writes the answer and returns the exit code. See [`sdk-rust/README.md`](../sdk-rust/README.md).
+
+The Rust testkit and the conformance command read the answer with the same checks, but the Rust testkit is stricter. The conformance command accepts keys in any letter case, such as `"Problems"`, and a `null` `name`; the Rust testkit rejects both. Write the keys in lower case, and leave `name` out or empty instead of `null`. When the answer is not valid JSON, or a value has the wrong type, each side quotes its own decoder's message.
+
+### Variables the file does not declare
+
+The page will also let its user set variables the file does not declare, such as a proxy variable that a library reads. Only plugins that ship `settings.json` get them. Without the file, the hub cannot tell which names are dangerous, so nothing is editable. Such a name must match `^[A-Z][A-Z0-9_]*$`, must not be reserved, and must not be a field the file declares with `editable: false`.
+
+Declare every variable that makes the plugin run a program or read a file as `editable: false`, with a `reason`. Examples are a command that prints a password and the path of a password file. If the page could change them, anyone who can use the page could run a program inside the hub's container. Those variables stay in `.env`.
+
+When a new version of the plugin declares a variable that was saved as an undeclared one, it becomes that field and keeps the saved value. When a version stops declaring a field, its saved value becomes an undeclared variable.
+
+### Keeping the file and the code in step
+
+Add a test that fails when the code reads a variable that `settings.json` does not declare, or when the file declares one the code does not read. Keep the names your configuration code reads in one list, so the test can compare that list with the file.
+
+In Rust, `monitor_hub_plugin_testkit::settings::assert_no_drift` makes that comparison, and `monitor_hub_plugin_testkit::settings::check` checks the file and runs the validator with an empty environment. See [`sdk-rust/README.md`](../sdk-rust/README.md). In other languages, run `plugin-conformance` with `-plugin-dir` (see [Conformance](#conformance)). It checks the file and the validator, and the comparison with the code is a test you write yourself.
+
 ## Image layout
 
 A plugin image puts the manifest and every file the plugin needs under `/plugin/`:
 
 ```
 /plugin/plugin.json
+/plugin/settings.json (optional, see Settings)
 /plugin/<executable or script>
 /plugin/<other files>
 ```
@@ -272,6 +435,7 @@ Everything after `--` is the plugin's command line. The flags go before it:
 |---|---|---|
 | `-min-events N` | `0` | The first page of events must hold at least `N` events. |
 | `-ready-timeout D` | `0` | How long to wait while the first `Events` call answers `UNAVAILABLE`, for example `10s`. The call is retried every 200 ms, and only for that status. With `0` it is not retried. |
+| `-plugin-dir DIR` | none | The plugin directory. When it holds `settings.json`, the command checks the file and runs the plugin's `validate-settings` in `DIR` before it starts the plugin (see [Settings](#settings)). |
 | `-env NAME=value` | none | An environment variable for the plugin. Repeat the flag for more. |
 
 `-env` puts the value in the command's argument list, where other users of the same machine can read it (with `ps`, or in `/proc/<pid>/cmdline`). Pass only throwaway test credentials this way, such as the URL of a test database.
@@ -286,6 +450,14 @@ Everything after `--` is the plugin's command line. The flags go before it:
 
 Pass whatever configuration the plugin requires to produce events.
 
+With `-plugin-dir`, the command first runs the validator, which receives:
+
+- No environment variables at all: no `PATH`, no magic cookie and none of the `-env` variables.
+- `DIR` as its working directory.
+- The first word after `--`, with `validate-settings` as its only argument. The command finds that program as it finds the plugin: a path counts from the current directory, and a bare name is looked up in the command's own `PATH`, never in `DIR`. The hub looks in the plugin directory first, so pass the program as a path.
+
+The command checks `settings.json` on every system, but runs `validate-settings` on Unix systems only (Linux and macOS). Elsewhere it reports one violation saying that the validator check needs a Unix system.
+
 ### Output
 
 Exit codes:
@@ -294,9 +466,11 @@ Exit codes:
 |---|---|
 | `0` | The plugin passed. A line on stdout says so. |
 | `1` | The plugin broke a rule, or could not be started and reached. Each violation is one line on stderr. |
-| `2` | The command was called wrongly. A usage line goes to stderr. |
+| `2` | The command was called wrongly, for example with a `-plugin-dir` that is not a directory. A line on stderr says what is wrong. |
 
 The command copies everything the plugin writes to stderr onto its own stderr, with `plugin: ` in front of each line. The plugin's lines come out as the plugin writes them. The command writes its own lines (violations, or a line starting with `plugin-conformance: ` when the plugin could not be started or reached) only after it has stopped the plugin and read the plugin's stderr to the end. So every plugin line comes before them, and when a plugin dies during start-up, its last error is just above the command's line.
+
+The validator's stderr is copied the same way, with the same prefix. It runs before the plugin starts, so its lines come first. Among the command's own lines, the settings violations come first.
 
 ### Checks
 
@@ -309,7 +483,14 @@ The suite checks that:
 - When the first list holds at least two events, `Events(after = 0, limit = 1)` returns exactly the first event, and `Events(after = 0, limit = 0)` returns at most 100 events.
 - `Check` succeeds.
 
-The checks are limited to 30 seconds plus `-ready-timeout`. Starting the plugin and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
+With `-plugin-dir`, when `DIR` holds `settings.json`, the suite also checks that:
+
+- The file can be read and follows every rule in [`settings.json`](#settingsjson). Each broken rule is one violation.
+- `validate-settings`, run as described in [What the plugin receives](#what-the-plugin-receives), finishes within 5 seconds, exits with `0` or `1`, writes at most 64 KiB on stdout, and prints one JSON object whose `problems` agree with its exit code, each with a non-empty `message`. A validator that waits for the magic cookie prints nothing and fails. Only the first problem with the validator is reported.
+
+When `DIR` has no `settings.json`, the suite checks nothing more and does not run the validator.
+
+The checks are limited to 30 seconds plus `-ready-timeout`. Starting the plugin and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. The validator runs earlier still, under its own 5-second limit. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
 
 The Rust SDK's testkit runs this command from `cargo test`. See [`sdk-rust/README.md`](../sdk-rust/README.md).
 
@@ -330,3 +511,5 @@ Generate the stubs from `plugin.proto` with your language's protoc plugin. Pin t
 - Recommended: until the first short page, return only events issued before the plugin started (see [Events recorded before the first read ends](#events-recorded-before-the-first-read-ends)).
 - Implement `plugin.GRPCController/Shutdown`, or be ready to be killed after 2 seconds.
 - Give every event a non-empty `title` and an `occurred_at`, and pass `plugin-conformance`.
+- If you ship `settings.json`, answer `validate-settings` and keep both in step with the code.
+- Write the reason for a failed start as the `error` attribute of an `error` line, with no secret in it.

@@ -2,8 +2,8 @@
 
 Two crates for writing monitor-hub plugins in Rust. The plugin protocol itself is described in [`docs/protocol.md`](../docs/protocol.md).
 
-- `monitor-hub-plugin` runs the plugin side of the protocol: the magic cookie check, the Unix socket, the handshake line, the gRPC health service and shutdown. It also writes logs in the format the hub reads and, behind the `postgres` feature, applies goose-format migrations.
-- `monitor-hub-plugin-testkit` is for your tests: a throwaway Postgres database and a runner for the hub's conformance suite.
+- `monitor-hub-plugin` runs the plugin side of the protocol: the magic cookie check, the Unix socket, the handshake line, the gRPC health service and shutdown. It also writes logs in the format the hub reads, answers `validate-settings` for plugins that declare their settings, and, behind the `postgres` feature, applies goose-format migrations.
+- `monitor-hub-plugin-testkit` is for your tests: a throwaway Postgres database, a runner for the hub's conformance suite, and checks for `settings.json` and `validate-settings`.
 
 ## Setup
 
@@ -246,6 +246,71 @@ The field then holds the error's whole `source()` chain, joined with `": "`, for
 
 Only `tracing` events are captured. Crates that log through the `log` crate, such as `tokio-postgres`, write nothing unless your plugin bridges them to `tracing` itself.
 
+## Settings
+
+A plugin can declare its settings in a `settings.json` file next to `plugin.json` and check a set of values when it is run with the `validate-settings` argument. [Settings](../docs/protocol.md#settings) in the protocol document has the file's format and the rules for the answer. The `monitor_hub_plugin::settings` module covers the Rust side.
+
+### Answering `validate-settings`
+
+Look for the argument first in `main`, before logging starts and before anything checks the magic cookie, because the validator runs without the cookie. The [`fixed`](crates/plugin/examples/fixed.rs) example does the same:
+
+```rust
+use std::env;
+use std::process::ExitCode;
+
+use monitor_hub_plugin::settings::{self, Problem, VALIDATE_SETTINGS_ARG};
+use monitor_hub_plugin::{ServeError, logging, serve};
+
+fn problems() -> Vec<Problem> {
+    let mut problems = Vec::new();
+    match env::var("CHECK_INTERVAL_MINUTES").as_deref() {
+        Err(env::VarError::NotPresent) | Ok("") => {}
+        Ok(raw) if raw.parse::<u32>().is_ok() => {}
+        _ => problems.push(Problem::new(
+            "CHECK_INTERVAL_MINUTES",
+            "use a whole number of minutes",
+        )),
+    }
+    problems
+}
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    if env::args_os().skip(1).eq([VALIDATE_SETTINGS_ARG]) {
+        return settings::answer(&problems());
+    }
+    if let Err(err) = logging::init("info") {
+        eprintln!("cannot start logging: {err}");
+        return ExitCode::FAILURE;
+    }
+    match serve(Ping).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,
+        Err(err) => {
+            tracing::error!(error = &err as &dyn std::error::Error, "serve failed");
+            ExitCode::FAILURE
+        }
+    }
+}
+```
+
+`Ping` is the plugin from [A minimal plugin](#a-minimal-plugin). `Problem::new(name, message)` builds one problem: `name` is the declared field it is about, or `""` for a problem with several fields together. Collect every problem before you answer, and never put the value of a secret field in a message.
+
+`answer` writes `{"problems":[...]}` and a newline on stdout, flushes it, and returns the exit code: `0` when the list is empty, `1` when it is not, and `2` when stdout cannot be written. Write nothing else on stdout. `write_answer(out, problems)` does the same into any `Write` and returns the code as a `u8`. `VALIDATE_SETTINGS_LIMIT` (5 seconds) and `ANSWER_LIMIT` (65536 bytes) hold the protocol's limits.
+
+### Reading the file
+
+`parse(bytes)` reads a `settings.json` by the protocol's rules. It returns `Settings`, with `settings_version` and `fields`, or the first error it finds as a `SettingsError`:
+
+- `ByteOrderMark`: the file starts with a UTF-8 byte order mark.
+- `Format(error)`: the JSON itself is wrong, for example an unknown attribute or `type`. The `serde_json` error is its source.
+- `UnsupportedVersion(version)`: `settings_version` is not 1.
+- `Field { index, problem }`: field `index` breaks a rule, described by a `FieldProblem`.
+
+`is_reserved(name)` says whether the hub reserves a name. A plugin does not need `parse` at run time, because the file is for the hub. The testkit uses it.
+
+`Settings`, `Field`, `FieldType`, `SettingsError`, `FieldProblem`, `Problem` and `Answer` are `#[non_exhaustive]`. A `match` on `FieldType`, `SettingsError` or `FieldProblem` needs a wildcard arm, and other crates build a `Problem` with `Problem::new`.
+
 ## Migrations
 
 Enable the feature:
@@ -383,6 +448,46 @@ fn the_plugin_conforms() {
 - The conformance command's stderr: one line per violation, preceded by every line the plugin wrote to its stderr, each prefixed with `plugin: `. When the plugin cannot start, for example because its configuration is wrong or its database refuses the connection, its own error lines come just before the command's `plugin-conformance: ` line.
 - A message that starts with "the conformance command" and says it could not be fetched or built, followed by the Go tool's output. This happens in the `go` mode, before your plugin is started.
 - A message about an unexpected end: the command was called wrongly (a bug in the runner, not in your plugin), did not finish in time, could not be started, or was killed.
+
+### Settings
+
+`monitor_hub_plugin_testkit::settings` has two checks for a plugin that ships `settings.json`. The first runs your built binary, so put it in `tests/`:
+
+```rust
+use monitor_hub_plugin_testkit::settings::check;
+
+#[test]
+fn the_settings_contract_holds() {
+    let violations = check(
+        env!("CARGO_MANIFEST_DIR"),
+        env!("CARGO_BIN_EXE_my-plugin"),
+    );
+    assert!(violations.is_empty(), "{violations:#?}");
+}
+```
+
+`check(dir, program)` reads `dir/settings.json` with `parse`, then runs `program validate-settings` in `dir` with an empty environment. It returns one line per violation, and an empty list when both pass. It reports at most one problem with the file and one with the validator. The file must exist: without it, `check` reports that it cannot read it. A validator that runs longer than 5 seconds is stopped together with its process group.
+
+`check` runs `program` exactly as given, made absolute against the current directory. A bare name such as `validator` becomes `<current directory>/validator` and is not looked up in `PATH`, so pass a full path, for example `env!("CARGO_BIN_EXE_<name>")`.
+
+`assert_no_drift(settings_json, read)` compares the file with the list of names your configuration code reads. When they disagree, it panics and names what is read but not declared and what is declared but not read. Reserved names in the list, such as `PATH`, are ignored, and so are repeats. It also panics when the file does not parse. Keep the list in your configuration module and test it there:
+
+```rust
+pub const NAMES: &[&str] = &["CHECK_INTERVAL_MINUTES", "DATABASE_URL", "WATCH_TERMS"];
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn settings_json_declares_what_the_configuration_reads() {
+        let settings = include_str!("../settings.json");
+        monitor_hub_plugin_testkit::settings::assert_no_drift(settings, super::NAMES);
+    }
+}
+```
+
+`include_str!` takes a path relative to the source file, so `../settings.json` fits a module in `src/` and a file at the crate root.
+
+The conformance command reads the file with its own rules, which accept a few things `parse` rejects (see [Settings](../docs/protocol.md#settings)). To run that check too, set `plugin_dir` on the conformance run.
 
 ## Working on the SDK
 
