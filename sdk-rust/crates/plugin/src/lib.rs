@@ -13,6 +13,7 @@ pub mod logging;
 #[cfg(feature = "postgres")]
 pub mod migrate;
 mod serve;
+pub mod settings;
 
 pub use handshake::{
     DATA_DIR_ENV, MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE, NOT_LAUNCHED_BY_HUB, launched_by_hub,
