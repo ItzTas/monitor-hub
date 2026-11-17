@@ -74,6 +74,9 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 }
 
 func CheckSettings(ctx context.Context, dir, program string, stderr io.Writer) []string {
+	if violation := dirViolation(dir); violation != "" {
+		return []string{violation}
+	}
 	data, err := os.ReadFile(filepath.Join(dir, settingsFile))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -83,6 +86,17 @@ func CheckSettings(ctx context.Context, dir, program string, stderr io.Writer) [
 		out = append(out, violation)
 	}
 	return out
+}
+
+func dirViolation(dir string) string {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Sprintf("%s: cannot read: %v", settingsFile, err)
+	}
+	if !info.IsDir() {
+		return fmt.Sprintf("%s: cannot read: %s is not a directory", settingsFile, dir)
+	}
+	return ""
 }
 
 func fileViolations(data []byte, err error) []string {

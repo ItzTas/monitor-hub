@@ -2,6 +2,8 @@ package plugintest
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -161,4 +163,29 @@ func TestSettingsDecoderErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCheckSettingsDirectory(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unreadable := map[string]string{
+		"missing directory":   filepath.Join(t.TempDir(), "missing"),
+		"empty path":          "",
+		"file, not directory": file,
+	}
+	for name, dir := range unreadable {
+		t.Run(name, func(t *testing.T) {
+			got := CheckSettings(t.Context(), dir, "/nonexistent/plugin", nil)
+			if len(got) != 1 || !strings.HasPrefix(got[0], "settings.json: cannot read: ") {
+				t.Fatalf("violations = %q, want one starting with %q", got, "settings.json: cannot read: ")
+			}
+		})
+	}
+	t.Run("directory without settings.json", func(t *testing.T) {
+		if got := CheckSettings(t.Context(), t.TempDir(), "/nonexistent/plugin", nil); got != nil {
+			t.Fatalf("violations = %q, want none", got)
+		}
+	})
 }
