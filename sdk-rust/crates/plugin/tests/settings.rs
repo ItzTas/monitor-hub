@@ -272,6 +272,18 @@ fn field_rules_are_enforced() {
             r#"settings.json: fields[1]: name "A\n" does not match ^[A-Z][A-Z0-9_]*$"#,
         ),
         (
+            "dash in name",
+            with_bad_field(&field("A-B")),
+            FieldProblem::InvalidName("A-B".into()),
+            r#"settings.json: fields[1]: name "A-B" does not match ^[A-Z][A-Z0-9_]*$"#,
+        ),
+        (
+            "space in name",
+            with_bad_field(&field("A B")),
+            FieldProblem::InvalidName("A B".into()),
+            r#"settings.json: fields[1]: name "A B" does not match ^[A-Z][A-Z0-9_]*$"#,
+        ),
+        (
             "reserved PATH",
             with_bad_field(&field("PATH")),
             FieldProblem::ReservedName("PATH".into()),
@@ -452,6 +464,18 @@ impl Write for Failing {
     }
 }
 
+struct FlushFails;
+
+impl Write for FlushFails {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(io::Error::other("closed"))
+    }
+}
+
 #[test]
 fn answer_bytes_and_codes() {
     let mut out = Vec::new();
@@ -471,6 +495,7 @@ fn answer_bytes_and_codes() {
 
     assert_eq!(write_answer(&mut Failing, &[]), 2);
     assert_eq!(write_answer(&mut Failing, &problems), 2);
+    assert_eq!(write_answer(&mut FlushFails, &[]), 2);
 }
 
 #[test]
