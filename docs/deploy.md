@@ -363,7 +363,13 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
    docker compose logs monitor-hub | grep -E 'msg="(plugin exited|plugin failed to start)" plugin=(diario|sei)'
    ```
 
-   If you must restart the hub, use `docker compose restart monitor-hub`: the container keeps its log, with the lines from before the restart that item 4 looks for. A `docker compose up -d` that recreates the container starts a new, empty log.
+   If you must restart the hub before both lines, save its log first, because item 4 looks for lines from before the restart:
+
+   ```bash
+   docker compose logs monitor-hub > ~/hub-before-restart.log
+   ```
+
+   Then restart it the way the change needs. `docker compose restart monitor-hub` keeps the container and its log. After a change to `.env` you need `docker compose up -d`, which recreates the container and starts a new, empty log: in item 4, grep `~/hub-before-restart.log` as well.
 
 4. The end of both baselines, and what nobody announced:
 
