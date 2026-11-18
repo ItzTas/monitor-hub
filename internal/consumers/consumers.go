@@ -98,7 +98,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Consumer, err
 	if err != nil {
 		return Consumer{}, notFound(err)
 	}
-	return Consumer{Name: r.Name, Position: r.Position, Behind: r.Behind, CreatedAt: r.CreatedAt, AckedAt: r.AckedAt, SeenAt: r.SeenAt}, nil
+	return Consumer{Name: r.Name, Position: r.Position}, nil
 }
 
 func (s *Service) Touch(ctx context.Context, name, tokenHash string) (bool, error) {

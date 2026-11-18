@@ -11,10 +11,7 @@ FROM consumers c
 ORDER BY c.name;
 
 -- name: ConsumerByTokenHash :one
-SELECT c.name, c.position, c.created_at, c.acked_at, c.seen_at,
-  (SELECT count(*) FROM events e WHERE e.baseline = false AND e.seq > c.position)::bigint AS behind
-FROM consumers c
-WHERE c.token_hash = $1;
+SELECT name, position FROM consumers WHERE token_hash = $1;
 
 -- name: RotateConsumer :one
 UPDATE consumers SET token_hash = $2 WHERE name = $1 RETURNING name;

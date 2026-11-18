@@ -46,32 +46,18 @@ func (q *Queries) ClampConsumerPosition(ctx context.Context, arg ClampConsumerPo
 }
 
 const consumerByTokenHash = `-- name: ConsumerByTokenHash :one
-SELECT c.name, c.position, c.created_at, c.acked_at, c.seen_at,
-  (SELECT count(*) FROM events e WHERE e.baseline = false AND e.seq > c.position)::bigint AS behind
-FROM consumers c
-WHERE c.token_hash = $1
+SELECT name, position FROM consumers WHERE token_hash = $1
 `
 
 type ConsumerByTokenHashRow struct {
-	Name      string
-	Position  int64
-	CreatedAt time.Time
-	AckedAt   *time.Time
-	SeenAt    *time.Time
-	Behind    int64
+	Name     string
+	Position int64
 }
 
 func (q *Queries) ConsumerByTokenHash(ctx context.Context, tokenHash string) (ConsumerByTokenHashRow, error) {
 	row := q.db.QueryRow(ctx, consumerByTokenHash, tokenHash)
 	var i ConsumerByTokenHashRow
-	err := row.Scan(
-		&i.Name,
-		&i.Position,
-		&i.CreatedAt,
-		&i.AckedAt,
-		&i.SeenAt,
-		&i.Behind,
-	)
+	err := row.Scan(&i.Name, &i.Position)
 	return i, err
 }
 
