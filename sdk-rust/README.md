@@ -3,7 +3,7 @@
 Two crates for writing monitor-hub plugins in Rust. The plugin protocol itself is described in [`docs/protocol.md`](../docs/protocol.md).
 
 - `monitor-hub-plugin` runs the plugin side of the protocol: the magic cookie check, the Unix socket, the handshake line, the gRPC health service and shutdown. It also writes logs in the format the hub reads, and answers `validate-settings` for plugins that declare their settings.
-- `monitor-hub-plugin-testkit` is for your tests: a throwaway Postgres database, a runner for the hub's conformance suite, and checks for `settings.json` and `validate-settings`.
+- `monitor-hub-plugin-testkit` is for your tests: a runner for the hub's conformance suite, and checks for `settings.json` and `validate-settings`.
 
 ## Setup
 
@@ -385,27 +385,6 @@ async fn main() -> ExitCode {
 
 ## Testing with the testkit
 
-### A database
-
-```rust
-#[tokio::test]
-async fn items_are_stored() {
-    let Some(database) = monitor_hub_plugin_testkit::database().await else {
-        return;
-    };
-    let (client, connection) = tokio_postgres::connect(&database.url, tokio_postgres::NoTls)
-        .await
-        .expect("connect to the test database");
-    tokio::spawn(connection);
-    client
-        .batch_execute("CREATE TABLE items (id integer)")
-        .await
-        .expect("create a table");
-}
-```
-
-`database()` returns a new, empty database on every call and drops it when the `Database` value is dropped. If `TEST_DATABASE_URL` is set to a `postgres://` URL, it creates the databases on that server. Otherwise it starts a private cluster with `initdb` and `postgres`, which must be on `PATH`. When neither is available it prints one line to stderr and returns `None`, so the test skips. When the `CI` environment variable is set and not empty, it panics instead, so CI cannot skip the test silently.
-
 ### The conformance suite
 
 `monitor_hub_plugin_testkit::conformance::run` runs the hub's `plugin-conformance` command against your built binary. [Conformance](../docs/protocol.md#conformance) lists what it checks. Put the test in `tests/`, so Cargo builds the binary first:
@@ -436,7 +415,7 @@ fn the_plugin_conforms() {
 
 `plugin_dir` becomes the `-plugin-dir` flag. Set it to the directory that holds your `settings.json`, for example `Some(env!("CARGO_MANIFEST_DIR").into())`. The command then reads that file by its own Go rules and runs the plugin's `validate-settings` in that directory. A plugin in any other language gets the same check from `plugin-conformance -plugin-dir`; for a Rust plugin it comes on top of `settings::check`.
 
-`env` holds the plugin's environment. Besides it, the plugin gets only the handshake variables go-plugin sets (`MONITOR_HUB_PLUGIN`, `PLUGIN_MIN_PORT`, `PLUGIN_MAX_PORT`, `PLUGIN_PROTOCOL_VERSIONS`). The hub would also pass `PATH`, `TZ`, `TMPDIR` and `MONITOR_HUB_DATA_DIR`; the conformance command does not, so add the ones the plugin needs to `env`. The plugin runs in the test's working directory, not in a plugin directory, and shares the conformance command's process group. Each entry of `env` reaches the command as a `-env NAME=value` argument, which other users of the same machine can read (with `ps`, or in `/proc/<pid>/cmdline`). Pass only throwaway test credentials, such as the URL of a test database from `database()`.
+`env` holds the plugin's environment. Besides it, the plugin gets only the handshake variables go-plugin sets (`MONITOR_HUB_PLUGIN`, `PLUGIN_MIN_PORT`, `PLUGIN_MAX_PORT`, `PLUGIN_PROTOCOL_VERSIONS`). The hub would also pass `PATH`, `TZ`, `TMPDIR` and `MONITOR_HUB_DATA_DIR`; the conformance command does not, so add the ones the plugin needs to `env`. The plugin runs in the test's working directory, not in a plugin directory, and shares the conformance command's process group. Each entry of `env` reaches the command as a `-env NAME=value` argument, which other users of the same machine can read (with `ps`, or in `/proc/<pid>/cmdline`). Pass only throwaway test credentials, such as the URL of a test database.
 
 `run` finds the command in this order:
 
@@ -507,7 +486,7 @@ make check-rust
 
 `make generate-rust` regenerates `crates/plugin/src/generated/` from `proto/monitorhub/plugin/v1/plugin.proto` and `crates/plugin/proto/controller.proto`. It needs `protoc`. Never edit the generated files by hand.
 
-`make check-rust` runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` and `cargo test --workspace --all-features`. The tests need `protoc`, Postgres and Go. Locally they skip what is missing. Under `CI` they fail.
+`make check-rust` runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` and `cargo test --workspace --all-features`. The tests need `protoc` and Go. Locally they skip what is missing. Under `CI` they fail.
 
 ### `Cargo.lock`
 
@@ -523,11 +502,6 @@ Every crate in `Cargo.lock` must have been published at least two weeks before i
 | `mime` | 0.3.17 | 0.3.18 |
 | `smallvec` | 1.16.4 | 1.16.5 |
 | `syn` (3.x) | 3.0.9 | 3.0.10 |
-| `const-oid` | 0.10.2 | 0.10.3 |
-| `ctutils` | 0.4.6 | 0.4.8 |
-| `unicode-properties` | 0.1.4 | 0.1.5 |
-| `wasm-bindgen`, `wasm-bindgen-macro`, `wasm-bindgen-macro-support`, `wasm-bindgen-shared` | 0.2.129 | 0.2.130 |
-| `js-sys`, `web-sys` | 0.3.106 | 0.3.107 |
 
 To add or bump a dependency, update only what it needs and pin each new crate to a release that is old enough:
 
