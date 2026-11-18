@@ -1,3 +1,4 @@
+use std::env;
 use std::fs::{self, Permissions};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -31,7 +32,6 @@ struct Case {
     name: &'static str,
     settings: Option<&'static str>,
     script: &'static str,
-    program: &'static str,
     bound: Duration,
     detached: Option<&'static str>,
     want: Vec<Want>,
@@ -43,7 +43,6 @@ impl Case {
             name,
             settings: Some(EMPTY_SETTINGS),
             script,
-            program: VALIDATOR,
             bound: BOUND,
             detached: None,
             want,
@@ -74,7 +73,7 @@ impl Plugin {
 
     fn check(&self, case: &Case) -> Vec<String> {
         let dir = self.dir.path().to_owned();
-        let program = dir.join(case.program);
+        let program = dir.join(VALIDATOR);
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
             let _ = sender.send(check(dir, program));
@@ -240,14 +239,6 @@ fn misbehaving_validators_are_reported() {
             "kill -9 $$",
             vec![Want::Exact("validate-settings was killed by signal 9")],
         ),
-        Case {
-            program: "absent",
-            ..Case::new(
-                "missing program",
-                CLEAN_ENVIRONMENT,
-                vec![Want::Prefix("validate-settings could not be started: ")],
-            )
-        },
         Case::new(
             "too much output",
             r#"head -c 65537 /dev/zero | tr '\0' ' '; echo '{"problems":[]}'"#,
@@ -331,4 +322,45 @@ fn misbehaving_validators_are_reported() {
 
         assert!(matches(&got, &case.want), "{}: {got:?}", case.name);
     }
+}
+
+#[test]
+fn a_validator_that_cannot_start_names_the_path_it_tried() {
+    let dir = TempDir::new().expect("create temp dir");
+    fs::write(dir.path().join("settings.json"), EMPTY_SETTINGS).expect("write settings.json");
+    let absent = dir.path().join("absent");
+    let relative = "absent-validator";
+    let tried = env::current_dir()
+        .expect("current directory")
+        .join(relative);
+    let missing = dir.path().join("missing");
+    let not_found = "No such file or directory (os error 2)";
+
+    assert_eq!(
+        check(dir.path(), &absent),
+        [format!(
+            "validate-settings could not be started: {}: {not_found}",
+            absent.display()
+        )]
+    );
+    assert_eq!(
+        check(dir.path(), relative),
+        [format!(
+            "validate-settings could not be started: {}: {not_found}",
+            tried.display()
+        )]
+    );
+    assert_eq!(
+        check(&missing, &absent),
+        [
+            format!(
+                "settings.json: cannot read {}: {not_found}",
+                missing.join("settings.json").display()
+            ),
+            format!(
+                "validate-settings could not be started: {} is not a directory",
+                missing.display()
+            ),
+        ]
+    );
 }

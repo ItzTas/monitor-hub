@@ -79,11 +79,18 @@ fn file_violation(dir: &Path) -> Option<String> {
 }
 
 fn validator_violation(dir: &Path, program: &Path) -> Option<String> {
+    let not_started = "validate-settings could not be started";
     let program = match path::absolute(program) {
         Ok(program) => program,
-        Err(err) => return Some(format!("validate-settings could not be started: {err}")),
+        Err(err) => return Some(format!("{not_started}: {}: {err}", program.display())),
     };
-    let mut command = Command::new(program);
+    if !dir.is_dir() {
+        return Some(format!(
+            "{not_started}: {} is not a directory",
+            dir.display()
+        ));
+    }
+    let mut command = Command::new(&program);
     command
         .arg(VALIDATE_SETTINGS_ARG)
         .env_clear()
@@ -94,7 +101,7 @@ fn validator_violation(dir: &Path, program: &Path) -> Option<String> {
             "validate-settings did not finish within {}s",
             VALIDATE_SETTINGS_LIMIT.as_secs()
         )),
-        Err(Failure::Start(err)) => Some(format!("validate-settings could not be started: {err}")),
+        Err(Failure::Start(err)) => Some(format!("{not_started}: {}: {err}", program.display())),
     }
 }
 
