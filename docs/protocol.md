@@ -206,7 +206,7 @@ What the hub does with the call:
 - On the first signal of a call, the hub logs `watching a plugin` and polls.
 - When 90 seconds pass without a signal, the hub cancels the call, polls at once, goes back to polling every 15 seconds, and opens `Watch` again after a delay.
 - Any other error, and the end of the call, are handled the same way. For these and for the 90 seconds of silence, the hub logs a warning, `the plugin's Watch stopped; polling it every 15s`, with the error and the delay.
-- The delay before the hub opens `Watch` again grows: 1 second, 5 seconds, 30 seconds, then 2 minutes for every further attempt. It goes back to 1 second after a call that sent at least one signal, and when the plugin's process changes.
+- The delay before the hub opens `Watch` again grows: 1 second, 5 seconds, 30 seconds, then 2 minutes for every further attempt. It goes back to 1 second after a call that sent at least two signals, or when the plugin's process changes.
 - When the plugin's process restarts, the hub cancels the old call and opens `Watch` on the new process.
 - A signal that comes early, twice or never changes only when the hub polls, never what it stores. When a signal announces a `seq` that `Events` does not return yet, the hub reads `Events`, stores nothing and keeps its position. The next signal, or the 5-minute poll, reads again.
 
