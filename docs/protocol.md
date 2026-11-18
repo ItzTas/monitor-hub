@@ -607,7 +607,7 @@ Three messages carry data.
 
 `icon` is the icon of the event's kind and `plugin_icon` the plugin's. `image` is a path from the hub's root, such as `/icons/<hash>.png`. It is never empty: at the least it is the default icon's path. Resolve it against the address you use to reach the hub. `/icons/` needs no token and serves `image/png` with `Cache-Control: public, max-age=31536000, immutable` and `Content-Security-Policy: default-src 'none'; sandbox`. The default emoji is `🔔`.
 
-`event: caught_up` is sent once per connection, right after the backlog, unless the connection ends while the backlog is still being sent, with `id: <seq>` and `{"seq": 1530, "backlog": 9}`. `seq` is the larger of the newest `seq` the hub had when the connection opened and the last event sent. `backlog` is how many events the catch-up sent. It is how a consumer tells what it missed from what arrives live.
+`event: caught_up` is sent once per connection, right after the backlog, with `id: <seq>` and `{"seq": 1530, "backlog": 9}`. The hub does not send it when the connection ends while the backlog is still being sent. `seq` is the larger of the newest `seq` the hub had when the connection opened and the last event sent. `backlog` is how many events the catch-up sent. It is how a consumer tells what it missed from what arrives live.
 
 `event: replaced` carries `{}`. It means a newer connection of the same consumer took this one's place. The hub closes the connection right after.
 
@@ -620,7 +620,7 @@ Also:
 - **A token that is missing or unknown** gets `401` with `WWW-Authenticate: Bearer`. A consumer revoked or rotated while connected has its stream ended at the next ping, and its next acknowledgement gets `401`.
 - **At most 16 streams are open at once**, across all consumers. The 17th request gets `503` with `Retry-After: 30`, before the stream starts.
 - **Any other `5xx`**, for example a database error while the hub checks the token, is temporary. Try again after the same wait as for a dropped connection.
-- **Any method other than `GET`** on the stream gets `405` with `Allow: GET`.
+- **Any method other than `GET`** on the stream gets `405`, with an `Allow` header that names `GET`.
 - **A position ahead of the hub** (for example after a partial restore of the hub's database) is lowered to the newest `seq` the first time the consumer connects, and the stream starts from the newest event. This is the one case where the hub moves a position backward.
 
 ### Acknowledging
@@ -657,7 +657,7 @@ The contract does not say where a consumer keeps the hub's address and its token
 go install github.com/ItzTas/monitor-hub/sdk-go/cmd/consumer-conformance@v0.5.0
 ```
 
-Give it, after `--`, the command that starts your consumer. Three markers in any argument are replaced before the command runs, even in the middle of an argument such as `--hub={url}`:
+Give it, after `--`, the command that starts your consumer. Three markers in any argument after the program are replaced before the command runs, even in the middle of an argument such as `--hub={url}`:
 
 | Marker | Becomes |
 |---|---|
@@ -670,9 +670,9 @@ consumer-conformance -- my-consumer --hub {url} --token-file {token_file}
 consumer-conformance -- ./scripts/run-under-conformance.sh {url} {token_file}
 ```
 
-The second form suits a consumer that keeps its token in a keyring or its own configuration file: a small script of yours receives the address and the file and sets the consumer up your way. The token is made up for each run and the file is deleted at the end, so nothing real is exposed. The consumer inherits the command's environment, plus each `-env NAME=value`. The command adds `127.0.0.1,localhost` to the end of `NO_PROXY` and `no_proxy`, so a proxy setting does not catch the requests to the fake hub.
+The second form suits a consumer that keeps its token in a keyring or its own configuration file: a small script of yours receives the address and the file and sets the consumer up your way. The token is made up for each run and the file is deleted at the end, so nothing real is exposed. The consumer inherits the command's environment, plus each `-env NAME=value`. The command adds `127.0.0.1,localhost` to the end of `NO_PROXY` and `no_proxy`, so a proxy setting does not catch the requests to the fake hub. `-env` puts the value in the command's argument list, where other users of the same machine can read it with `ps`.
 
-The check runs two consumers in turn, each with a new token, and looks for these:
+The fake hub never sends the `: ping` comment. The check starts your consumer twice, each time with a new token, and looks for these:
 
 1. The consumer opens `GET /consumer/v1/stream` with `Authorization: Bearer <token>`. It sends no request to a path the hub does not serve. Besides the stream and the acknowledgement, the fake hub serves `GET /healthz` and the icon named in its notifications.
 2. After events 1 to 3 and `caught_up` 3, it acknowledges 3 within 10 seconds. It never acknowledges past the last `seq` sent or below an earlier acknowledgement. It sends the token, a body that holds only `seq`, and either no `Content-Type` or a JSON one such as `application/json`.
