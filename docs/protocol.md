@@ -1,6 +1,6 @@
 # Plugin protocol
 
-monitor-hub runs each monitor as a plugin: a separate process that the hub starts and talks to over gRPC. This document is enough to write a plugin in any language. You do not need to read the Go code.
+monitor-hub runs each monitor as a plugin: a separate process that the hub starts and talks to over gRPC. This document is enough to write a plugin in any language. You do not need to read the Go code. It describes two contracts: the one between the hub and its plugins, and, from [Consumers](#consumers), the one between the hub and the programs that receive its notifications.
 
 The contract lives in [`proto/monitorhub/plugin/v1/plugin.proto`](../proto/monitorhub/plugin/v1/plugin.proto). Generate stubs for your language from that file. The Go stubs are in `sdk-go/pluginpb`.
 
@@ -539,6 +539,111 @@ When `DIR` has no `settings.json`, the suite checks nothing more and does not ru
 The checks are limited to 30 seconds plus `-ready-timeout`. The `Watch` check runs last, inside that limit. It takes at most 6 seconds, 5 for the first signal and 1 for the call to stay open. When the earlier checks leave it less than that and the limit runs out during it, the check reports `Watch` as failed. Starting the plugin and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. The validator runs earlier still, under its own 5-second limit. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
 
 The Rust SDK's testkit runs this command from `cargo test`. See [`sdk-rust/README.md`](../sdk-rust/README.md).
+
+## Consumers
+
+A consumer is a program that receives the hub's notifications. It can run on any machine and be written in any language. The desktop notification command is one; so is a script that forwards events to a chat of your own. The hub's built-in channels (Telegram, WhatsApp, ntfy, email, webhook, AMQP) are separate and stay inside the hub.
+
+### What a consumer is
+
+A consumer opens one long HTTP request, the stream, and reads server-sent events from it. After it handles events it tells the hub how far it got. The hub remembers that position for the consumer, so a consumer that was off for a day gets what it missed when it comes back.
+
+The routes live under `/consumer/v1/`. The `v1` is the version of this contract. A change that breaks existing consumers goes to `/consumer/v2/`, and the hub keeps serving `v1` while anyone uses it. New JSON fields and new event types can appear inside `v1`, so a consumer must ignore any field and any event type it does not know.
+
+These routes use the consumer's own token, not `API_TOKEN`.
+
+### Consumers and tokens
+
+Each consumer has a name and a token of its own. The name starts with a lowercase letter and then uses lowercase letters, digits and hyphens, 2 to 31 characters in all. It does not end in `-` and has no `--`.
+
+The token is `mhc_` followed by 43 characters of base64url (47 in all). It is shown once, when the consumer is created or its token is replaced. The hub stores only its SHA-256.
+
+The owner manages consumers with four subcommands of the hub's binary, run where the hub runs:
+
+| Command | What it does |
+|---|---|
+| `monitor-hub consumers add <name>` | Creates the consumer and prints its token, once. |
+| `monitor-hub consumers list` | Prints name, position, events behind, last acknowledgement and last time seen. |
+| `monitor-hub consumers rotate <name>` | Replaces the token and keeps the position. The old token stops working. |
+| `monitor-hub consumers revoke <name>` | Deletes the consumer. Its open stream ends at the next ping. |
+
+A new consumer starts at the end: it receives no history, only events the hub records after it was created.
+
+### The stream
+
+```
+GET /consumer/v1/stream
+Authorization: Bearer <consumer token>
+```
+
+The response is `text/event-stream`. The hub sends, in this order:
+
+1. Every event after the consumer's stored position, oldest first, in pages of 500. Events recorded as a plugin's baseline are never sent.
+2. One `caught_up` message.
+3. Each new event as the hub stores it.
+
+Three messages carry data.
+
+`event: notification` has `id: <seq>` and one JSON object per event:
+
+```json
+{
+  "seq": 1521,
+  "plugin": "diario",
+  "display_name": "Diário Oficial",
+  "kind": "match",
+  "urgent": false,
+  "title": "Nome encontrado na edição de hoje",
+  "body": "…",
+  "url": "https://…",
+  "occurred_at": "2026-11-17T12:00:00Z",
+  "detected_at": "2026-11-17T12:00:14Z",
+  "icon": { "emoji": "🔔", "image": "/icons/3f1c….png" },
+  "plugin_icon": { "emoji": "🔔", "image": "/icons/3f1c….png" }
+}
+```
+
+`icon` is the icon of the event's kind and `plugin_icon` the plugin's. `image` is a path on the hub, such as `https://<hub>/icons/<hash>.png`. `/icons/` needs no token and serves `image/png` with `Cache-Control: public, max-age=31536000, immutable` and `Content-Security-Policy: default-src 'none'; sandbox`. The default emoji is `🔔`.
+
+`event: caught_up` is sent once per connection, right after the backlog: `{"seq": 1530, "backlog": 9}`. `seq` is the larger of the newest `seq` the hub had when the connection opened and the last event sent. `backlog` is how many events the catch-up sent. It is how a consumer tells what it missed from what arrives live.
+
+`event: replaced` carries `{}`. It means a newer connection of the same consumer took this one's place. The hub closes the connection right after.
+
+Every 25 seconds the hub also sends a comment line, `: ping`. It is not a notification. At each ping the hub records that it saw the consumer and checks that the consumer still exists with the same token.
+
+Also:
+
+- **The position is the hub's, not the request's.** The stream always starts after the last acknowledged `seq`. The `Last-Event-ID` header is ignored, because many SSE libraries send it on their own and it would name an event the consumer received but never handled.
+- **One token, one connection.** A new connection of a consumer ends its older ones, so a notebook that wakes up is not blocked by a connection the hub still thinks is open. Two programs with the same token would keep knocking each other off, so each program, even two on one machine, should be its own consumer.
+- **A token that is missing or unknown** gets `401` with `WWW-Authenticate: Bearer`. A consumer revoked or rotated while connected has its stream ended at the next ping, and its next acknowledgement gets `401`.
+- **At most 16 streams are open at once**, across all consumers. The 17th request gets `503` with `Retry-After: 30`, before the stream starts.
+- **A position ahead of the hub** (the hub's database was restored from an older copy) makes the stream start from the newest event.
+
+### Acknowledging
+
+```
+POST /consumer/v1/ack
+Authorization: Bearer <consumer token>
+Content-Type: application/json
+
+{"seq": 1530}
+```
+
+`seq` must be between 0 and the newest `seq` in the hub; anything else gets `422`. The position only moves forward: it becomes the larger of its current value and `seq`, so acknowledging an older `seq` changes nothing. The answer is `200` with `{"position": 1530}`. An unknown token gets `401`.
+
+A consumer acknowledges after it has handled the events, not when they arrive. An event it chose not to show counts as handled. It also acknowledges the `seq` of `caught_up`, so its position moves past events the hub never sent (baseline events).
+
+The guarantee is at least once: an event that was sent and not acknowledged comes again on the next connection.
+
+### Rules for a consumer
+
+1. Ignore JSON fields and event types you do not know.
+2. Acknowledge after handling, never a `seq` higher than the last one you received, and acknowledge the `caught_up` `seq`.
+3. Wait at least 1 second before reconnecting, and treat a connection that has delivered no byte for 60 seconds as dead.
+4. After a `401`, try again no more than once a minute.
+5. After `replaced`, wait at least 5 minutes before reconnecting, and tell whoever uses the consumer that another program has the same token.
+
+The contract does not say where a consumer keeps the hub's address and its token. A file, the system keyring, an environment variable: each consumer chooses what suits it.
 
 ## Writing a plugin without an SDK
 

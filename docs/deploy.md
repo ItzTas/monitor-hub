@@ -648,6 +648,28 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
 
   Uncomment the matching `volumes` line in `compose.yaml`, which mounts the file read-only at `/run/secrets/sei_password`, set `SEI__SEI_PASSWORD_FILE=/run/secrets/sei_password` and leave `SEI__SEI_PASSWORD` out. The plugin reads the file once, at start, so restart the hub after you change it. `SEI__DATABASE_URL_FILE` works the same way. The gazette plugin has no `_FILE` form.
 - **The SEI password command.** `SEI__SEI_PASSWORD_CMD` runs at every login, without a shell, with a 30-second limit, and without the secret variables in its environment. Its program must exist inside the hub's image, which has no password manager. The plugin refuses to start when it cannot find the program on `PATH`.
+- **Consumers.** A consumer is a program that receives the hub's notifications; [`protocol.md`](protocol.md#consumers) describes the contract. Create one inside the container. The token prints once, so copy it now:
+
+  ```bash
+  docker exec -it monitor-hub monitor-hub consumers add notebook
+  docker exec -it monitor-hub monitor-hub consumers list
+  docker exec -it monitor-hub monitor-hub consumers rotate notebook
+  docker exec -it monitor-hub monitor-hub consumers revoke notebook
+  ```
+
+  `rotate` prints a new token and keeps the position; the old token stops working. `revoke` deletes the consumer, and its open stream ends within 25 seconds. A new consumer starts at the newest event and receives no history. `list` shows each consumer's position, how many events it is behind, and when it last acknowledged and was last seen. With `API_TOKEN`, `GET /api/consumers` returns the same, plus `connected` for whether a stream is open now:
+
+  ```bash
+  curl -s -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/consumers
+  ```
+
+  To see the stream by hand, with the consumer's token:
+
+  ```bash
+  curl -N -H "Authorization: Bearer <token>" http://127.0.0.1:8090/consumer/v1/stream
+  ```
+
+  A consumer outside your home needs the hub over HTTPS or a VPN. Expose `/consumer/v1/` and `/icons/` and nothing more. They use the consumer's token, and `/icons/` needs none.
 
 ## 9. What changed for you
 
