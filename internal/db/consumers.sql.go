@@ -13,17 +13,18 @@ import (
 const ackConsumer = `-- name: AckConsumer :one
 UPDATE consumers
 SET position = GREATEST(position, $1::bigint), acked_at = now(), seen_at = now()
-WHERE name = $2
+WHERE name = $2 AND token_hash = $3
 RETURNING position
 `
 
 type AckConsumerParams struct {
-	Seq  int64
-	Name string
+	Seq       int64
+	Name      string
+	TokenHash string
 }
 
 func (q *Queries) AckConsumer(ctx context.Context, arg AckConsumerParams) (int64, error) {
-	row := q.db.QueryRow(ctx, ackConsumer, arg.Seq, arg.Name)
+	row := q.db.QueryRow(ctx, ackConsumer, arg.Seq, arg.Name, arg.TokenHash)
 	var position int64
 	err := row.Scan(&position)
 	return position, err

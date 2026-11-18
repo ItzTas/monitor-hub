@@ -144,7 +144,8 @@ func TestAckOnlyMovesForwardAndStopsAtTheNewestEvent(t *testing.T) {
 	pool := coretest.Pool(t)
 	s := NewService(pool)
 	addEvents(t, pool, 0, false, 3)
-	if _, err := s.Add(t.Context(), "notebook"); err != nil {
+	token, err := s.Add(t.Context(), "notebook")
+	if err != nil {
 		t.Fatal(err)
 	}
 	addEvents(t, pool, 3, false, 3)
@@ -157,7 +158,7 @@ func TestAckOnlyMovesForwardAndStopsAtTheNewestEvent(t *testing.T) {
 		{7, 0, ErrSeqOutOfRange},
 		{-1, 0, ErrSeqOutOfRange},
 	} {
-		got, err := s.Ack(t.Context(), "notebook", step.seq)
+		got, err := s.Ack(t.Context(), "notebook", HashToken(token), step.seq)
 		if !errors.Is(err, step.err) || got != step.want {
 			t.Errorf("Ack(%d) = %d, %v; want %d, %v", step.seq, got, err, step.want, step.err)
 		}
@@ -166,8 +167,38 @@ func TestAckOnlyMovesForwardAndStopsAtTheNewestEvent(t *testing.T) {
 	if c.AckedAt == nil || c.SeenAt == nil {
 		t.Errorf("acked_at and seen_at = %v, %v; want both set", c.AckedAt, c.SeenAt)
 	}
-	if _, err := s.Ack(t.Context(), "ghost", 1); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Ack(t.Context(), "ghost", HashToken(token), 1); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Ack of a missing consumer error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAckCountsOnlyWithTheConsumersCurrentToken(t *testing.T) {
+	pool := coretest.Pool(t)
+	s := NewService(pool)
+	addEvents(t, pool, 0, false, 1)
+	old, err := s.Add(t.Context(), "notebook")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addEvents(t, pool, 1, false, 2)
+	rotated, err := s.Rotate(t.Context(), "notebook")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Ack(t.Context(), "notebook", HashToken(old), 2); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Ack with the token from before the rotation error = %v, want ErrNotFound", err)
+	}
+	if err := s.Revoke(t.Context(), "notebook"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Add(t.Context(), "notebook"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Ack(t.Context(), "notebook", HashToken(rotated), 2); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Ack with the token of the revoked consumer error = %v, want ErrNotFound", err)
+	}
+	if c := only(t, s); c.Position != 3 || c.AckedAt != nil {
+		t.Errorf("consumer = %+v, want position 3 and never acknowledged", c)
 	}
 }
 

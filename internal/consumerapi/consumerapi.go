@@ -152,7 +152,7 @@ func (h *handler) stream(ctx context.Context, _ *struct{}, send sse.Sender) {
 
 func (h *handler) ack(ctx context.Context, input *AckInput) (*AckOutput, error) {
 	c := ctx.Value(callerKey{}).(caller)
-	position, err := h.consumers.Ack(ctx, c.consumer.Name, input.Body.Seq)
+	position, err := h.consumers.Ack(ctx, c.consumer.Name, c.tokenHash, input.Body.Seq)
 	if errors.Is(err, consumers.ErrSeqOutOfRange) {
 		return nil, huma.Error422UnprocessableEntity("seq is beyond the newest event")
 	}

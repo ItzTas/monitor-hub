@@ -109,7 +109,7 @@ func (s *Service) Touch(ctx context.Context, name, tokenHash string) (bool, erro
 	return err == nil, err
 }
 
-func (s *Service) Ack(ctx context.Context, name string, seq int64) (int64, error) {
+func (s *Service) Ack(ctx context.Context, name, tokenHash string, seq int64) (int64, error) {
 	latest, err := s.queries.LatestEventSeq(ctx)
 	if err != nil {
 		return 0, err
@@ -117,7 +117,7 @@ func (s *Service) Ack(ctx context.Context, name string, seq int64) (int64, error
 	if seq < 0 || seq > latest {
 		return 0, ErrSeqOutOfRange
 	}
-	position, err := s.queries.AckConsumer(ctx, db.AckConsumerParams{Name: name, Seq: seq})
+	position, err := s.queries.AckConsumer(ctx, db.AckConsumerParams{Name: name, TokenHash: tokenHash, Seq: seq})
 	if err != nil {
 		return 0, notFound(err)
 	}

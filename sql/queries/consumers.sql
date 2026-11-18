@@ -28,7 +28,7 @@ UPDATE consumers SET seen_at = now() WHERE name = $1 AND token_hash = $2 RETURNI
 -- name: AckConsumer :one
 UPDATE consumers
 SET position = GREATEST(position, sqlc.arg(seq)::bigint), acked_at = now(), seen_at = now()
-WHERE name = sqlc.arg(name)
+WHERE name = sqlc.arg(name) AND token_hash = sqlc.arg(token_hash)
 RETURNING position;
 
 -- name: ClampConsumerPosition :exec
