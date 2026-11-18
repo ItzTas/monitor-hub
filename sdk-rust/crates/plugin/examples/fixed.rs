@@ -3,7 +3,7 @@ use std::error::Error;
 use std::process::ExitCode;
 
 use monitor_hub_plugin::logging::{self, LoggingError};
-use monitor_hub_plugin::proto::plugin_server::Plugin;
+use monitor_hub_plugin::proto::monitor_server::Monitor;
 use monitor_hub_plugin::proto::{
     CheckRequest, CheckResponse, DescribeRequest, DescribeResponse, Event, EventKind,
     EventsRequest, EventsResponse, Severity, State, StatusRequest, StatusResponse,
@@ -21,7 +21,7 @@ struct Fixed {
 }
 
 #[tonic::async_trait]
-impl Plugin for Fixed {
+impl Monitor for Fixed {
     async fn describe(
         &self,
         _: Request<DescribeRequest>,

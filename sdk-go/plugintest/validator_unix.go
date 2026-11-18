@@ -105,7 +105,7 @@ func answerViolation(state *os.ProcessState, stdout []byte, declared map[string]
 		return fmt.Sprintf("%s wrote more than %d bytes on stdout", validateArg, answerLimit)
 	}
 	if len(bytes.Trim(stdout, answerSpace)) == 0 {
-		return validateArg + " printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_PLUGIN"
+		return validateArg + " printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_MONITOR"
 	}
 	problems, violation := readAnswer(stdout)
 	if violation != "" {

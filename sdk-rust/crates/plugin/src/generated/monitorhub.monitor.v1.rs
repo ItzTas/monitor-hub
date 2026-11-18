@@ -162,7 +162,7 @@ impl Severity {
     }
 }
 /// Generated server implementations.
-pub mod plugin_server {
+pub mod monitor_server {
     #![allow(
         unused_variables,
         dead_code,
@@ -171,9 +171,9 @@ pub mod plugin_server {
         clippy::let_unit_value,
     )]
     use tonic::codegen::*;
-    /// Generated trait containing gRPC methods that should be implemented for use with PluginServer.
+    /// Generated trait containing gRPC methods that should be implemented for use with MonitorServer.
     #[async_trait]
-    pub trait Plugin: std::marker::Send + std::marker::Sync + 'static {
+    pub trait Monitor: std::marker::Send + std::marker::Sync + 'static {
         async fn describe(
             &self,
             request: tonic::Request<super::DescribeRequest>,
@@ -212,14 +212,14 @@ pub mod plugin_server {
         }
     }
     #[derive(Debug)]
-    pub struct PluginServer<T> {
+    pub struct MonitorServer<T> {
         inner: Arc<T>,
         accept_compression_encodings: EnabledCompressionEncodings,
         send_compression_encodings: EnabledCompressionEncodings,
         max_decoding_message_size: Option<usize>,
         max_encoding_message_size: Option<usize>,
     }
-    impl<T> PluginServer<T> {
+    impl<T> MonitorServer<T> {
         pub fn new(inner: T) -> Self {
             Self::from_arc(Arc::new(inner))
         }
@@ -270,9 +270,9 @@ pub mod plugin_server {
             self
         }
     }
-    impl<T, B> tonic::codegen::Service<http::Request<B>> for PluginServer<T>
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for MonitorServer<T>
     where
-        T: Plugin,
+        T: Monitor,
         B: Body + std::marker::Send + 'static,
         B::Error: Into<StdError> + std::marker::Send + 'static,
     {
@@ -287,10 +287,10 @@ pub mod plugin_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/monitorhub.plugin.v1.Plugin/Describe" => {
+                "/monitorhub.monitor.v1.Monitor/Describe" => {
                     #[allow(non_camel_case_types)]
-                    struct DescribeSvc<T: Plugin>(pub Arc<T>);
-                    impl<T: Plugin> tonic::server::UnaryService<super::DescribeRequest>
+                    struct DescribeSvc<T: Monitor>(pub Arc<T>);
+                    impl<T: Monitor> tonic::server::UnaryService<super::DescribeRequest>
                     for DescribeSvc<T> {
                         type Response = super::DescribeResponse;
                         type Future = BoxFuture<
@@ -303,7 +303,7 @@ pub mod plugin_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as Plugin>::describe(&inner, request).await
+                                <T as Monitor>::describe(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -330,10 +330,10 @@ pub mod plugin_server {
                     };
                     Box::pin(fut)
                 }
-                "/monitorhub.plugin.v1.Plugin/Status" => {
+                "/monitorhub.monitor.v1.Monitor/Status" => {
                     #[allow(non_camel_case_types)]
-                    struct StatusSvc<T: Plugin>(pub Arc<T>);
-                    impl<T: Plugin> tonic::server::UnaryService<super::StatusRequest>
+                    struct StatusSvc<T: Monitor>(pub Arc<T>);
+                    impl<T: Monitor> tonic::server::UnaryService<super::StatusRequest>
                     for StatusSvc<T> {
                         type Response = super::StatusResponse;
                         type Future = BoxFuture<
@@ -346,7 +346,7 @@ pub mod plugin_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as Plugin>::status(&inner, request).await
+                                <T as Monitor>::status(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -373,10 +373,10 @@ pub mod plugin_server {
                     };
                     Box::pin(fut)
                 }
-                "/monitorhub.plugin.v1.Plugin/Check" => {
+                "/monitorhub.monitor.v1.Monitor/Check" => {
                     #[allow(non_camel_case_types)]
-                    struct CheckSvc<T: Plugin>(pub Arc<T>);
-                    impl<T: Plugin> tonic::server::UnaryService<super::CheckRequest>
+                    struct CheckSvc<T: Monitor>(pub Arc<T>);
+                    impl<T: Monitor> tonic::server::UnaryService<super::CheckRequest>
                     for CheckSvc<T> {
                         type Response = super::CheckResponse;
                         type Future = BoxFuture<
@@ -389,7 +389,7 @@ pub mod plugin_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as Plugin>::check(&inner, request).await
+                                <T as Monitor>::check(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -416,10 +416,10 @@ pub mod plugin_server {
                     };
                     Box::pin(fut)
                 }
-                "/monitorhub.plugin.v1.Plugin/Events" => {
+                "/monitorhub.monitor.v1.Monitor/Events" => {
                     #[allow(non_camel_case_types)]
-                    struct EventsSvc<T: Plugin>(pub Arc<T>);
-                    impl<T: Plugin> tonic::server::UnaryService<super::EventsRequest>
+                    struct EventsSvc<T: Monitor>(pub Arc<T>);
+                    impl<T: Monitor> tonic::server::UnaryService<super::EventsRequest>
                     for EventsSvc<T> {
                         type Response = super::EventsResponse;
                         type Future = BoxFuture<
@@ -432,7 +432,7 @@ pub mod plugin_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as Plugin>::events(&inner, request).await
+                                <T as Monitor>::events(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -459,11 +459,11 @@ pub mod plugin_server {
                     };
                     Box::pin(fut)
                 }
-                "/monitorhub.plugin.v1.Plugin/Watch" => {
+                "/monitorhub.monitor.v1.Monitor/Watch" => {
                     #[allow(non_camel_case_types)]
-                    struct WatchSvc<T: Plugin>(pub Arc<T>);
+                    struct WatchSvc<T: Monitor>(pub Arc<T>);
                     impl<
-                        T: Plugin,
+                        T: Monitor,
                     > tonic::server::ServerStreamingService<super::WatchRequest>
                     for WatchSvc<T> {
                         type Response = super::WatchResponse;
@@ -478,7 +478,7 @@ pub mod plugin_server {
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as Plugin>::watch(&inner, request).await
+                                <T as Monitor>::watch(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -527,7 +527,7 @@ pub mod plugin_server {
             }
         }
     }
-    impl<T> Clone for PluginServer<T> {
+    impl<T> Clone for MonitorServer<T> {
         fn clone(&self) -> Self {
             let inner = self.inner.clone();
             Self {
@@ -540,8 +540,8 @@ pub mod plugin_server {
         }
     }
     /// Generated gRPC service name
-    pub const SERVICE_NAME: &str = "monitorhub.plugin.v1.Plugin";
-    impl<T> tonic::server::NamedService for PluginServer<T> {
+    pub const SERVICE_NAME: &str = "monitorhub.monitor.v1.Monitor";
+    impl<T> tonic::server::NamedService for MonitorServer<T> {
         const NAME: &'static str = SERVICE_NAME;
     }
 }

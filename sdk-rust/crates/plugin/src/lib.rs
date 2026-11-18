@@ -1,6 +1,6 @@
 #[rustfmt::skip]
 #[allow(clippy::all)]
-#[path = "generated/monitorhub.plugin.v1.rs"]
+#[path = "generated/monitorhub.monitor.v1.rs"]
 pub mod proto;
 
 #[rustfmt::skip]

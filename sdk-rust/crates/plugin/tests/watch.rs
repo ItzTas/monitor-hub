@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use monitor_hub_plugin::proto::plugin_server::Plugin;
+use monitor_hub_plugin::proto::monitor_server::Monitor;
 use monitor_hub_plugin::proto::{WatchRequest, WatchResponse};
 use monitor_hub_plugin::{MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE};
 use tempfile::TempDir;
@@ -23,7 +23,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 struct Bare;
 
 #[tonic::async_trait]
-impl Plugin for Bare {}
+impl Monitor for Bare {}
 
 #[tokio::test]
 async fn a_plugin_without_the_notifier_answers_unimplemented() {
@@ -85,7 +85,7 @@ fn handshake(plugin: &mut Example) -> PathBuf {
         .expect("read stdout");
     let path = line
         .strip_suffix('\n')
-        .and_then(|line| line.strip_prefix("1|1|unix|"))
+        .and_then(|line| line.strip_prefix("1|2|unix|"))
         .and_then(|line| line.strip_suffix("|grpc"))
         .filter(|path| !path.is_empty())
         .unwrap_or_else(|| panic!("unexpected handshake line {line:?}"));
@@ -120,7 +120,7 @@ async fn connect(socket: &Path) -> tonic::client::Grpc<Channel> {
 async fn watch(grpc: &mut tonic::client::Grpc<Channel>) -> Streaming<WatchResponse> {
     grpc.server_streaming(
         Request::new(WatchRequest {}),
-        PathAndQuery::from_static("/monitorhub.plugin.v1.Plugin/Watch"),
+        PathAndQuery::from_static("/monitorhub.monitor.v1.Monitor/Watch"),
         tonic_prost::ProstCodec::<WatchRequest, WatchResponse>::default(),
     )
     .await

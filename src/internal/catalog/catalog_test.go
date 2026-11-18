@@ -10,16 +10,17 @@ import (
 
 func TestReadManifestRejects(t *testing.T) {
 	tests := map[string]string{
-		"protocol version 2": `{"protocol_version":2,"name":"diario","command":["x"]}`,
-		"uppercase name":     `{"protocol_version":1,"name":"Diario","command":["x"]}`,
-		"trailing hyphen":    `{"protocol_version":1,"name":"sei-","command":["x"]}`,
-		"double hyphen":      `{"protocol_version":1,"name":"ab--c","command":["x"]}`,
-		"short name":         `{"protocol_version":1,"name":"x","command":["x"]}`,
-		"empty command":      `{"protocol_version":1,"name":"diario","command":[]}`,
-		"unknown field":      `{"protocol_version":1,"name":"diario","command":["x"],"extra":1}`,
-		"trailing object":    `{"protocol_version":1,"name":"diario","command":["x"]}{"a":1}`,
-		"trailing junk":      `{"protocol_version":1,"name":"diario","command":["x"]} junk`,
-		"shell in apk":       `{"protocol_version":1,"name":"diario","command":["x"],"apk":["poppler-utils; rm -rf /"]}`,
+		"protocol version 1": `{"protocol_version":1,"name":"diario","command":["x"]}`,
+		"protocol version 3": `{"protocol_version":3,"name":"diario","command":["x"]}`,
+		"uppercase name":     `{"protocol_version":2,"name":"Diario","command":["x"]}`,
+		"trailing hyphen":    `{"protocol_version":2,"name":"sei-","command":["x"]}`,
+		"double hyphen":      `{"protocol_version":2,"name":"ab--c","command":["x"]}`,
+		"short name":         `{"protocol_version":2,"name":"x","command":["x"]}`,
+		"empty command":      `{"protocol_version":2,"name":"diario","command":[]}`,
+		"unknown field":      `{"protocol_version":2,"name":"diario","command":["x"],"extra":1}`,
+		"trailing object":    `{"protocol_version":2,"name":"diario","command":["x"]}{"a":1}`,
+		"trailing junk":      `{"protocol_version":2,"name":"diario","command":["x"]} junk`,
+		"shell in apk":       `{"protocol_version":2,"name":"diario","command":["x"],"apk":["poppler-utils; rm -rf /"]}`,
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -31,12 +32,12 @@ func TestReadManifestRejects(t *testing.T) {
 }
 
 func TestReadManifestAccepts(t *testing.T) {
-	raw := `{"protocol_version":1,"name":"diario","command":["diario-alerr","plugin"],"apk":["poppler-utils"]}` + " \n"
+	raw := `{"protocol_version":2,"name":"diario","command":["diario-alerr","monitor"],"apk":["poppler-utils"]}` + " \n"
 	m, err := ReadManifest(strings.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "diario" || !slices.Equal(m.Command, []string{"diario-alerr", "plugin"}) || !slices.Equal(m.Apk, []string{"poppler-utils"}) {
+	if m.Name != "diario" || !slices.Equal(m.Command, []string{"diario-alerr", "monitor"}) || !slices.Equal(m.Apk, []string{"poppler-utils"}) {
 		t.Fatalf("unexpected manifest: %+v", m)
 	}
 }
@@ -56,8 +57,8 @@ func writeManifest(t *testing.T, root, dir, body string) {
 
 func TestLoad(t *testing.T) {
 	root := t.TempDir()
-	writeManifest(t, root, "zeta", `{"protocol_version":1,"name":"zeta","command":["z"]}`)
-	writeManifest(t, root, "alpha", `{"protocol_version":1,"name":"alpha","command":["a"]}`)
+	writeManifest(t, root, "zeta", `{"protocol_version":2,"name":"zeta","command":["z"]}`)
+	writeManifest(t, root, "alpha", `{"protocol_version":2,"name":"alpha","command":["a"]}`)
 	entries, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +82,7 @@ func TestLoadFails(t *testing.T) {
 	tests := map[string]func(t *testing.T) string{
 		"name differs from directory": func(t *testing.T) string {
 			root := t.TempDir()
-			writeManifest(t, root, "foo", `{"protocol_version":1,"name":"bar","command":["x"]}`)
+			writeManifest(t, root, "foo", `{"protocol_version":2,"name":"bar","command":["x"]}`)
 			return root
 		},
 		"directory without manifest": func(t *testing.T) string {
@@ -155,12 +156,13 @@ func TestValidateNameAcceptsAndRejects(t *testing.T) {
 }
 
 func TestManifestValidate(t *testing.T) {
-	good := Manifest{ProtocolVersion: 1, Name: "sei", Command: []string{"./sei"}, Apk: []string{"poppler-utils"}}
+	good := Manifest{ProtocolVersion: 2, Name: "sei", Command: []string{"./sei"}, Apk: []string{"poppler-utils"}}
 	if err := good.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	for name, mutate := range map[string]func(*Manifest){
-		"protocol":   func(m *Manifest) { m.ProtocolVersion = 2 },
+		"protocol 1": func(m *Manifest) { m.ProtocolVersion = 1 },
+		"protocol 3": func(m *Manifest) { m.ProtocolVersion = 3 },
 		"name":       func(m *Manifest) { m.Name = "Sei" },
 		"command":    func(m *Manifest) { m.Command = nil },
 		"apk":        func(m *Manifest) { m.Apk = []string{"curl && id"} },
@@ -171,5 +173,26 @@ func TestManifestValidate(t *testing.T) {
 		if err := m.Validate(); err == nil {
 			t.Errorf("Validate accepted a manifest with a bad %s", name)
 		}
+	}
+}
+
+func TestManifestExplainsTheRetiredProtocolVersion(t *testing.T) {
+	tests := map[string]struct{ raw, want string }{
+		"retired": {
+			`{"protocol_version":1,"name":"diario","command":["x"]}`,
+			"protocol_version 1 is no longer supported: this hub speaks protocol_version 2, where the gRPC service is monitorhub.monitor.v1.Monitor; rebuild the monitor with the current SDK",
+		},
+		"future": {
+			`{"protocol_version":3,"name":"diario","command":["x"]}`,
+			"unsupported protocol_version 3: this hub speaks protocol_version 2",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := ReadManifest(strings.NewReader(tc.raw))
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("ReadManifest error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }

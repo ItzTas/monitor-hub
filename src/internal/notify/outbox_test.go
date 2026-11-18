@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
@@ -30,9 +30,9 @@ func queue(t *testing.T, pool *pgxpool.Pool, channels []string, at time.Time, ev
 		if err != nil {
 			t.Fatal(err)
 		}
-		severity := int16(pluginpb.Severity_SEVERITY_INFO)
+		severity := int16(monitorpb.Severity_SEVERITY_INFO)
 		if e.Urgent {
-			severity = int16(pluginpb.Severity_SEVERITY_URGENT)
+			severity = int16(monitorpb.Severity_SEVERITY_URGENT)
 		}
 		seq, err := q.InsertEvent(t.Context(), db.InsertEventParams{
 			Plugin: e.Plugin, EventID: e.Title, PluginSeq: int64(i + 1), Kind: e.Kind, Severity: severity,

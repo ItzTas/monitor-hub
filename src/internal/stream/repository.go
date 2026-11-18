@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
 
@@ -35,7 +35,7 @@ func (p *postgres) After(ctx context.Context, after int64, limit int) ([]Notific
 			Monitor:     row.Plugin,
 			DisplayName: row.DisplayName,
 			Kind:        row.Kind,
-			Urgent:      pluginpb.Severity(row.Severity) == pluginpb.Severity_SEVERITY_URGENT,
+			Urgent:      monitorpb.Severity(row.Severity) == monitorpb.Severity_SEVERITY_URGENT,
 			Title:       row.Title,
 			Body:        row.Body,
 			URL:         row.Url,

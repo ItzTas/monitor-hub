@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
 
@@ -78,7 +78,7 @@ func dueDelivery(row db.DueDeliveriesRow) DueDelivery {
 			Title:       row.Title,
 			Body:        row.Body,
 			URL:         row.Url,
-			Urgent:      pluginpb.Severity(row.Severity) == pluginpb.Severity_SEVERITY_URGENT,
+			Urgent:      monitorpb.Severity(row.Severity) == monitorpb.Severity_SEVERITY_URGENT,
 			OccurredAt:  row.OccurredAt.UTC(),
 		},
 	}

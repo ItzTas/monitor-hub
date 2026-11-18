@@ -14,7 +14,7 @@ use tonic_health::ServingStatus;
 use crate::controller::Empty;
 use crate::controller::grpc_controller_server::{GrpcController, GrpcControllerServer};
 use crate::handshake::{NOT_LAUNCHED_BY_HUB, Socket, launched_by_hub};
-use crate::proto::plugin_server::{Plugin, PluginServer};
+use crate::proto::monitor_server::{Monitor, MonitorServer};
 use crate::proto::{
     CheckRequest, CheckResponse, DescribeRequest, DescribeResponse, EventsRequest, EventsResponse,
     StatusRequest, StatusResponse, WatchRequest, WatchResponse,
@@ -39,11 +39,11 @@ pub enum ServeError {
     Transport(#[source] tonic::transport::Error),
 }
 
-pub async fn serve<P: Plugin>(plugin: P) -> Result<(), ServeError> {
+pub async fn serve<P: Monitor>(plugin: P) -> Result<(), ServeError> {
     run(|_| plugin).await
 }
 
-pub async fn serve_with_notifier<P: Plugin>(
+pub async fn serve_with_notifier<P: Monitor>(
     plugin: P,
     notifier: Notifier,
 ) -> Result<(), ServeError> {
@@ -55,7 +55,7 @@ pub async fn serve_with_notifier<P: Plugin>(
     .await
 }
 
-async fn run<P: Plugin>(
+async fn run<P: Monitor>(
     build_plugin: impl FnOnce(watch::Receiver<bool>) -> P,
 ) -> Result<(), ServeError> {
     if !launched_by_hub() {
@@ -74,7 +74,7 @@ async fn run<P: Plugin>(
     let router = Server::builder()
         .add_service(health_service)
         .add_service(GrpcControllerServer::new(Controller { stop }))
-        .add_service(PluginServer::new(build_plugin(closed)));
+        .add_service(MonitorServer::new(build_plugin(closed)));
 
     socket.announce().map_err(ServeError::Handshake)?;
 
@@ -139,7 +139,7 @@ struct Watched<P> {
 }
 
 #[tonic::async_trait]
-impl<P: Plugin> Plugin for Watched<P> {
+impl<P: Monitor> Monitor for Watched<P> {
     async fn describe(
         &self,
         request: Request<DescribeRequest>,

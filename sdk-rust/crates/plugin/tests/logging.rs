@@ -67,7 +67,7 @@ fn serve_then_stop(mut child: Child, at_handshake: impl FnOnce(&Path)) -> Run {
 
 fn socket_path(stdout: &str) -> PathBuf {
     stdout
-        .strip_prefix("1|1|unix|")
+        .strip_prefix("1|2|unix|")
         .and_then(|rest| rest.strip_suffix("|grpc\n"))
         .filter(|path| !path.contains('\n'))
         .map(PathBuf::from)

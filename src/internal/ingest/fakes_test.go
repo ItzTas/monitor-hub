@@ -18,7 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 )
 
 var (
@@ -27,40 +27,40 @@ var (
 )
 
 type fakePlugin struct {
-	pluginpb.PluginClient
+	monitorpb.MonitorClient
 	name          string
 	version       string
 	mu            sync.Mutex
-	status        *pluginpb.StatusResponse
-	events        []*pluginpb.Event
-	respond       func(ctx context.Context, req *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error)
+	status        *monitorpb.StatusResponse
+	events        []*monitorpb.Event
+	respond       func(ctx context.Context, req *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error)
 	describeCalls atomic.Int64
 	statusCalls   atomic.Int64
 	eventsCalls   atomic.Int64
 	eventsRunning atomic.Int64
 	eventsMost    atomic.Int64
-	watch         func(ctx context.Context) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error)
+	watch         func(ctx context.Context) (grpc.ServerStreamingClient[monitorpb.WatchResponse], error)
 	streams       chan *fakeStream
 	watchCalls    atomic.Int64
 	release       chan struct{}
 	stallStatus   chan struct{}
 }
 
-func plugin(name string, events ...*pluginpb.Event) *fakePlugin {
+func plugin(name string, events ...*monitorpb.Event) *fakePlugin {
 	return &fakePlugin{
 		name:    name,
 		version: "1.0.0",
-		status:  &pluginpb.StatusResponse{State: pluginpb.State_STATE_IDLE},
+		status:  &monitorpb.StatusResponse{State: monitorpb.State_STATE_IDLE},
 		events:  events,
 	}
 }
 
-func (p *fakePlugin) Describe(context.Context, *pluginpb.DescribeRequest, ...grpc.CallOption) (*pluginpb.DescribeResponse, error) {
+func (p *fakePlugin) Describe(context.Context, *monitorpb.DescribeRequest, ...grpc.CallOption) (*monitorpb.DescribeResponse, error) {
 	p.describeCalls.Add(1)
-	return &pluginpb.DescribeResponse{Name: p.name, DisplayName: strings.ToUpper(p.name), Version: p.version}, nil
+	return &monitorpb.DescribeResponse{Name: p.name, DisplayName: strings.ToUpper(p.name), Version: p.version}, nil
 }
 
-func (p *fakePlugin) Status(ctx context.Context, _ *pluginpb.StatusRequest, _ ...grpc.CallOption) (*pluginpb.StatusResponse, error) {
+func (p *fakePlugin) Status(ctx context.Context, _ *monitorpb.StatusRequest, _ ...grpc.CallOption) (*monitorpb.StatusResponse, error) {
 	p.statusCalls.Add(1)
 	if p.stallStatus != nil {
 		p.stallStatus <- struct{}{}
@@ -72,7 +72,7 @@ func (p *fakePlugin) Status(ctx context.Context, _ *pluginpb.StatusRequest, _ ..
 	return p.status, nil
 }
 
-func (p *fakePlugin) Events(ctx context.Context, req *pluginpb.EventsRequest, _ ...grpc.CallOption) (*pluginpb.EventsResponse, error) {
+func (p *fakePlugin) Events(ctx context.Context, req *monitorpb.EventsRequest, _ ...grpc.CallOption) (*monitorpb.EventsResponse, error) {
 	p.eventsCalls.Add(1)
 	p.noteRunningEvents(p.eventsRunning.Add(1))
 	defer p.eventsRunning.Add(-1)
@@ -82,7 +82,7 @@ func (p *fakePlugin) Events(ctx context.Context, req *pluginpb.EventsRequest, _ 
 	return p.page(req), nil
 }
 
-func (p *fakePlugin) Watch(ctx context.Context, _ *pluginpb.WatchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+func (p *fakePlugin) Watch(ctx context.Context, _ *monitorpb.WatchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[monitorpb.WatchResponse], error) {
 	p.watchCalls.Add(1)
 	if p.watch == nil {
 		return nil, status.Error(codes.Unimplemented, "method Watch not implemented")
@@ -94,7 +94,7 @@ func watched(p *fakePlugin) *fakePlugin {
 	p.streams = make(chan *fakeStream, 16)
 	p.release = make(chan struct{})
 	close(p.release)
-	p.watch = func(ctx context.Context) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+	p.watch = func(ctx context.Context) (grpc.ServerStreamingClient[monitorpb.WatchResponse], error) {
 		stream := &fakeStream{
 			ctx:       ctx,
 			signals:   make(chan int64),
@@ -138,11 +138,11 @@ func (f *fakeStream) Context() context.Context {
 	return f.ctx
 }
 
-func (f *fakeStream) Recv() (*pluginpb.WatchResponse, error) {
+func (f *fakeStream) Recv() (*monitorpb.WatchResponse, error) {
 	f.receiving <- struct{}{}
 	select {
 	case seq := <-f.signals:
-		return &pluginpb.WatchResponse{LatestSeq: seq}, nil
+		return &monitorpb.WatchResponse{LatestSeq: seq}, nil
 	case err := <-f.fail:
 		return nil, err
 	case <-f.ctx.Done():
@@ -183,31 +183,31 @@ func (p *fakePlugin) noteRunningEvents(running int64) {
 	}
 }
 
-func (p *fakePlugin) add(events ...*pluginpb.Event) {
+func (p *fakePlugin) add(events ...*monitorpb.Event) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, events...)
 }
 
-func (p *fakePlugin) page(req *pluginpb.EventsRequest) *pluginpb.EventsResponse {
+func (p *fakePlugin) page(req *monitorpb.EventsRequest) *monitorpb.EventsResponse {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	var page []*pluginpb.Event
+	var page []*monitorpb.Event
 	for _, e := range p.events {
 		if e.GetSeq() > req.GetAfter() && len(page) < int(req.GetLimit()) {
 			page = append(page, e)
 		}
 	}
-	return &pluginpb.EventsResponse{Events: page}
+	return &monitorpb.EventsResponse{Events: page}
 }
 
-func respondWith(page ...*pluginpb.Event) func(context.Context, *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
-	return func(context.Context, *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
-		return &pluginpb.EventsResponse{Events: page}, nil
+func respondWith(page ...*monitorpb.Event) func(context.Context, *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
+	return func(context.Context, *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
+		return &monitorpb.EventsResponse{Events: page}, nil
 	}
 }
 
-func unavailable(context.Context, *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
+func unavailable(context.Context, *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 	return nil, status.Error(codes.Unavailable, "not logged in yet")
 }
 
@@ -217,7 +217,7 @@ func (c fakeClients) Names() []string {
 	return slices.Sorted(maps.Keys(c))
 }
 
-func (c fakeClients) Client(name string) (pluginpb.PluginClient, bool) {
+func (c fakeClients) Client(name string) (monitorpb.MonitorClient, bool) {
 	p, ok := c[name]
 	if !ok {
 		return nil, false
@@ -225,7 +225,7 @@ func (c fakeClients) Client(name string) (pluginpb.PluginClient, bool) {
 	return p, true
 }
 
-func (c fakeClients) Track(name string) (pluginpb.PluginClient, bool, <-chan struct{}) {
+func (c fakeClients) Track(name string) (monitorpb.MonitorClient, bool, <-chan struct{}) {
 	client, ok := c.Client(name)
 	return client, ok, nil
 }
@@ -251,7 +251,7 @@ func (c *switchingClients) Names() []string {
 	return c.names
 }
 
-func (c *switchingClients) Client(name string) (pluginpb.PluginClient, bool) {
+func (c *switchingClients) Client(name string) (monitorpb.MonitorClient, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	p, ok := c.current[name]
@@ -261,7 +261,7 @@ func (c *switchingClients) Client(name string) (pluginpb.PluginClient, bool) {
 	return p, true
 }
 
-func (c *switchingClients) Track(name string) (pluginpb.PluginClient, bool, <-chan struct{}) {
+func (c *switchingClients) Track(name string) (monitorpb.MonitorClient, bool, <-chan struct{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	changed, known := c.changes[name]
@@ -310,19 +310,19 @@ func serviceOf(pool *pgxpool.Pool, clients Clients) *Service {
 		slog.New(slog.DiscardHandler), func() time.Time { return fixedNow })
 }
 
-func event(seq int64, id string) *pluginpb.Event {
-	return &pluginpb.Event{
+func event(seq int64, id string) *monitorpb.Event {
+	return &monitorpb.Event{
 		Seq:        seq,
 		Id:         id,
 		Kind:       "ping",
-		Severity:   pluginpb.Severity_SEVERITY_INFO,
+		Severity:   monitorpb.Severity_SEVERITY_INFO,
 		OccurredAt: timestamppb.New(occurredAt),
 		Title:      fmt.Sprintf("ping %d", seq),
 	}
 }
 
-func numbered(from, to int64) []*pluginpb.Event {
-	events := make([]*pluginpb.Event, 0, to-from+1)
+func numbered(from, to int64) []*monitorpb.Event {
+	events := make([]*monitorpb.Event, 0, to-from+1)
 	for seq := from; seq <= to; seq++ {
 		events = append(events, event(seq, fmt.Sprintf("event-%d", seq)))
 	}

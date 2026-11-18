@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/ItzTas/monitor-hub/sdk-go"
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc/codes"
@@ -40,7 +40,7 @@ const (
 	watchStaysOpen   = time.Second
 )
 
-func start(ctx context.Context, cmd *exec.Cmd, stderr io.Writer) (*plugin.Client, pluginpb.PluginClient, error) {
+func start(ctx context.Context, cmd *exec.Cmd, stderr io.Writer) (*plugin.Client, monitorpb.MonitorClient, error) {
 	client := plugin.NewClient(&plugin.ClientConfig{
 		HandshakeConfig:  sdk.Handshake,
 		Plugins:          sdk.PluginSet(),
@@ -62,7 +62,7 @@ func start(ctx context.Context, cmd *exec.Cmd, stderr io.Writer) (*plugin.Client
 		client.Kill()
 		return nil, nil, fmt.Errorf("dispense plugin: %w", err)
 	}
-	c, ok := raw.(pluginpb.PluginClient)
+	c, ok := raw.(monitorpb.MonitorClient)
 	if !ok {
 		client.Kill()
 		return nil, nil, fmt.Errorf("dispense plugin: unexpected client type %T", raw)
@@ -70,7 +70,7 @@ func start(ctx context.Context, cmd *exec.Cmd, stderr io.Writer) (*plugin.Client
 	return client, c, nil
 }
 
-func Dial(t *testing.T, cmd *exec.Cmd) pluginpb.PluginClient {
+func Dial(t *testing.T, cmd *exec.Cmd) monitorpb.MonitorClient {
 	t.Helper()
 	client, c, err := start(context.Background(), cmd, nil)
 	if err != nil {
@@ -96,7 +96,7 @@ func Run(t *testing.T, cmd *exec.Cmd, minEvents int) {
 	}
 }
 
-func check(ctx context.Context, c pluginpb.PluginClient, opts Options) []string {
+func check(ctx context.Context, c monitorpb.MonitorClient, opts Options) []string {
 	ctx, cancel := context.WithTimeout(ctx, suiteTimeout+opts.ReadyTimeout)
 	defer cancel()
 
@@ -116,8 +116,8 @@ func validName(name string) bool {
 	return namePattern.MatchString(name) && !strings.HasSuffix(name, "-") && !strings.Contains(name, "--")
 }
 
-func checkDescribe(ctx context.Context, c pluginpb.PluginClient) ([]string, []string) {
-	d, err := c.Describe(ctx, &pluginpb.DescribeRequest{})
+func checkDescribe(ctx context.Context, c monitorpb.MonitorClient) ([]string, []string) {
+	d, err := c.Describe(ctx, &monitorpb.DescribeRequest{})
 	if err != nil {
 		return nil, []string{fmt.Sprintf("Describe failed: %v", err)}
 	}
@@ -140,19 +140,19 @@ func checkDescribe(ctx context.Context, c pluginpb.PluginClient) ([]string, []st
 	return kinds, out
 }
 
-func checkStatus(ctx context.Context, c pluginpb.PluginClient) []string {
-	s, err := c.Status(ctx, &pluginpb.StatusRequest{})
+func checkStatus(ctx context.Context, c monitorpb.MonitorClient) []string {
+	s, err := c.Status(ctx, &monitorpb.StatusRequest{})
 	if err != nil {
 		return []string{fmt.Sprintf("Status failed: %v", err)}
 	}
-	if s.GetState() == pluginpb.State_STATE_UNSPECIFIED {
+	if s.GetState() == monitorpb.State_STATE_UNSPECIFIED {
 		return []string{"status state is unspecified"}
 	}
 	return nil
 }
 
-func firstEvents(ctx context.Context, c pluginpb.PluginClient, ready time.Duration) (*pluginpb.EventsResponse, error) {
-	req := &pluginpb.EventsRequest{After: 0, Limit: 1000}
+func firstEvents(ctx context.Context, c monitorpb.MonitorClient, ready time.Duration) (*monitorpb.EventsResponse, error) {
+	req := &monitorpb.EventsRequest{After: 0, Limit: 1000}
 	resp, err := c.Events(ctx, req)
 	if status.Code(err) != codes.Unavailable || ready <= 0 {
 		return resp, err
@@ -185,7 +185,7 @@ func notReady(parent context.Context, ready time.Duration) error {
 	return fmt.Errorf("%w after %s", errNotReady, ready)
 }
 
-func checkEvents(ctx context.Context, c pluginpb.PluginClient, opts Options, kinds []string) ([]*pluginpb.Event, []string) {
+func checkEvents(ctx context.Context, c monitorpb.MonitorClient, opts Options, kinds []string) ([]*monitorpb.Event, []string) {
 	resp, err := firstEvents(ctx, c, opts.ReadyTimeout)
 	if errors.Is(err, errNotReady) {
 		return nil, []string{err.Error()}
@@ -220,7 +220,7 @@ func checkEvents(ctx context.Context, c pluginpb.PluginClient, opts Options, kin
 	return events, out
 }
 
-func checkEventFields(e *pluginpb.Event, kinds []string) []string {
+func checkEventFields(e *monitorpb.Event, kinds []string) []string {
 	var out []string
 	if e.GetTitle() == "" {
 		out = append(out, "event title is empty")
@@ -228,7 +228,7 @@ func checkEventFields(e *pluginpb.Event, kinds []string) []string {
 	if !slices.Contains(kinds, e.GetKind()) {
 		out = append(out, fmt.Sprintf("event kind %q not declared by Describe", e.GetKind()))
 	}
-	if e.GetSeverity() == pluginpb.Severity_SEVERITY_UNSPECIFIED {
+	if e.GetSeverity() == monitorpb.Severity_SEVERITY_UNSPECIFIED {
 		out = append(out, "event severity is unspecified")
 	}
 	if e.GetOccurredAt() == nil {
@@ -237,41 +237,41 @@ func checkEventFields(e *pluginpb.Event, kinds []string) []string {
 	return out
 }
 
-func checkPaging(ctx context.Context, c pluginpb.PluginClient, events []*pluginpb.Event) []string {
+func checkPaging(ctx context.Context, c monitorpb.MonitorClient, events []*monitorpb.Event) []string {
 	if len(events) == 0 {
 		return nil
 	}
 	var out []string
-	tail, err := c.Events(ctx, &pluginpb.EventsRequest{After: events[len(events)-1].GetSeq(), Limit: 1000})
+	tail, err := c.Events(ctx, &monitorpb.EventsRequest{After: events[len(events)-1].GetSeq(), Limit: 1000})
 	if err != nil {
 		return []string{fmt.Sprintf("Events after last seq failed: %v", err)}
 	}
 	if len(tail.GetEvents()) != 0 {
 		out = append(out, "events after the last seq must be empty")
 	}
-	rest, err := c.Events(ctx, &pluginpb.EventsRequest{After: events[0].GetSeq(), Limit: 1000})
+	rest, err := c.Events(ctx, &monitorpb.EventsRequest{After: events[0].GetSeq(), Limit: 1000})
 	if err != nil {
 		return append(out, fmt.Sprintf("Events after first seq failed: %v", err))
 	}
-	if !slices.EqualFunc(rest.GetEvents(), events[1:], func(a, b *pluginpb.Event) bool { return proto.Equal(a, b) }) {
+	if !slices.EqualFunc(rest.GetEvents(), events[1:], func(a, b *monitorpb.Event) bool { return proto.Equal(a, b) }) {
 		out = append(out, "events after the first seq must equal the list without the first event")
 	}
 	return out
 }
 
-func checkLimits(ctx context.Context, c pluginpb.PluginClient, events []*pluginpb.Event) []string {
+func checkLimits(ctx context.Context, c monitorpb.MonitorClient, events []*monitorpb.Event) []string {
 	if len(events) < 2 {
 		return nil
 	}
 	var out []string
-	one, err := c.Events(ctx, &pluginpb.EventsRequest{After: 0, Limit: 1})
+	one, err := c.Events(ctx, &monitorpb.EventsRequest{After: 0, Limit: 1})
 	if err != nil {
 		out = append(out, fmt.Sprintf("Events(after = 0, limit = 1) failed: %v", err))
 	}
 	if err == nil {
 		out = append(out, checkLimitOne(one.GetEvents(), events[0])...)
 	}
-	page, err := c.Events(ctx, &pluginpb.EventsRequest{After: 0, Limit: 0})
+	page, err := c.Events(ctx, &monitorpb.EventsRequest{After: 0, Limit: 0})
 	if err != nil {
 		return append(out, fmt.Sprintf("Events(after = 0, limit = 0) failed: %v", err))
 	}
@@ -281,7 +281,7 @@ func checkLimits(ctx context.Context, c pluginpb.PluginClient, events []*pluginp
 	return out
 }
 
-func checkLimitOne(got []*pluginpb.Event, first *pluginpb.Event) []string {
+func checkLimitOne(got []*monitorpb.Event, first *monitorpb.Event) []string {
 	const want = "Events(after = 0, limit = 1) must return exactly the first event"
 	if len(got) != 1 {
 		return []string{fmt.Sprintf("%s, got %s", want, countEvents(len(got)))}
@@ -302,8 +302,8 @@ func countEvents(n int) string {
 	return fmt.Sprintf("%d events", n)
 }
 
-func checkCheck(ctx context.Context, c pluginpb.PluginClient) []string {
-	if _, err := c.Check(ctx, &pluginpb.CheckRequest{}); err != nil {
+func checkCheck(ctx context.Context, c monitorpb.MonitorClient) []string {
+	if _, err := c.Check(ctx, &monitorpb.CheckRequest{}); err != nil {
 		return []string{fmt.Sprintf("Check failed: %v", err)}
 	}
 	return nil
@@ -312,13 +312,13 @@ func checkCheck(ctx context.Context, c pluginpb.PluginClient) []string {
 type watchLimits struct{ firstSignal, staysOpen time.Duration }
 
 type watchResult struct {
-	signal *pluginpb.WatchResponse
+	signal *monitorpb.WatchResponse
 	err    error
 }
 
-func checkWatch(ctx context.Context, c pluginpb.PluginClient, limits watchLimits) []string {
+func checkWatch(ctx context.Context, c monitorpb.MonitorClient, limits watchLimits) []string {
 	wctx, cancel := context.WithCancel(ctx)
-	stream, err := c.Watch(wctx, &pluginpb.WatchRequest{})
+	stream, err := c.Watch(wctx, &monitorpb.WatchRequest{})
 	if err != nil {
 		cancel()
 		return watchOpenFailure(err)
@@ -402,7 +402,7 @@ func watchLaterFailure(err error) []string {
 	return []string{fmt.Sprintf("Watch failed after its first signal: %v", err)}
 }
 
-func checkSignal(signal *pluginpb.WatchResponse) string {
+func checkSignal(signal *monitorpb.WatchResponse) string {
 	if signal.GetLatestSeq() < 0 {
 		return fmt.Sprintf("Watch signal latest_seq is %d, want 0 or more", signal.GetLatestSeq())
 	}

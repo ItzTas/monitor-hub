@@ -117,7 +117,7 @@ fn answer_violation(finished: &Finished, declared: Option<&BTreeSet<&str>>) -> R
         ));
     }
     if stdout.trim_ascii().is_empty() {
-        return Err("validate-settings printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_PLUGIN".to_owned());
+        return Err("validate-settings printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_MONITOR".to_owned());
     }
     let answer = read_answer(stdout)?;
     if let Some(index) = answer

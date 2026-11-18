@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/catalog"
 )
 
@@ -103,7 +103,7 @@ func TestPluginLifecycleIsLogged(t *testing.T) {
 	logger, buf := capture()
 	s, _, stop := startLoggingSupervisor(t, []string{"TESTPLUGIN__CRASH_ON_CHECK=1"}, logger)
 	c := waitDescribe(t, s, 10*time.Second)
-	if _, err := c.Check(t.Context(), &pluginpb.CheckRequest{}); err == nil {
+	if _, err := c.Check(t.Context(), &monitorpb.CheckRequest{}); err == nil {
 		t.Fatal("Check succeeded, want the plugin to crash")
 	}
 	waitForRecords(t, buf, 2, func(r map[string]any) bool { return r["msg"] == "plugin started" })

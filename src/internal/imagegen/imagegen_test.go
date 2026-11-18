@@ -21,7 +21,7 @@ const (
 )
 
 func manifest(name string, apk ...string) catalog.Manifest {
-	return catalog.Manifest{ProtocolVersion: 1, Name: name, Command: []string{"./" + name}, Apk: apk}
+	return catalog.Manifest{ProtocolVersion: 2, Name: name, Command: []string{"./" + name}, Apk: apk}
 }
 
 func golden(t *testing.T, name string) string {
@@ -300,7 +300,7 @@ func tarEntry(t *testing.T, header *tar.Header, body []byte) []byte {
 	return buf.Bytes()
 }
 
-const manifestJSON = `{"protocol_version":1,"name":"diario","command":["./diario-alerr"],"apk":["poppler-utils"]}`
+const manifestJSON = `{"protocol_version":2,"name":"diario","command":["./diario-alerr"],"apk":["poppler-utils"]}`
 
 func TestDockerReaderCreatesCopiesAndRemoves(t *testing.T) {
 	docker := &fakeDocker{cp: func(func()) ([]byte, error) { return tarOf(t, "plugin.json", []byte(manifestJSON)), nil }}
@@ -308,7 +308,7 @@ func TestDockerReaderCreatesCopiesAndRemoves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadManifest: %v", err)
 	}
-	if want := (catalog.Manifest{ProtocolVersion: 1, Name: "diario", Command: []string{"./diario-alerr"}, Apk: []string{"poppler-utils"}}); !reflect.DeepEqual(got, want) {
+	if want := (catalog.Manifest{ProtocolVersion: 2, Name: "diario", Command: []string{"./diario-alerr"}, Apk: []string{"poppler-utils"}}); !reflect.DeepEqual(got, want) {
 		t.Errorf("manifest = %+v, want %+v", got, want)
 	}
 	want := [][]string{

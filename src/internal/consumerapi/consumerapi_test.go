@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/ingest"
@@ -51,12 +51,12 @@ func newHub(t *testing.T) *hub {
 func (h *hub) store(t *testing.T, from, to int64) {
 	t.Helper()
 	repo := ingest.NewPostgres(h.pool)
-	if err := repo.SaveDescription(t.Context(), &pluginpb.DescribeResponse{Name: "sei", DisplayName: "SEI", Version: "1"}); err != nil {
+	if err := repo.SaveDescription(t.Context(), &monitorpb.DescribeResponse{Name: "sei", DisplayName: "SEI", Version: "1"}); err != nil {
 		t.Fatal(err)
 	}
-	var events []*pluginpb.Event
+	var events []*monitorpb.Event
 	for seq := from; seq <= to; seq++ {
-		events = append(events, &pluginpb.Event{Seq: seq, Id: fmt.Sprintf("e%d", seq), Kind: "ping", OccurredAt: timestamppb.Now(), Title: fmt.Sprintf("ping %d", seq)})
+		events = append(events, &monitorpb.Event{Seq: seq, Id: fmt.Sprintf("e%d", seq), Kind: "ping", OccurredAt: timestamppb.Now(), Title: fmt.Sprintf("ping %d", seq)})
 	}
 	if _, err := repo.StoreEvents(t.Context(), ingest.Batch{Plugin: "sei", After: from - 1, Events: events}); err != nil {
 		t.Fatal(err)

@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/ItzTas/monitor-hub/sdk-go"
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/catalog"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
@@ -43,7 +43,7 @@ type Supervisor struct {
 	groupMembers  func(pgid int) ([]int, error)
 
 	mu      sync.RWMutex
-	clients map[string]pluginpb.PluginClient
+	clients map[string]monitorpb.MonitorClient
 	changes map[string]chan struct{}
 }
 
@@ -56,7 +56,7 @@ func New(entries []catalog.Entry, environ []string, dataRoot string, log *slog.L
 		restartDelays: []time.Duration{time.Second, 5 * time.Second, 30 * time.Second, 2 * time.Minute, 5 * time.Minute},
 		stableAfter:   10 * time.Minute,
 		groupMembers:  liveMembers,
-		clients:       map[string]pluginpb.PluginClient{},
+		clients:       map[string]monitorpb.MonitorClient{},
 		changes:       map[string]chan struct{}{},
 	}
 }
@@ -70,14 +70,14 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *Supervisor) Client(name string) (pluginpb.PluginClient, bool) {
+func (s *Supervisor) Client(name string) (monitorpb.MonitorClient, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	c, ok := s.clients[name]
 	return c, ok
 }
 
-func (s *Supervisor) Track(name string) (pluginpb.PluginClient, bool, <-chan struct{}) {
+func (s *Supervisor) Track(name string) (monitorpb.MonitorClient, bool, <-chan struct{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.clients[name]
@@ -192,7 +192,7 @@ func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *
 	}), cmd, nil
 }
 
-func dispense(client *plugin.Client) (pluginpb.PluginClient, error) {
+func dispense(client *plugin.Client) (monitorpb.MonitorClient, error) {
 	rpc, err := client.Client()
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
@@ -204,7 +204,7 @@ func dispense(client *plugin.Client) (pluginpb.PluginClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dispense: %w", err)
 	}
-	return raw.(pluginpb.PluginClient), nil
+	return raw.(monitorpb.MonitorClient), nil
 }
 
 func watchExit(client *plugin.Client, pidfd int) <-chan struct{} {
@@ -323,7 +323,7 @@ func readStat(pid int) (byte, int, bool) {
 	return fields[0][0], pgid, err == nil
 }
 
-func (s *Supervisor) setClient(name string, c pluginpb.PluginClient) {
+func (s *Supervisor) setClient(name string, c monitorpb.MonitorClient) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clients[name] = c

@@ -1,8 +1,8 @@
 version: v2
 plugins:
   - local: ["go", "tool", "protoc-gen-go"]
-    out: sdk-go/pluginpb
-    opt: module=github.com/ItzTas/monitor-hub/sdk-go/pluginpb
+    out: sdk-go/monitorpb
+    opt: module=github.com/ItzTas/monitor-hub/sdk-go/monitorpb
   - local: ["go", "tool", "protoc-gen-go-grpc"]
-    out: sdk-go/pluginpb
-    opt: module=github.com/ItzTas/monitor-hub/sdk-go/pluginpb
+    out: sdk-go/monitorpb
+    opt: module=github.com/ItzTas/monitor-hub/sdk-go/monitorpb

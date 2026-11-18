@@ -7,21 +7,21 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/ingest"
 )
 
-func store(t *testing.T, pool *pgxpool.Pool, after int64, baseline bool, severity pluginpb.Severity, count int) {
+func store(t *testing.T, pool *pgxpool.Pool, after int64, baseline bool, severity monitorpb.Severity, count int) {
 	t.Helper()
 	repo := ingest.NewPostgres(pool)
-	if err := repo.SaveDescription(t.Context(), &pluginpb.DescribeResponse{Name: "sei", DisplayName: "SEI", Version: "1"}); err != nil {
+	if err := repo.SaveDescription(t.Context(), &monitorpb.DescribeResponse{Name: "sei", DisplayName: "SEI", Version: "1"}); err != nil {
 		t.Fatal(err)
 	}
-	var events []*pluginpb.Event
+	var events []*monitorpb.Event
 	for i := range count {
 		seq := after + int64(i) + 1
-		events = append(events, &pluginpb.Event{Seq: seq, Id: "e" + string(rune('a'+seq)), Kind: "ping", Severity: severity, OccurredAt: timestamppb.Now(), Title: "ping"})
+		events = append(events, &monitorpb.Event{Seq: seq, Id: "e" + string(rune('a'+seq)), Kind: "ping", Severity: severity, OccurredAt: timestamppb.Now(), Title: "ping"})
 	}
 	if _, err := repo.StoreEvents(t.Context(), ingest.Batch{Plugin: "sei", After: after, Events: events, Baseline: baseline}); err != nil {
 		t.Fatal(err)
@@ -42,9 +42,9 @@ func TestAfterSkipsBaselineEventsAndPages(t *testing.T) {
 	if got, err := r.Latest(t.Context()); err != nil || got != 0 {
 		t.Fatalf("Latest on an empty database = %d, %v; want 0", got, err)
 	}
-	store(t, pool, 0, true, pluginpb.Severity_SEVERITY_INFO, 2)
-	store(t, pool, 2, false, pluginpb.Severity_SEVERITY_INFO, 2)
-	store(t, pool, 4, false, pluginpb.Severity_SEVERITY_URGENT, 1)
+	store(t, pool, 0, true, monitorpb.Severity_SEVERITY_INFO, 2)
+	store(t, pool, 2, false, monitorpb.Severity_SEVERITY_INFO, 2)
+	store(t, pool, 4, false, monitorpb.Severity_SEVERITY_URGENT, 1)
 	for _, c := range []struct {
 		after int64
 		want  []int64

@@ -4,19 +4,19 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 )
 
 type Clients interface {
 	Names() []string
-	Client(name string) (pluginpb.PluginClient, bool)
-	Track(name string) (pluginpb.PluginClient, bool, <-chan struct{})
+	Client(name string) (monitorpb.MonitorClient, bool)
+	Track(name string) (monitorpb.MonitorClient, bool, <-chan struct{})
 }
 
 type Batch struct {
 	Plugin   string
 	After    int64
-	Events   []*pluginpb.Event
+	Events   []*monitorpb.Event
 	Channels []string
 	Baseline bool
 	Now      time.Time

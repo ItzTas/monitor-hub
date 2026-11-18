@@ -12,7 +12,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
 
@@ -22,8 +22,8 @@ var errCursorMoved = errors.New("ingest: the stored cursor no longer matches the
 
 type Repository interface {
 	Cursor(ctx context.Context, plugin string) (cursor int64, known bool, err error)
-	SaveDescription(ctx context.Context, description *pluginpb.DescribeResponse) error
-	SaveStatus(ctx context.Context, plugin string, status *pluginpb.StatusResponse, seenAt time.Time) error
+	SaveDescription(ctx context.Context, description *monitorpb.DescribeResponse) error
+	SaveStatus(ctx context.Context, plugin string, status *monitorpb.StatusResponse, seenAt time.Time) error
 	StoreEvents(ctx context.Context, batch Batch) (inserted int, err error)
 	CompleteBaseline(ctx context.Context, plugin string) error
 }
@@ -48,7 +48,7 @@ func (r *postgres) Cursor(ctx context.Context, plugin string) (int64, bool, erro
 	return row.Cursor, row.BaselinedAt != nil, nil
 }
 
-func (r *postgres) SaveDescription(ctx context.Context, description *pluginpb.DescribeResponse) error {
+func (r *postgres) SaveDescription(ctx context.Context, description *monitorpb.DescribeResponse) error {
 	return r.queries.SavePluginDescription(ctx, db.SavePluginDescriptionParams{
 		Name:        description.GetName(),
 		DisplayName: description.GetDisplayName(),
@@ -56,7 +56,7 @@ func (r *postgres) SaveDescription(ctx context.Context, description *pluginpb.De
 	})
 }
 
-func (r *postgres) SaveStatus(ctx context.Context, plugin string, status *pluginpb.StatusResponse, seenAt time.Time) error {
+func (r *postgres) SaveStatus(ctx context.Context, plugin string, status *monitorpb.StatusResponse, seenAt time.Time) error {
 	state, err := smallint("state", status.GetState())
 	if err != nil {
 		return err
@@ -112,7 +112,7 @@ func (r *postgres) StoreEvents(ctx context.Context, batch Batch) (int, error) {
 	return inserted, nil
 }
 
-func storeEvent(ctx context.Context, q *db.Queries, batch Batch, e *pluginpb.Event) (bool, error) {
+func storeEvent(ctx context.Context, q *db.Queries, batch Batch, e *monitorpb.Event) (bool, error) {
 	params, err := insertParams(batch.Plugin, e, batch.Baseline)
 	if err != nil {
 		return false, err
@@ -157,7 +157,7 @@ func (r *postgres) inTx(ctx context.Context, run func(*db.Queries) error) (err e
 	return nil
 }
 
-func insertParams(plugin string, e *pluginpb.Event, baseline bool) (db.InsertEventParams, error) {
+func insertParams(plugin string, e *monitorpb.Event, baseline bool) (db.InsertEventParams, error) {
 	severity, err := smallint("severity", e.GetSeverity())
 	if err != nil {
 		return db.InsertEventParams{}, fmt.Errorf("event seq %d: %w", e.GetSeq(), err)

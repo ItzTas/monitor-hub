@@ -3,7 +3,7 @@ package sdk
 import (
 	"context"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 )
@@ -14,26 +14,26 @@ const (
 )
 
 var Handshake = plugin.HandshakeConfig{
-	ProtocolVersion:  1,
-	MagicCookieKey:   "MONITOR_HUB_PLUGIN",
+	ProtocolVersion:  2,
+	MagicCookieKey:   "MONITOR_HUB_MONITOR",
 	MagicCookieValue: "7c0e5a52-monitor-hub",
 }
 
 type GRPCPlugin struct {
 	plugin.NetRPCUnsupportedPlugin
-	Impl pluginpb.PluginServer
+	Impl monitorpb.MonitorServer
 }
 
 func (p *GRPCPlugin) GRPCServer(_ *plugin.GRPCBroker, s *grpc.Server) error {
-	pluginpb.RegisterPluginServer(s, p.Impl)
+	monitorpb.RegisterMonitorServer(s, p.Impl)
 	return nil
 }
 
 func (p *GRPCPlugin) GRPCClient(_ context.Context, _ *plugin.GRPCBroker, c *grpc.ClientConn) (any, error) {
-	return pluginpb.NewPluginClient(c), nil
+	return monitorpb.NewMonitorClient(c), nil
 }
 
-func Serve(impl pluginpb.PluginServer) {
+func Serve(impl monitorpb.MonitorServer) {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: Handshake,
 		Plugins:         plugin.PluginSet{PluginKey: &GRPCPlugin{Impl: impl}},

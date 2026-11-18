@@ -2,9 +2,9 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             (unknown)
-// source: monitorhub/plugin/v1/plugin.proto
+// source: monitorhub/monitor/v1/monitor.proto
 
-package pluginpb
+package monitorpb
 
 import (
 	context "context"
@@ -19,17 +19,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Plugin_Describe_FullMethodName = "/monitorhub.plugin.v1.Plugin/Describe"
-	Plugin_Status_FullMethodName   = "/monitorhub.plugin.v1.Plugin/Status"
-	Plugin_Check_FullMethodName    = "/monitorhub.plugin.v1.Plugin/Check"
-	Plugin_Events_FullMethodName   = "/monitorhub.plugin.v1.Plugin/Events"
-	Plugin_Watch_FullMethodName    = "/monitorhub.plugin.v1.Plugin/Watch"
+	Monitor_Describe_FullMethodName = "/monitorhub.monitor.v1.Monitor/Describe"
+	Monitor_Status_FullMethodName   = "/monitorhub.monitor.v1.Monitor/Status"
+	Monitor_Check_FullMethodName    = "/monitorhub.monitor.v1.Monitor/Check"
+	Monitor_Events_FullMethodName   = "/monitorhub.monitor.v1.Monitor/Events"
+	Monitor_Watch_FullMethodName    = "/monitorhub.monitor.v1.Monitor/Watch"
 )
 
-// PluginClient is the client API for Plugin service.
+// MonitorClient is the client API for Monitor service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type PluginClient interface {
+type MonitorClient interface {
 	Describe(ctx context.Context, in *DescribeRequest, opts ...grpc.CallOption) (*DescribeResponse, error)
 	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
 	Check(ctx context.Context, in *CheckRequest, opts ...grpc.CallOption) (*CheckResponse, error)
@@ -37,57 +37,57 @@ type PluginClient interface {
 	Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchResponse], error)
 }
 
-type pluginClient struct {
+type monitorClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewPluginClient(cc grpc.ClientConnInterface) PluginClient {
-	return &pluginClient{cc}
+func NewMonitorClient(cc grpc.ClientConnInterface) MonitorClient {
+	return &monitorClient{cc}
 }
 
-func (c *pluginClient) Describe(ctx context.Context, in *DescribeRequest, opts ...grpc.CallOption) (*DescribeResponse, error) {
+func (c *monitorClient) Describe(ctx context.Context, in *DescribeRequest, opts ...grpc.CallOption) (*DescribeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DescribeResponse)
-	err := c.cc.Invoke(ctx, Plugin_Describe_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Monitor_Describe_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *pluginClient) Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error) {
+func (c *monitorClient) Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StatusResponse)
-	err := c.cc.Invoke(ctx, Plugin_Status_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Monitor_Status_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *pluginClient) Check(ctx context.Context, in *CheckRequest, opts ...grpc.CallOption) (*CheckResponse, error) {
+func (c *monitorClient) Check(ctx context.Context, in *CheckRequest, opts ...grpc.CallOption) (*CheckResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CheckResponse)
-	err := c.cc.Invoke(ctx, Plugin_Check_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Monitor_Check_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *pluginClient) Events(ctx context.Context, in *EventsRequest, opts ...grpc.CallOption) (*EventsResponse, error) {
+func (c *monitorClient) Events(ctx context.Context, in *EventsRequest, opts ...grpc.CallOption) (*EventsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(EventsResponse)
-	err := c.cc.Invoke(ctx, Plugin_Events_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Monitor_Events_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *pluginClient) Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchResponse], error) {
+func (c *monitorClient) Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Plugin_ServiceDesc.Streams[0], Plugin_Watch_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Monitor_ServiceDesc.Streams[0], Monitor_Watch_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -102,176 +102,176 @@ func (c *pluginClient) Watch(ctx context.Context, in *WatchRequest, opts ...grpc
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Plugin_WatchClient = grpc.ServerStreamingClient[WatchResponse]
+type Monitor_WatchClient = grpc.ServerStreamingClient[WatchResponse]
 
-// PluginServer is the server API for Plugin service.
-// All implementations must embed UnimplementedPluginServer
+// MonitorServer is the server API for Monitor service.
+// All implementations must embed UnimplementedMonitorServer
 // for forward compatibility.
-type PluginServer interface {
+type MonitorServer interface {
 	Describe(context.Context, *DescribeRequest) (*DescribeResponse, error)
 	Status(context.Context, *StatusRequest) (*StatusResponse, error)
 	Check(context.Context, *CheckRequest) (*CheckResponse, error)
 	Events(context.Context, *EventsRequest) (*EventsResponse, error)
 	Watch(*WatchRequest, grpc.ServerStreamingServer[WatchResponse]) error
-	mustEmbedUnimplementedPluginServer()
+	mustEmbedUnimplementedMonitorServer()
 }
 
-// UnimplementedPluginServer must be embedded to have
+// UnimplementedMonitorServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedPluginServer struct{}
+type UnimplementedMonitorServer struct{}
 
-func (UnimplementedPluginServer) Describe(context.Context, *DescribeRequest) (*DescribeResponse, error) {
+func (UnimplementedMonitorServer) Describe(context.Context, *DescribeRequest) (*DescribeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Describe not implemented")
 }
-func (UnimplementedPluginServer) Status(context.Context, *StatusRequest) (*StatusResponse, error) {
+func (UnimplementedMonitorServer) Status(context.Context, *StatusRequest) (*StatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
 }
-func (UnimplementedPluginServer) Check(context.Context, *CheckRequest) (*CheckResponse, error) {
+func (UnimplementedMonitorServer) Check(context.Context, *CheckRequest) (*CheckResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Check not implemented")
 }
-func (UnimplementedPluginServer) Events(context.Context, *EventsRequest) (*EventsResponse, error) {
+func (UnimplementedMonitorServer) Events(context.Context, *EventsRequest) (*EventsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Events not implemented")
 }
-func (UnimplementedPluginServer) Watch(*WatchRequest, grpc.ServerStreamingServer[WatchResponse]) error {
+func (UnimplementedMonitorServer) Watch(*WatchRequest, grpc.ServerStreamingServer[WatchResponse]) error {
 	return status.Error(codes.Unimplemented, "method Watch not implemented")
 }
-func (UnimplementedPluginServer) mustEmbedUnimplementedPluginServer() {}
-func (UnimplementedPluginServer) testEmbeddedByValue()                {}
+func (UnimplementedMonitorServer) mustEmbedUnimplementedMonitorServer() {}
+func (UnimplementedMonitorServer) testEmbeddedByValue()                 {}
 
-// UnsafePluginServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to PluginServer will
+// UnsafeMonitorServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to MonitorServer will
 // result in compilation errors.
-type UnsafePluginServer interface {
-	mustEmbedUnimplementedPluginServer()
+type UnsafeMonitorServer interface {
+	mustEmbedUnimplementedMonitorServer()
 }
 
-func RegisterPluginServer(s grpc.ServiceRegistrar, srv PluginServer) {
-	// If the following call panics, it indicates UnimplementedPluginServer was
+func RegisterMonitorServer(s grpc.ServiceRegistrar, srv MonitorServer) {
+	// If the following call panics, it indicates UnimplementedMonitorServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&Plugin_ServiceDesc, srv)
+	s.RegisterService(&Monitor_ServiceDesc, srv)
 }
 
-func _Plugin_Describe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Monitor_Describe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DescribeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PluginServer).Describe(ctx, in)
+		return srv.(MonitorServer).Describe(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Plugin_Describe_FullMethodName,
+		FullMethod: Monitor_Describe_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PluginServer).Describe(ctx, req.(*DescribeRequest))
+		return srv.(MonitorServer).Describe(ctx, req.(*DescribeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Plugin_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Monitor_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(StatusRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PluginServer).Status(ctx, in)
+		return srv.(MonitorServer).Status(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Plugin_Status_FullMethodName,
+		FullMethod: Monitor_Status_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PluginServer).Status(ctx, req.(*StatusRequest))
+		return srv.(MonitorServer).Status(ctx, req.(*StatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Plugin_Check_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Monitor_Check_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CheckRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PluginServer).Check(ctx, in)
+		return srv.(MonitorServer).Check(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Plugin_Check_FullMethodName,
+		FullMethod: Monitor_Check_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PluginServer).Check(ctx, req.(*CheckRequest))
+		return srv.(MonitorServer).Check(ctx, req.(*CheckRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Plugin_Events_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Monitor_Events_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(EventsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PluginServer).Events(ctx, in)
+		return srv.(MonitorServer).Events(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Plugin_Events_FullMethodName,
+		FullMethod: Monitor_Events_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PluginServer).Events(ctx, req.(*EventsRequest))
+		return srv.(MonitorServer).Events(ctx, req.(*EventsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Plugin_Watch_Handler(srv interface{}, stream grpc.ServerStream) error {
+func _Monitor_Watch_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(WatchRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(PluginServer).Watch(m, &grpc.GenericServerStream[WatchRequest, WatchResponse]{ServerStream: stream})
+	return srv.(MonitorServer).Watch(m, &grpc.GenericServerStream[WatchRequest, WatchResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Plugin_WatchServer = grpc.ServerStreamingServer[WatchResponse]
+type Monitor_WatchServer = grpc.ServerStreamingServer[WatchResponse]
 
-// Plugin_ServiceDesc is the grpc.ServiceDesc for Plugin service.
+// Monitor_ServiceDesc is the grpc.ServiceDesc for Monitor service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Plugin_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "monitorhub.plugin.v1.Plugin",
-	HandlerType: (*PluginServer)(nil),
+var Monitor_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "monitorhub.monitor.v1.Monitor",
+	HandlerType: (*MonitorServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Describe",
-			Handler:    _Plugin_Describe_Handler,
+			Handler:    _Monitor_Describe_Handler,
 		},
 		{
 			MethodName: "Status",
-			Handler:    _Plugin_Status_Handler,
+			Handler:    _Monitor_Status_Handler,
 		},
 		{
 			MethodName: "Check",
-			Handler:    _Plugin_Check_Handler,
+			Handler:    _Monitor_Check_Handler,
 		},
 		{
 			MethodName: "Events",
-			Handler:    _Plugin_Events_Handler,
+			Handler:    _Monitor_Events_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Watch",
-			Handler:       _Plugin_Watch_Handler,
+			Handler:       _Monitor_Watch_Handler,
 			ServerStreams: true,
 		},
 	},
-	Metadata: "monitorhub/plugin/v1/plugin.proto",
+	Metadata: "monitorhub/monitor/v1/monitor.proto",
 }

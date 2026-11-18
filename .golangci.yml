@@ -34,5 +34,5 @@ linters:
         linters:
           - gosec
     paths:
-      - sdk-go/pluginpb
+      - sdk-go/monitorpb
       - src/internal/db

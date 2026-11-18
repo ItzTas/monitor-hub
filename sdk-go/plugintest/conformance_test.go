@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -16,85 +16,85 @@ import (
 )
 
 type fakeClient struct {
-	events     []*pluginpb.Event
+	events     []*monitorpb.Event
 	eventsErr  error
 	failures   int
 	calls      int
-	onLimitOne []*pluginpb.Event
-	watch      func(ctx context.Context) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error)
+	onLimitOne []*monitorpb.Event
+	watch      func(ctx context.Context) (grpc.ServerStreamingClient[monitorpb.WatchResponse], error)
 }
 
-func (f *fakeClient) Describe(context.Context, *pluginpb.DescribeRequest, ...grpc.CallOption) (*pluginpb.DescribeResponse, error) {
-	return &pluginpb.DescribeResponse{
+func (f *fakeClient) Describe(context.Context, *monitorpb.DescribeRequest, ...grpc.CallOption) (*monitorpb.DescribeResponse, error) {
+	return &monitorpb.DescribeResponse{
 		Name:        "fake",
 		DisplayName: "Fake",
-		Kinds:       []*pluginpb.EventKind{{Id: "ping"}},
+		Kinds:       []*monitorpb.EventKind{{Id: "ping"}},
 	}, nil
 }
 
-func (f *fakeClient) Status(context.Context, *pluginpb.StatusRequest, ...grpc.CallOption) (*pluginpb.StatusResponse, error) {
-	return &pluginpb.StatusResponse{State: pluginpb.State_STATE_IDLE}, nil
+func (f *fakeClient) Status(context.Context, *monitorpb.StatusRequest, ...grpc.CallOption) (*monitorpb.StatusResponse, error) {
+	return &monitorpb.StatusResponse{State: monitorpb.State_STATE_IDLE}, nil
 }
 
-func (f *fakeClient) Check(context.Context, *pluginpb.CheckRequest, ...grpc.CallOption) (*pluginpb.CheckResponse, error) {
-	return &pluginpb.CheckResponse{Accepted: true}, nil
+func (f *fakeClient) Check(context.Context, *monitorpb.CheckRequest, ...grpc.CallOption) (*monitorpb.CheckResponse, error) {
+	return &monitorpb.CheckResponse{Accepted: true}, nil
 }
 
-func (f *fakeClient) Watch(ctx context.Context, _ *pluginpb.WatchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+func (f *fakeClient) Watch(ctx context.Context, _ *monitorpb.WatchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[monitorpb.WatchResponse], error) {
 	if f.watch != nil {
 		return f.watch(ctx)
 	}
 	return nil, status.Error(codes.Unimplemented, "method Watch not implemented")
 }
 
-func (f *fakeClient) Events(_ context.Context, req *pluginpb.EventsRequest, _ ...grpc.CallOption) (*pluginpb.EventsResponse, error) {
+func (f *fakeClient) Events(_ context.Context, req *monitorpb.EventsRequest, _ ...grpc.CallOption) (*monitorpb.EventsResponse, error) {
 	f.calls++
 	if f.eventsErr != nil && (f.failures < 0 || f.calls <= f.failures) {
 		return nil, f.eventsErr
 	}
 	if req.GetLimit() == 1 && f.onLimitOne != nil {
-		return &pluginpb.EventsResponse{Events: f.onLimitOne}, nil
+		return &monitorpb.EventsResponse{Events: f.onLimitOne}, nil
 	}
 	limit := int(req.GetLimit())
 	if limit <= 0 {
 		limit = defaultLimit
 	}
-	var out []*pluginpb.Event
+	var out []*monitorpb.Event
 	for _, e := range f.events {
 		if e.Seq > req.After && len(out) < limit {
 			out = append(out, e)
 		}
 	}
-	return &pluginpb.EventsResponse{Events: out}, nil
+	return &monitorpb.EventsResponse{Events: out}, nil
 }
 
-func event(seq int64, id string) *pluginpb.Event {
-	return &pluginpb.Event{
+func event(seq int64, id string) *monitorpb.Event {
+	return &monitorpb.Event{
 		Seq:        seq,
 		Id:         id,
 		Kind:       "ping",
-		Severity:   pluginpb.Severity_SEVERITY_INFO,
+		Severity:   monitorpb.Severity_SEVERITY_INFO,
 		OccurredAt: timestamppb.Now(),
 		Title:      "ping " + id,
 	}
 }
 
 func TestCheckAcceptsValidPlugin(t *testing.T) {
-	c := &fakeClient{events: []*pluginpb.Event{event(1, "a"), event(2, "b"), event(3, "c")}}
+	c := &fakeClient{events: []*monitorpb.Event{event(1, "a"), event(2, "b"), event(3, "c")}}
 	if got := check(t.Context(), c, Options{MinEvents: 3}); len(got) != 0 {
 		t.Fatalf("violations = %v, want none", got)
 	}
 }
 
 func TestCheckCatchesBadSeq(t *testing.T) {
-	c := &fakeClient{events: []*pluginpb.Event{event(2, "a"), event(1, "b")}}
+	c := &fakeClient{events: []*monitorpb.Event{event(2, "a"), event(1, "b")}}
 	if got := check(t.Context(), c, Options{MinEvents: 2}); !slices.Contains(got, "seq not strictly increasing") {
 		t.Fatalf("violations = %v, want seq not strictly increasing", got)
 	}
 }
 
 func TestCheckCatchesDuplicateID(t *testing.T) {
-	c := &fakeClient{events: []*pluginpb.Event{event(1, "a"), event(2, "a")}}
+	c := &fakeClient{events: []*monitorpb.Event{event(1, "a"), event(2, "a")}}
 	if got := check(t.Context(), c, Options{MinEvents: 2}); !slices.Contains(got, "duplicate event id") {
 		t.Fatalf("violations = %v, want duplicate event id", got)
 	}
@@ -118,7 +118,7 @@ func TestValidName(t *testing.T) {
 
 func TestCheckWaitsWhileUnavailable(t *testing.T) {
 	c := &fakeClient{
-		events:    []*pluginpb.Event{event(1, "a"), event(2, "b"), event(3, "c")},
+		events:    []*monitorpb.Event{event(1, "a"), event(2, "b"), event(3, "c")},
 		eventsErr: status.Error(codes.Unavailable, "starting"),
 		failures:  2,
 	}
@@ -157,14 +157,14 @@ func TestCheckDoesNotWaitWithoutReadyTimeout(t *testing.T) {
 }
 
 func TestCheckNamesWhatLimitOneReturned(t *testing.T) {
-	events := []*pluginpb.Event{event(1, "a"), event(2, "b"), event(3, "c")}
+	events := []*monitorpb.Event{event(1, "a"), event(2, "b"), event(3, "c")}
 	tests := map[string]struct {
-		onLimitOne []*pluginpb.Event
+		onLimitOne []*monitorpb.Event
 		want       string
 	}{
-		"no event":     {[]*pluginpb.Event{}, "Events(after = 0, limit = 1) must return exactly the first event, got no events"},
-		"another one":  {[]*pluginpb.Event{event(2, "b")}, "Events(after = 0, limit = 1) must return exactly the first event (seq 1), got the event with seq 2"},
-		"same seq":     {[]*pluginpb.Event{event(1, "z")}, "Events(after = 0, limit = 1) must return exactly the first event (seq 1), got an event with that seq whose fields differ"},
+		"no event":     {[]*monitorpb.Event{}, "Events(after = 0, limit = 1) must return exactly the first event, got no events"},
+		"another one":  {[]*monitorpb.Event{event(2, "b")}, "Events(after = 0, limit = 1) must return exactly the first event (seq 1), got the event with seq 2"},
+		"same seq":     {[]*monitorpb.Event{event(1, "z")}, "Events(after = 0, limit = 1) must return exactly the first event (seq 1), got an event with that seq whose fields differ"},
 		"two events":   {events[:2], "Events(after = 0, limit = 1) must return exactly the first event, got 2 events"},
 		"three events": {events, "Events(after = 0, limit = 1) must return exactly the first event, got 3 events"},
 	}
@@ -179,7 +179,7 @@ func TestCheckNamesWhatLimitOneReturned(t *testing.T) {
 }
 
 type watchStep struct {
-	signal *pluginpb.WatchResponse
+	signal *monitorpb.WatchResponse
 	err    error
 }
 
@@ -190,7 +190,7 @@ type scriptedStream struct {
 	onEnd func()
 }
 
-func (s *scriptedStream) Recv() (*pluginpb.WatchResponse, error) {
+func (s *scriptedStream) Recv() (*monitorpb.WatchResponse, error) {
 	if len(s.steps) == 0 {
 		if s.onEnd != nil {
 			s.onEnd()
@@ -204,7 +204,7 @@ func (s *scriptedStream) Recv() (*pluginpb.WatchResponse, error) {
 }
 
 func signal(seq int64) watchStep {
-	return watchStep{signal: &pluginpb.WatchResponse{LatestSeq: seq}}
+	return watchStep{signal: &monitorpb.WatchResponse{LatestSeq: seq}}
 }
 
 func TestCheckWatch(t *testing.T) {
@@ -232,7 +232,7 @@ func TestCheckWatch(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			var opened context.Context
-			c := &fakeClient{watch: func(ctx context.Context) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+			c := &fakeClient{watch: func(ctx context.Context) (grpc.ServerStreamingClient[monitorpb.WatchResponse], error) {
 				opened = ctx
 				if tt.openErr != nil {
 					return nil, tt.openErr
@@ -263,7 +263,7 @@ func TestCheckWatchCutShort(t *testing.T) {
 			parent, cancelParent := context.WithCancel(t.Context())
 			defer cancelParent()
 			var opened context.Context
-			c := &fakeClient{watch: func(ctx context.Context) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+			c := &fakeClient{watch: func(ctx context.Context) (grpc.ServerStreamingClient[monitorpb.WatchResponse], error) {
 				opened = ctx
 				return &scriptedStream{ctx: ctx, steps: tt.steps, onEnd: cancelParent}, nil
 			}}

@@ -8,7 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 )
 
 const (
@@ -95,7 +95,7 @@ func waitChange(ctx context.Context, changed <-chan struct{}) bool {
 	}
 }
 
-func (s *Service) follow(ctx context.Context, name string, client pluginpb.PluginClient, changed <-chan struct{}, sch *schedule) watchEnd {
+func (s *Service) follow(ctx context.Context, name string, client monitorpb.MonitorClient, changed <-chan struct{}, sch *schedule) watchEnd {
 	opened := s.now()
 	streamCtx, cancel := context.WithCancel(ctx)
 	w := &watchStream{beat: make(chan struct{}, 1), ended: make(chan error, 1), done: make(chan struct{})}
@@ -157,8 +157,8 @@ func settle(end watchEnd, established, signalled bool, sch *schedule) watchEnd {
 	return end
 }
 
-func (s *Service) read(ctx context.Context, name string, client pluginpb.PluginClient, sch *schedule, w *watchStream) error {
-	stream, err := client.Watch(ctx, &pluginpb.WatchRequest{})
+func (s *Service) read(ctx context.Context, name string, client monitorpb.MonitorClient, sch *schedule, w *watchStream) error {
+	stream, err := client.Watch(ctx, &monitorpb.WatchRequest{})
 	if err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ func (s *Service) read(ctx context.Context, name string, client pluginpb.PluginC
 	}
 }
 
-func (s *Service) signal(name string, sch *schedule, w *watchStream, sig *pluginpb.WatchResponse) {
+func (s *Service) signal(name string, sch *schedule, w *watchStream, sig *monitorpb.WatchResponse) {
 	w.signals++
 	if w.signals > 1 {
 		sch.request(pollRequest{latestSeq: sig.GetLatestSeq()})

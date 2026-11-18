@@ -6,7 +6,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
 
@@ -53,7 +53,7 @@ func (r *Postgres) ListEvents(ctx context.Context, filter Filter) ([]Event, erro
 }
 
 func severityName(severity int16) string {
-	if pluginpb.Severity(severity) == pluginpb.Severity_SEVERITY_URGENT {
+	if monitorpb.Severity(severity) == monitorpb.Severity_SEVERITY_URGENT {
 		return "urgent"
 	}
 	return "info"

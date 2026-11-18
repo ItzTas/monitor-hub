@@ -104,7 +104,7 @@ func TestRustLogsKeepTheirLevels(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := catalog.Entry{
-		Manifest: catalog.Manifest{ProtocolVersion: 1, Name: rustPlugin, Command: []string{rustPlugin}},
+		Manifest: catalog.Manifest{ProtocolVersion: 2, Name: rustPlugin, Command: []string{rustPlugin}},
 		Dir:      pluginDir,
 	}
 	captured := &records{}

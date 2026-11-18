@@ -23,8 +23,8 @@ from google.protobuf import empty_pb2, wrappers_pb2
 from google.protobuf.timestamp_pb2 import Timestamp
 
 sys.path.insert(0, str(Path(__file__).parent / "gen"))
-import plugin_pb2 as pb  # noqa: E402
-import plugin_pb2_grpc as pb_grpc  # noqa: E402
+import monitor_pb2 as pb  # noqa: E402
+import monitor_pb2_grpc as pb_grpc  # noqa: E402
 
 COOKIE = "7c0e5a52-monitor-hub"
 NAME = "example-python"
@@ -105,7 +105,7 @@ def to_event(seq: int, event_id: str, occurred_ms: int, title: str) -> pb.Event:
     return event
 
 
-class PluginService(pb_grpc.PluginServicer):
+class MonitorService(pb_grpc.MonitorServicer):
     def __init__(self, store: Store) -> None:
         self._store = store
         self._lock = threading.Lock()
@@ -212,14 +212,14 @@ def serve(store: Store) -> int:
 
     path = socket_path()
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    pb_grpc.add_PluginServicer_to_server(PluginService(store), server)
+    pb_grpc.add_MonitorServicer_to_server(MonitorService(store), server)
     server.add_generic_rpc_handlers((health_handler(), controller_handler(stop)))
     try:
         if not server.add_insecure_port(f"unix:{path}"):
             raise RuntimeError(f"cannot listen on {path}")
         server.start()
         log("info", "serving", socket=str(path))
-        print(f"1|1|unix|{path}|grpc", flush=True)
+        print(f"1|2|unix|{path}|grpc", flush=True)
         stop.wait()
     except RuntimeError as err:
         log("error", "cannot start the server", error=str(err))
@@ -231,7 +231,7 @@ def serve(store: Store) -> int:
 
 
 def main() -> int:
-    if os.environ.get("MONITOR_HUB_PLUGIN") != COOKIE:
+    if os.environ.get("MONITOR_HUB_MONITOR") != COOKIE:
         print("This is a monitor-hub plugin. It is started by the hub, not by hand.", file=sys.stderr)
         return 1
     data_dir = os.environ.get("MONITOR_HUB_DATA_DIR")

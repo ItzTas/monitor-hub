@@ -460,7 +460,7 @@ fn reserved_names() {
         "TMPDIR",
         "PLUGIN_",
         "PLUGIN_X",
-        "MONITOR_HUB_PLUGIN",
+        "MONITOR_HUB_MONITOR",
         "LD_PRELOAD",
     ] {
         assert!(is_reserved(name), "{name}");

@@ -13,7 +13,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
@@ -41,7 +41,7 @@ func seed(t *testing.T, pool *pgxpool.Pool, events ...db.InsertEventParams) {
 			e.Kind = "ping"
 		}
 		if e.Severity == 0 {
-			e.Severity = int16(pluginpb.Severity_SEVERITY_INFO)
+			e.Severity = int16(monitorpb.Severity_SEVERITY_INFO)
 		}
 		if _, err := queries.InsertEvent(t.Context(), e); err != nil {
 			t.Fatal(err)
@@ -77,7 +77,7 @@ func seqs(p page) []float64 {
 func TestEventsShowWhatThePluginSent(t *testing.T) {
 	pool := coretest.Pool(t)
 	seed(t, pool, db.InsertEventParams{
-		Plugin: "sei", EventID: "activity-50001", Kind: "activity_added", Severity: int16(pluginpb.Severity_SEVERITY_URGENT),
+		Plugin: "sei", EventID: "activity-50001", Kind: "activity_added", Severity: int16(monitorpb.Severity_SEVERITY_URGENT),
 		Title: "New activity", Body: "Processo recebido", Url: "https://sei.example.org/p/1", Payload: []byte(`{"unit":"NUPROC","count":2}`),
 	})
 

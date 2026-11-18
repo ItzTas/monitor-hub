@@ -172,14 +172,14 @@ fn misbehaving_validators_are_reported() {
             "needs the cookie",
             "echo 'this binary is a monitor-hub plugin' >&2; exit 1",
             vec![Want::Exact(
-                "validate-settings printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_PLUGIN",
+                "validate-settings printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_MONITOR",
             )],
         ),
         Case::new(
             "only whitespace",
             "printf ' \\n\\t\\n'; exit 1",
             vec![Want::Exact(
-                "validate-settings printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_PLUGIN",
+                "validate-settings printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_MONITOR",
             )],
         ),
         Case {

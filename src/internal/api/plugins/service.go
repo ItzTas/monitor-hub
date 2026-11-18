@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 )
 
 const checkTimeout = 10 * time.Second
@@ -21,7 +21,7 @@ var (
 
 type Supervisor interface {
 	Names() []string
-	Client(name string) (pluginpb.PluginClient, bool)
+	Client(name string) (monitorpb.MonitorClient, bool)
 }
 
 type Service struct {
@@ -66,7 +66,7 @@ func (s *Service) Check(ctx context.Context, name string) (CheckResult, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
-	answer, err := client.Check(ctx, &pluginpb.CheckRequest{})
+	answer, err := client.Check(ctx, &monitorpb.CheckRequest{})
 	if err != nil {
 		return CheckResult{}, fmt.Errorf("check %s: %w", name, err)
 	}
@@ -74,8 +74,8 @@ func (s *Service) Check(ctx context.Context, name string) (CheckResult, error) {
 }
 
 func stateName(state int16) string {
-	name, known := pluginpb.State_name[int32(state)]
-	if !known || state == int16(pluginpb.State_STATE_UNSPECIFIED) {
+	name, known := monitorpb.State_name[int32(state)]
+	if !known || state == int16(monitorpb.State_STATE_UNSPECIFIED) {
 		return "unknown"
 	}
 	return strings.ToLower(strings.TrimPrefix(name, "STATE_"))

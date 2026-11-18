@@ -3,11 +3,11 @@ package ingest
 import (
 	"testing"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 )
 
-func rejectAfterBaseline(t *testing.T, page []*pluginpb.Event) {
+func rejectAfterBaseline(t *testing.T, page []*monitorpb.Event) {
 	t.Helper()
 	pool := coretest.Pool(t)
 	p := plugin("sei", numbered(1, 3)...)
@@ -21,7 +21,7 @@ func rejectAfterBaseline(t *testing.T, page []*pluginpb.Event) {
 }
 
 func TestOutOfOrderSeqIsRejected(t *testing.T) {
-	cases := map[string][]*pluginpb.Event{
+	cases := map[string][]*monitorpb.Event{
 		"decreasing":           {event(6, "event-6"), event(5, "event-5")},
 		"repeated":             {event(4, "event-4"), event(4, "event-4b")},
 		"not after the cursor": {event(3, "event-3b"), event(4, "event-4")},
@@ -37,8 +37,8 @@ func TestMalformedPageIsRejected(t *testing.T) {
 	withoutTime := event(5, "event-5")
 	withoutTime.OccurredAt = nil
 	hugeSeverity := event(5, "event-5")
-	hugeSeverity.Severity = pluginpb.Severity(70000)
-	cases := map[string][]*pluginpb.Event{
+	hugeSeverity.Severity = monitorpb.Severity(70000)
+	cases := map[string][]*monitorpb.Event{
 		"event without id":          {event(4, "event-4"), event(5, "")},
 		"event without occurred_at": {event(4, "event-4"), withoutTime},
 		"severity out of range":     {event(4, "event-4"), hugeSeverity},

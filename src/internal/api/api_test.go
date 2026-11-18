@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/api/plugins"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
@@ -33,7 +33,7 @@ func (noPlugins) Names() []string {
 	return nil
 }
 
-func (noPlugins) Client(string) (pluginpb.PluginClient, bool) {
+func (noPlugins) Client(string) (monitorpb.MonitorClient, bool) {
 	return nil, false
 }
 
@@ -90,10 +90,10 @@ func TestTheRightTokenIsAccepted(t *testing.T) {
 }
 
 type failingClient struct {
-	pluginpb.PluginClient
+	monitorpb.MonitorClient
 }
 
-func (failingClient) Check(context.Context, *pluginpb.CheckRequest, ...grpc.CallOption) (*pluginpb.CheckResponse, error) {
+func (failingClient) Check(context.Context, *monitorpb.CheckRequest, ...grpc.CallOption) (*monitorpb.CheckResponse, error) {
 	return nil, errors.New("rpc error: code = Unavailable desc = dial unix /tmp/plugin123")
 }
 
@@ -103,7 +103,7 @@ func (onePlugin) Names() []string {
 	return []string{"sei"}
 }
 
-func (onePlugin) Client(string) (pluginpb.PluginClient, bool) {
+func (onePlugin) Client(string) (monitorpb.MonitorClient, bool) {
 	return failingClient{}, true
 }
 
@@ -133,10 +133,10 @@ func TestConsumersAreListedWithTheirLag(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := ingest.NewPostgres(pool)
-	if err := repo.SaveDescription(t.Context(), &pluginpb.DescribeResponse{Name: "sei", DisplayName: "SEI", Version: "1"}); err != nil {
+	if err := repo.SaveDescription(t.Context(), &monitorpb.DescribeResponse{Name: "sei", DisplayName: "SEI", Version: "1"}); err != nil {
 		t.Fatal(err)
 	}
-	events := []*pluginpb.Event{
+	events := []*monitorpb.Event{
 		{Seq: 1, Id: "e1", Kind: "ping", OccurredAt: timestamppb.Now(), Title: "ping 1"},
 		{Seq: 2, Id: "e2", Kind: "ping", OccurredAt: timestamppb.Now(), Title: "ping 2"},
 	}

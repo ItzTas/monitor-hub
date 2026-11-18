@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/ingest"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -20,13 +20,13 @@ func TestMain(m *testing.M) {
 func addEvents(t *testing.T, pool *pgxpool.Pool, after int64, baseline bool, count int) {
 	t.Helper()
 	repo := ingest.NewPostgres(pool)
-	if err := repo.SaveDescription(t.Context(), &pluginpb.DescribeResponse{Name: "sei", DisplayName: "sei", Version: "1"}); err != nil {
+	if err := repo.SaveDescription(t.Context(), &monitorpb.DescribeResponse{Name: "sei", DisplayName: "sei", Version: "1"}); err != nil {
 		t.Fatal(err)
 	}
-	var events []*pluginpb.Event
+	var events []*monitorpb.Event
 	for i := range count {
 		seq := after + int64(i) + 1
-		events = append(events, &pluginpb.Event{Seq: seq, Id: "e" + string(rune('a'+seq)), Kind: "ping", OccurredAt: timestamppb.Now(), Title: "ping"})
+		events = append(events, &monitorpb.Event{Seq: seq, Id: "e" + string(rune('a'+seq)), Kind: "ping", OccurredAt: timestamppb.Now(), Title: "ping"})
 	}
 	if _, err := repo.StoreEvents(t.Context(), ingest.Batch{Plugin: "sei", After: after, Events: events, Baseline: baseline}); err != nil {
 		t.Fatal(err)

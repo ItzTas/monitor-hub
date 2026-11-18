@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
@@ -31,7 +31,7 @@ func TestHealthIgnoresPluginState(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	if err := queries.SavePluginStatus(t.Context(), db.SavePluginStatusParams{Name: "sei", State: int16(pluginpb.State_STATE_FAILING), Message: "login refused", StatusSeenAt: &seen}); err != nil {
+	if err := queries.SavePluginStatus(t.Context(), db.SavePluginStatusParams{Name: "sei", State: int16(monitorpb.State_STATE_FAILING), Message: "login refused", StatusSeenAt: &seen}); err != nil {
 		t.Fatal(err)
 	}
 

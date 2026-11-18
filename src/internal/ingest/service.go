@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 )
 
 const (
@@ -147,7 +147,7 @@ func (s *Service) polled(name string, req pollRequest) {
 	s.onPolled(name, req)
 }
 
-func (s *Service) poll(ctx context.Context, name string, client pluginpb.PluginClient, req pollRequest) error {
+func (s *Service) poll(ctx context.Context, name string, client monitorpb.MonitorClient, req pollRequest) error {
 	var (
 		cursor int64
 		known  bool
@@ -169,8 +169,8 @@ func (s *Service) poll(ctx context.Context, name string, client pluginpb.PluginC
 	return err
 }
 
-func (s *Service) describe(ctx context.Context, name string, client pluginpb.PluginClient) error {
-	description, err := call(ctx, s.callTimeout, client.Describe, &pluginpb.DescribeRequest{})
+func (s *Service) describe(ctx context.Context, name string, client monitorpb.MonitorClient) error {
+	description, err := call(ctx, s.callTimeout, client.Describe, &monitorpb.DescribeRequest{})
 	if err != nil {
 		return fmt.Errorf("describe: %w", err)
 	}
@@ -183,8 +183,8 @@ func (s *Service) describe(ctx context.Context, name string, client pluginpb.Plu
 	return nil
 }
 
-func (s *Service) refreshStatus(ctx context.Context, name string, client pluginpb.PluginClient) {
-	status, err := call(ctx, s.callTimeout, client.Status, &pluginpb.StatusRequest{})
+func (s *Service) refreshStatus(ctx context.Context, name string, client monitorpb.MonitorClient) {
+	status, err := call(ctx, s.callTimeout, client.Status, &monitorpb.StatusRequest{})
 	if err != nil {
 		s.failed(ctx, slog.LevelWarn, "read a plugin status", name, err)
 		return
@@ -194,9 +194,9 @@ func (s *Service) refreshStatus(ctx context.Context, name string, client pluginp
 	}
 }
 
-func (s *Service) ingest(ctx context.Context, name string, client pluginpb.PluginClient, cursor int64, baseline bool) error {
+func (s *Service) ingest(ctx context.Context, name string, client monitorpb.MonitorClient, cursor int64, baseline bool) error {
 	for {
-		page, err := call(ctx, s.callTimeout, client.Events, &pluginpb.EventsRequest{After: cursor, Limit: EventsPageSize})
+		page, err := call(ctx, s.callTimeout, client.Events, &monitorpb.EventsRequest{After: cursor, Limit: EventsPageSize})
 		if err != nil {
 			return fmt.Errorf("read events after %d: %w", cursor, err)
 		}

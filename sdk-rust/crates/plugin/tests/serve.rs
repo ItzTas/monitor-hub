@@ -113,7 +113,7 @@ fn handshake(plugin: &mut Plugin) -> PathBuf {
         .expect("read stdout");
     let path = line
         .strip_suffix('\n')
-        .and_then(|line| line.strip_prefix("1|1|unix|"))
+        .and_then(|line| line.strip_prefix("1|2|unix|"))
         .and_then(|line| line.strip_suffix("|grpc"))
         .filter(|path| !path.is_empty())
         .unwrap_or_else(|| panic!("unexpected handshake line {line:?}"));

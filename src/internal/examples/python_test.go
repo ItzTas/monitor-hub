@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -22,7 +22,7 @@ import (
 
 const (
 	pythonEnv   = "MONITOR_HUB_EXAMPLE_PYTHON"
-	magicCookie = "MONITOR_HUB_PLUGIN=7c0e5a52-monitor-hub"
+	magicCookie = "MONITOR_HUB_MONITOR=7c0e5a52-monitor-hub"
 )
 
 func pythonInterpreter(t *testing.T) string {
@@ -147,7 +147,7 @@ func startPython(t *testing.T, dataDir string) *pythonPlugin {
 		t.Fatalf("read handshake: %v", err)
 	}
 	fields := strings.Split(strings.TrimSpace(line), "|")
-	if len(fields) != 5 || fields[2] != "unix" {
+	if len(fields) != 5 || fields[0] != "1" || fields[1] != "2" || fields[2] != "unix" {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		t.Fatalf("handshake = %q", line)
@@ -181,9 +181,9 @@ func (p *pythonPlugin) shutdown(t *testing.T) {
 	}
 }
 
-func (p *pythonPlugin) events(t *testing.T) []*pluginpb.Event {
+func (p *pythonPlugin) events(t *testing.T) []*monitorpb.Event {
 	t.Helper()
-	resp, err := pluginpb.NewPluginClient(p.conn).Events(t.Context(), &pluginpb.EventsRequest{})
+	resp, err := monitorpb.NewMonitorClient(p.conn).Events(t.Context(), &monitorpb.EventsRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func (p *pythonPlugin) events(t *testing.T) []*pluginpb.Event {
 
 func (p *pythonPlugin) check(t *testing.T) {
 	t.Helper()
-	resp, err := pluginpb.NewPluginClient(p.conn).Check(t.Context(), &pluginpb.CheckRequest{})
+	resp, err := monitorpb.NewMonitorClient(p.conn).Check(t.Context(), &monitorpb.CheckRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func (p *pythonPlugin) check(t *testing.T) {
 	}
 }
 
-func titles(events []*pluginpb.Event) []string {
+func titles(events []*monitorpb.Event) []string {
 	out := make([]string, 0, len(events))
 	for _, event := range events {
 		out = append(out, event.GetTitle())

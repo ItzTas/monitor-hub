@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/grpc/status"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 )
 
@@ -73,7 +73,7 @@ func TestResentEventsAreStoredOnce(t *testing.T) {
 	s := newService(pool, p)
 	s.PollOnce(t.Context())
 
-	p.events = []*pluginpb.Event{event(4, "event-3"), event(5, "event-5")}
+	p.events = []*monitorpb.Event{event(4, "event-3"), event(5, "event-5")}
 	s.PollOnce(t.Context())
 
 	expectStored(t, pool, "sei", 4, 2, 5, true)
@@ -98,7 +98,7 @@ func TestFailingPluginDoesNotStopOthers(t *testing.T) {
 func TestHungPluginDoesNotStallOthers(t *testing.T) {
 	pool := coretest.Pool(t)
 	hung := plugin("a")
-	hung.respond = func(ctx context.Context, _ *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
+	hung.respond = func(ctx context.Context, _ *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		<-ctx.Done()
 		return nil, status.FromContextError(ctx.Err()).Err()
 	}
@@ -125,7 +125,7 @@ func TestPagesUntilShortPage(t *testing.T) {
 	p := plugin("sei", numbered(1, 1200)...)
 	var afters []int64
 	var baselinedWhenAsked []bool
-	p.respond = func(ctx context.Context, req *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
+	p.respond = func(ctx context.Context, req *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		var baselined bool
 		err := pool.QueryRow(ctx, "SELECT baselined_at IS NOT NULL FROM plugins WHERE name = 'sei'").Scan(&baselined)
 		if err != nil {
@@ -182,7 +182,7 @@ func TestQueuedDeliveriesWakeTheDispatcher(t *testing.T) {
 		t.Fatalf("wakes after a new event = %d, want 1", wakes)
 	}
 
-	p.events = []*pluginpb.Event{event(5, "event-4")}
+	p.events = []*monitorpb.Event{event(5, "event-4")}
 	s.PollOnce(t.Context())
 	if wakes != 1 {
 		t.Errorf("wakes after a resent event = %d, want 1", wakes)

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
 )
 
@@ -156,7 +156,7 @@ func TestConformanceReportsValidatorViolations(t *testing.T) {
 		limit  time.Duration
 	}{
 		"log-first":                {want: "validate-settings did not print a single JSON object on stdout: ", prefix: true},
-		"needs-cookie":             {want: "validate-settings printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_PLUGIN"},
+		"needs-cookie":             {want: "validate-settings printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_MONITOR"},
 		"hang":                     {want: "validate-settings did not finish within 5s", limit: 15 * time.Second},
 		"exit-2":                   {want: "validate-settings exited with code 2, want 0 or 1"},
 		"killed":                   {want: "validate-settings was killed by signal 9"},
@@ -468,7 +468,7 @@ func TestConformancePassesOnlyDeclaredEnv(t *testing.T) {
 	t.Setenv("LEAK", "x")
 	cmd := exec.CommandContext(t.Context(), binary)
 	cmd.Env = []string{"ECHO=LEAK"}
-	status, err := plugintest.Dial(t, cmd).Status(t.Context(), &pluginpb.StatusRequest{})
+	status, err := plugintest.Dial(t, cmd).Status(t.Context(), &monitorpb.StatusRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import plugin_pb2 as plugin__pb2
+import monitor_pb2 as monitor__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -18,14 +18,14 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in plugin_pb2_grpc.py depends on'
+        + ' but the generated code in monitor_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
 
 
-class PluginStub(object):
+class MonitorStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -35,28 +35,33 @@ class PluginStub(object):
             channel: A grpc.Channel.
         """
         self.Describe = channel.unary_unary(
-                '/monitorhub.plugin.v1.Plugin/Describe',
-                request_serializer=plugin__pb2.DescribeRequest.SerializeToString,
-                response_deserializer=plugin__pb2.DescribeResponse.FromString,
+                '/monitorhub.monitor.v1.Monitor/Describe',
+                request_serializer=monitor__pb2.DescribeRequest.SerializeToString,
+                response_deserializer=monitor__pb2.DescribeResponse.FromString,
                 _registered_method=True)
         self.Status = channel.unary_unary(
-                '/monitorhub.plugin.v1.Plugin/Status',
-                request_serializer=plugin__pb2.StatusRequest.SerializeToString,
-                response_deserializer=plugin__pb2.StatusResponse.FromString,
+                '/monitorhub.monitor.v1.Monitor/Status',
+                request_serializer=monitor__pb2.StatusRequest.SerializeToString,
+                response_deserializer=monitor__pb2.StatusResponse.FromString,
                 _registered_method=True)
         self.Check = channel.unary_unary(
-                '/monitorhub.plugin.v1.Plugin/Check',
-                request_serializer=plugin__pb2.CheckRequest.SerializeToString,
-                response_deserializer=plugin__pb2.CheckResponse.FromString,
+                '/monitorhub.monitor.v1.Monitor/Check',
+                request_serializer=monitor__pb2.CheckRequest.SerializeToString,
+                response_deserializer=monitor__pb2.CheckResponse.FromString,
                 _registered_method=True)
         self.Events = channel.unary_unary(
-                '/monitorhub.plugin.v1.Plugin/Events',
-                request_serializer=plugin__pb2.EventsRequest.SerializeToString,
-                response_deserializer=plugin__pb2.EventsResponse.FromString,
+                '/monitorhub.monitor.v1.Monitor/Events',
+                request_serializer=monitor__pb2.EventsRequest.SerializeToString,
+                response_deserializer=monitor__pb2.EventsResponse.FromString,
+                _registered_method=True)
+        self.Watch = channel.unary_stream(
+                '/monitorhub.monitor.v1.Monitor/Watch',
+                request_serializer=monitor__pb2.WatchRequest.SerializeToString,
+                response_deserializer=monitor__pb2.WatchResponse.FromString,
                 _registered_method=True)
 
 
-class PluginServicer(object):
+class MonitorServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def Describe(self, request, context):
@@ -83,38 +88,49 @@ class PluginServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Watch(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
-def add_PluginServicer_to_server(servicer, server):
+
+def add_MonitorServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Describe': grpc.unary_unary_rpc_method_handler(
                     servicer.Describe,
-                    request_deserializer=plugin__pb2.DescribeRequest.FromString,
-                    response_serializer=plugin__pb2.DescribeResponse.SerializeToString,
+                    request_deserializer=monitor__pb2.DescribeRequest.FromString,
+                    response_serializer=monitor__pb2.DescribeResponse.SerializeToString,
             ),
             'Status': grpc.unary_unary_rpc_method_handler(
                     servicer.Status,
-                    request_deserializer=plugin__pb2.StatusRequest.FromString,
-                    response_serializer=plugin__pb2.StatusResponse.SerializeToString,
+                    request_deserializer=monitor__pb2.StatusRequest.FromString,
+                    response_serializer=monitor__pb2.StatusResponse.SerializeToString,
             ),
             'Check': grpc.unary_unary_rpc_method_handler(
                     servicer.Check,
-                    request_deserializer=plugin__pb2.CheckRequest.FromString,
-                    response_serializer=plugin__pb2.CheckResponse.SerializeToString,
+                    request_deserializer=monitor__pb2.CheckRequest.FromString,
+                    response_serializer=monitor__pb2.CheckResponse.SerializeToString,
             ),
             'Events': grpc.unary_unary_rpc_method_handler(
                     servicer.Events,
-                    request_deserializer=plugin__pb2.EventsRequest.FromString,
-                    response_serializer=plugin__pb2.EventsResponse.SerializeToString,
+                    request_deserializer=monitor__pb2.EventsRequest.FromString,
+                    response_serializer=monitor__pb2.EventsResponse.SerializeToString,
+            ),
+            'Watch': grpc.unary_stream_rpc_method_handler(
+                    servicer.Watch,
+                    request_deserializer=monitor__pb2.WatchRequest.FromString,
+                    response_serializer=monitor__pb2.WatchResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'monitorhub.plugin.v1.Plugin', rpc_method_handlers)
+            'monitorhub.monitor.v1.Monitor', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('monitorhub.plugin.v1.Plugin', rpc_method_handlers)
+    server.add_registered_method_handlers('monitorhub.monitor.v1.Monitor', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class Plugin(object):
+class Monitor(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
@@ -131,9 +147,9 @@ class Plugin(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/monitorhub.plugin.v1.Plugin/Describe',
-            plugin__pb2.DescribeRequest.SerializeToString,
-            plugin__pb2.DescribeResponse.FromString,
+            '/monitorhub.monitor.v1.Monitor/Describe',
+            monitor__pb2.DescribeRequest.SerializeToString,
+            monitor__pb2.DescribeResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -158,9 +174,9 @@ class Plugin(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/monitorhub.plugin.v1.Plugin/Status',
-            plugin__pb2.StatusRequest.SerializeToString,
-            plugin__pb2.StatusResponse.FromString,
+            '/monitorhub.monitor.v1.Monitor/Status',
+            monitor__pb2.StatusRequest.SerializeToString,
+            monitor__pb2.StatusResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -185,9 +201,9 @@ class Plugin(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/monitorhub.plugin.v1.Plugin/Check',
-            plugin__pb2.CheckRequest.SerializeToString,
-            plugin__pb2.CheckResponse.FromString,
+            '/monitorhub.monitor.v1.Monitor/Check',
+            monitor__pb2.CheckRequest.SerializeToString,
+            monitor__pb2.CheckResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -212,9 +228,36 @@ class Plugin(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/monitorhub.plugin.v1.Plugin/Events',
-            plugin__pb2.EventsRequest.SerializeToString,
-            plugin__pb2.EventsResponse.FromString,
+            '/monitorhub.monitor.v1.Monitor/Events',
+            monitor__pb2.EventsRequest.SerializeToString,
+            monitor__pb2.EventsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Watch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/monitorhub.monitor.v1.Monitor/Watch',
+            monitor__pb2.WatchRequest.SerializeToString,
+            monitor__pb2.WatchResponse.FromString,
             options,
             channel_credentials,
             insecure,

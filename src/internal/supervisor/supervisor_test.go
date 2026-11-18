@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/catalog"
 )
 
@@ -43,7 +43,7 @@ func run(m *testing.M) int {
 
 func entry(name, dir string, command ...string) catalog.Entry {
 	return catalog.Entry{
-		Manifest: catalog.Manifest{ProtocolVersion: 1, Name: name, Command: command},
+		Manifest: catalog.Manifest{ProtocolVersion: 2, Name: name, Command: command},
 		Dir:      dir,
 	}
 }
@@ -80,7 +80,7 @@ func startLoggingSupervisor(t *testing.T, environ []string, logger *slog.Logger)
 	return s, dataRoot, stop
 }
 
-func waitDescribe(t *testing.T, s *Supervisor, timeout time.Duration) pluginpb.PluginClient {
+func waitDescribe(t *testing.T, s *Supervisor, timeout time.Duration) monitorpb.MonitorClient {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -93,16 +93,16 @@ func waitDescribe(t *testing.T, s *Supervisor, timeout time.Duration) pluginpb.P
 	return nil
 }
 
-func describes(t *testing.T, c pluginpb.PluginClient) bool {
+func describes(t *testing.T, c monitorpb.MonitorClient) bool {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	_, err := c.Describe(ctx, &pluginpb.DescribeRequest{})
+	_, err := c.Describe(ctx, &monitorpb.DescribeRequest{})
 	return err == nil
 }
 
-func statusMessage(t *testing.T, c pluginpb.PluginClient) string {
+func statusMessage(t *testing.T, c monitorpb.MonitorClient) string {
 	t.Helper()
-	resp, err := c.Status(t.Context(), &pluginpb.StatusRequest{})
+	resp, err := c.Status(t.Context(), &monitorpb.StatusRequest{})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -138,13 +138,13 @@ func TestPluginSeesOnlyItsEnvironment(t *testing.T) {
 func TestCrashedPluginIsRestarted(t *testing.T) {
 	s, _, _ := startSupervisor(t, []string{"TESTPLUGIN__CRASH_ON_CHECK=1"})
 	c := waitDescribe(t, s, 10*time.Second)
-	if _, err := c.Check(t.Context(), &pluginpb.CheckRequest{}); err == nil {
+	if _, err := c.Check(t.Context(), &monitorpb.CheckRequest{}); err == nil {
 		t.Fatal("Check succeeded, want the plugin to crash")
 	}
 	waitDescribe(t, s, 5*time.Second)
 }
 
-func trackDescribing(t *testing.T, s *Supervisor) (pluginpb.PluginClient, <-chan struct{}) {
+func trackDescribing(t *testing.T, s *Supervisor) (monitorpb.MonitorClient, <-chan struct{}) {
 	t.Helper()
 	for {
 		c, ok, changed := s.Track("testplugin")
@@ -174,7 +174,7 @@ func closed(changed <-chan struct{}) bool {
 func TestTrackClosesItsChannelOnEveryProcessChange(t *testing.T) {
 	s, _, stop := startSupervisor(t, []string{"TESTPLUGIN__CRASH_ON_CHECK=1"})
 	c1, changed := trackDescribing(t, s)
-	if _, err := c1.Check(t.Context(), &pluginpb.CheckRequest{}); err == nil {
+	if _, err := c1.Check(t.Context(), &monitorpb.CheckRequest{}); err == nil {
 		t.Fatal("Check succeeded, want the plugin to crash")
 	}
 	select {
@@ -201,7 +201,7 @@ func childEnviron(extra ...string) []string {
 	return append([]string{"PATH=" + os.Getenv("PATH"), "TESTPLUGIN__SPAWN_CHILD=1", "TESTPLUGIN__ECHO=CHILD_PID"}, extra...)
 }
 
-func childPID(t *testing.T, c pluginpb.PluginClient) int {
+func childPID(t *testing.T, c monitorpb.MonitorClient) int {
 	t.Helper()
 	pid, err := strconv.Atoi(statusMessage(t, c))
 	if err != nil {
@@ -219,7 +219,7 @@ func TestCrashWithChildHoldingStdioIsRestarted(t *testing.T) {
 	s, _, _ := startSupervisor(t, childEnviron("TESTPLUGIN__CRASH_ON_CHECK=1"))
 	c := waitDescribe(t, s, 10*time.Second)
 	child := childPID(t, c)
-	if _, err := c.Check(t.Context(), &pluginpb.CheckRequest{}); err == nil {
+	if _, err := c.Check(t.Context(), &monitorpb.CheckRequest{}); err == nil {
 		t.Fatal("Check succeeded, want the plugin to crash")
 	}
 	waitDescribe(t, s, 5*time.Second)
@@ -338,7 +338,7 @@ func TestSlowPluginIsNotRestarted(t *testing.T) {
 	c := waitDescribe(t, s, 10*time.Second)
 	ctx, cancel := context.WithTimeout(t.Context(), stall+5*time.Second)
 	defer cancel()
-	if _, err := c.Status(ctx, &pluginpb.StatusRequest{}); err != nil {
+	if _, err := c.Status(ctx, &monitorpb.StatusRequest{}); err != nil {
 		t.Fatalf("stalled Status failed: %v", err)
 	}
 	if now, ok := s.Client("testplugin"); !ok || now != c {

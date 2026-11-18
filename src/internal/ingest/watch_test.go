@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 )
 
@@ -301,7 +301,7 @@ func TestABurstOfSignalsNeverOverlapsPolls(t *testing.T) {
 	gate := make(chan struct{})
 	held := make(chan struct{})
 	p := watched(plugin("sei", numbered(1, 3)...))
-	p.respond = func(ctx context.Context, req *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
+	p.respond = func(ctx context.Context, req *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		if req.GetAfter() != 3 {
 			return p.page(req), nil
 		}
@@ -391,7 +391,7 @@ func TestPollsCutShortByTheEndOfRunLogNoWarning(t *testing.T) {
 	entered := make(chan struct{})
 	p := plugin("sei", numbered(1, 3)...)
 	p.stallStatus = make(chan struct{}, 1)
-	p.respond = func(ctx context.Context, _ *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
+	p.respond = func(ctx context.Context, _ *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		close(entered)
 		<-ctx.Done()
 		return nil, status.FromContextError(ctx.Err()).Err()

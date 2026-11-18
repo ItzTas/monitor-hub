@@ -1,13 +1,13 @@
 syntax = "proto3";
 
-package monitorhub.plugin.v1;
+package monitorhub.monitor.v1;
 
-option go_package = "github.com/ItzTas/monitor-hub/sdk-go/pluginpb;pluginpb";
+option go_package = "github.com/ItzTas/monitor-hub/sdk-go/monitorpb;monitorpb";
 
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
-service Plugin {
+service Monitor {
   rpc Describe(DescribeRequest) returns (DescribeResponse);
   rpc Status(StatusRequest) returns (StatusResponse);
   rpc Check(CheckRequest) returns (CheckResponse);

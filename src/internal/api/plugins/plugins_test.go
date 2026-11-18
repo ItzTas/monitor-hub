@@ -15,19 +15,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
 
 type fakeClient struct {
-	pluginpb.PluginClient
-	answer   *pluginpb.CheckResponse
+	monitorpb.MonitorClient
+	answer   *monitorpb.CheckResponse
 	err      error
 	deadline time.Duration
 }
 
-func (c *fakeClient) Check(ctx context.Context, _ *pluginpb.CheckRequest, _ ...grpc.CallOption) (*pluginpb.CheckResponse, error) {
+func (c *fakeClient) Check(ctx context.Context, _ *monitorpb.CheckRequest, _ ...grpc.CallOption) (*monitorpb.CheckResponse, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		c.deadline = time.Until(deadline)
 	}
@@ -36,14 +36,14 @@ func (c *fakeClient) Check(ctx context.Context, _ *pluginpb.CheckRequest, _ ...g
 
 type fakeSupervisor struct {
 	names   []string
-	clients map[string]pluginpb.PluginClient
+	clients map[string]monitorpb.MonitorClient
 }
 
 func (s fakeSupervisor) Names() []string {
 	return s.names
 }
 
-func (s fakeSupervisor) Client(name string) (pluginpb.PluginClient, bool) {
+func (s fakeSupervisor) Client(name string) (monitorpb.MonitorClient, bool) {
 	c, ok := s.clients[name]
 	return c, ok
 }
@@ -64,7 +64,7 @@ func serve(t *testing.T, pool *pgxpool.Pool, supervisor Supervisor, method, targ
 }
 
 func TestCheckUnknownPluginIs404(t *testing.T) {
-	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]pluginpb.PluginClient{"sei": &fakeClient{answer: &pluginpb.CheckResponse{Accepted: true}}}}
+	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]monitorpb.MonitorClient{"sei": &fakeClient{answer: &monitorpb.CheckResponse{Accepted: true}}}}
 
 	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/plugins/diario/check")
 
@@ -84,8 +84,8 @@ func TestCheckStoppedPluginIs503(t *testing.T) {
 }
 
 func TestCheckAnswersWhatThePluginSays(t *testing.T) {
-	client := &fakeClient{answer: &pluginpb.CheckResponse{Accepted: false, Message: "a check is already running"}}
-	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]pluginpb.PluginClient{"sei": client}}
+	client := &fakeClient{answer: &monitorpb.CheckResponse{Accepted: false, Message: "a check is already running"}}
+	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]monitorpb.MonitorClient{"sei": client}}
 
 	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/plugins/sei/check")
 
@@ -100,7 +100,7 @@ func TestCheckAnswersWhatThePluginSays(t *testing.T) {
 
 func TestCheckFailureIs502(t *testing.T) {
 	client := &fakeClient{err: errors.New("connection refused")}
-	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]pluginpb.PluginClient{"sei": client}}
+	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]monitorpb.MonitorClient{"sei": client}}
 
 	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/plugins/sei/check")
 
@@ -120,7 +120,7 @@ func TestListShowsConfiguredAndStoredPlugins(t *testing.T) {
 		}
 	}
 	statuses := []db.SavePluginStatusParams{
-		{Name: "sei", State: int16(pluginpb.State_STATE_FAILING), Message: "login refused", LastSuccessAt: &success, StatusSeenAt: &seen},
+		{Name: "sei", State: int16(monitorpb.State_STATE_FAILING), Message: "login refused", LastSuccessAt: &success, StatusSeenAt: &seen},
 		{Name: "removed", State: 42, StatusSeenAt: &seen},
 	}
 	for _, status := range statuses {
@@ -130,7 +130,7 @@ func TestListShowsConfiguredAndStoredPlugins(t *testing.T) {
 	}
 	supervisor := fakeSupervisor{
 		names:   []string{"diario", "sei"},
-		clients: map[string]pluginpb.PluginClient{"diario": &fakeClient{}},
+		clients: map[string]monitorpb.MonitorClient{"diario": &fakeClient{}},
 	}
 
 	code, body := serve(t, pool, supervisor, http.MethodGet, "/api/plugins")
@@ -155,13 +155,13 @@ func TestListShowsConfiguredAndStoredPlugins(t *testing.T) {
 }
 
 func TestStateNames(t *testing.T) {
-	cases := map[pluginpb.State]string{
-		pluginpb.State_STATE_UNSPECIFIED: "unknown",
-		pluginpb.State_STATE_IDLE:        "idle",
-		pluginpb.State_STATE_CHECKING:    "checking",
-		pluginpb.State_STATE_PAUSED:      "paused",
-		pluginpb.State_STATE_FAILING:     "failing",
-		pluginpb.State(42):               "unknown",
+	cases := map[monitorpb.State]string{
+		monitorpb.State_STATE_UNSPECIFIED: "unknown",
+		monitorpb.State_STATE_IDLE:        "idle",
+		monitorpb.State_STATE_CHECKING:    "checking",
+		monitorpb.State_STATE_PAUSED:      "paused",
+		monitorpb.State_STATE_FAILING:     "failing",
+		monitorpb.State(42):               "unknown",
 	}
 	for state, want := range cases {
 		if got := stateName(int16(state)); got != want {

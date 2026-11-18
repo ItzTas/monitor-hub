@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 )
 
@@ -91,7 +91,7 @@ func TestRunPollsEachPluginOnItsOwn(t *testing.T) {
 	a := plugin("a", numbered(1, 2)...)
 	entered := make(chan struct{})
 	var once sync.Once
-	a.respond = func(ctx context.Context, req *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
+	a.respond = func(ctx context.Context, req *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		once.Do(func() { close(entered) })
 		select {
 		case <-gate:
@@ -134,7 +134,7 @@ func TestRequestsDuringAPollCollapseIntoOneDelayedFollowUp(t *testing.T) {
 	started := make(chan struct{})
 	var once sync.Once
 	p := plugin("sei", numbered(1, 3)...)
-	p.respond = func(ctx context.Context, req *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
+	p.respond = func(ctx context.Context, req *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		once.Do(func() {
 			close(started)
 			select {

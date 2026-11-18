@@ -122,3 +122,13 @@ class Event(_message.Message):
     url: str
     payload: _struct_pb2.Struct
     def __init__(self, seq: _Optional[int] = ..., id: _Optional[str] = ..., kind: _Optional[str] = ..., severity: _Optional[_Union[Severity, str]] = ..., occurred_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., title: _Optional[str] = ..., body: _Optional[str] = ..., url: _Optional[str] = ..., payload: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
+
+class WatchRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class WatchResponse(_message.Message):
+    __slots__ = ("latest_seq",)
+    LATEST_SEQ_FIELD_NUMBER: _ClassVar[int]
+    latest_seq: int
+    def __init__(self, latest_seq: _Optional[int] = ...) -> None: ...

@@ -27,7 +27,7 @@ fn generate(sdk: &Path, out: &Path) -> io::Result<()> {
         .out_dir(out)
         .compile_protos(
             &[
-                contract.join("monitorhub/plugin/v1/plugin.proto"),
+                contract.join("monitorhub/monitor/v1/monitor.proto"),
                 controller.join("controller.proto"),
             ],
             &[contract, controller],

@@ -9,7 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 )
 
@@ -19,11 +19,11 @@ func TestEventFieldsAreStored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	full := &pluginpb.Event{
+	full := &monitorpb.Event{
 		Seq:        7,
 		Id:         "process-123",
 		Kind:       "process-moved",
-		Severity:   pluginpb.Severity_SEVERITY_URGENT,
+		Severity:   monitorpb.Severity_SEVERITY_URGENT,
 		OccurredAt: timestamppb.New(occurredAt),
 		Title:      "Process 123 moved",
 		Body:       "Now in the archive",
@@ -72,8 +72,8 @@ func TestPluginRowRecordsDescriptionAndStatus(t *testing.T) {
 	started := time.Date(2026, 11, 10, 11, 0, 0, 0, time.UTC)
 	succeeded := time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)
 	p := plugin("sei")
-	p.status = &pluginpb.StatusResponse{
-		State:              pluginpb.State_STATE_FAILING,
+	p.status = &monitorpb.StatusResponse{
+		State:              monitorpb.State_STATE_FAILING,
 		Message:            "login rejected",
 		LastCheckStartedAt: timestamppb.New(started),
 		LastSuccessAt:      timestamppb.New(succeeded),
@@ -99,8 +99,8 @@ func TestPluginRowRecordsDescriptionAndStatus(t *testing.T) {
 	if displayName != "SEI" || version != "1.1.0" {
 		t.Errorf("description = %q %q, want SEI 1.1.0", displayName, version)
 	}
-	if state != int16(pluginpb.State_STATE_FAILING) || message != "login rejected" {
-		t.Errorf("status = %d %q, want %d \"login rejected\"", state, message, pluginpb.State_STATE_FAILING)
+	if state != int16(monitorpb.State_STATE_FAILING) || message != "login rejected" {
+		t.Errorf("status = %d %q, want %d \"login rejected\"", state, message, monitorpb.State_STATE_FAILING)
 	}
 	if lastCheckStarted == nil || !lastCheckStarted.Equal(started) || lastSuccess == nil || !lastSuccess.Equal(succeeded) || nextCheck != nil {
 		t.Errorf("status times = %v %v %v, want %v %v <nil>", lastCheckStarted, lastSuccess, nextCheck, started, succeeded)
@@ -112,7 +112,7 @@ func TestPluginRowRecordsDescriptionAndStatus(t *testing.T) {
 
 func storeBatch(t *testing.T, repo Repository, batch Batch) error {
 	t.Helper()
-	if err := repo.SaveDescription(t.Context(), &pluginpb.DescribeResponse{Name: batch.Plugin, DisplayName: batch.Plugin, Version: "1"}); err != nil {
+	if err := repo.SaveDescription(t.Context(), &monitorpb.DescribeResponse{Name: batch.Plugin, DisplayName: batch.Plugin, Version: "1"}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := repo.StoreEvents(t.Context(), batch)
@@ -122,10 +122,10 @@ func storeBatch(t *testing.T, repo Repository, batch Batch) error {
 func TestBaselineEventsAreMarked(t *testing.T) {
 	pool := coretest.Pool(t)
 	repo := NewPostgres(pool)
-	if err := storeBatch(t, repo, Batch{Plugin: "sei", Baseline: true, Events: []*pluginpb.Event{event(1, "a"), event(2, "b")}}); err != nil {
+	if err := storeBatch(t, repo, Batch{Plugin: "sei", Baseline: true, Events: []*monitorpb.Event{event(1, "a"), event(2, "b")}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.StoreEvents(t.Context(), Batch{Plugin: "sei", After: 2, Events: []*pluginpb.Event{event(3, "c")}}); err != nil {
+	if _, err := repo.StoreEvents(t.Context(), Batch{Plugin: "sei", After: 2, Events: []*monitorpb.Event{event(3, "c")}}); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := pool.Query(t.Context(), `SELECT baseline FROM events ORDER BY seq`)
@@ -149,7 +149,7 @@ func TestBaselineEventsAreMarked(t *testing.T) {
 func TestStoreEventsWaitsForTheEventOrderLock(t *testing.T) {
 	pool := coretest.Pool(t)
 	repo := NewPostgres(pool)
-	if err := repo.SaveDescription(t.Context(), &pluginpb.DescribeResponse{Name: "sei", DisplayName: "sei", Version: "1"}); err != nil {
+	if err := repo.SaveDescription(t.Context(), &monitorpb.DescribeResponse{Name: "sei", DisplayName: "sei", Version: "1"}); err != nil {
 		t.Fatal(err)
 	}
 	allocated := func() (seq *int64) {
@@ -177,7 +177,7 @@ func TestStoreEventsWaitsForTheEventOrderLock(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := repo.StoreEvents(t.Context(), Batch{Plugin: "sei", Events: []*pluginpb.Event{event(1, "a"), event(2, "b")}})
+		_, err := repo.StoreEvents(t.Context(), Batch{Plugin: "sei", Events: []*monitorpb.Event{event(1, "a"), event(2, "b")}})
 		done <- err
 	}()
 

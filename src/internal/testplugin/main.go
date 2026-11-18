@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/ItzTas/monitor-hub/sdk-go"
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -31,7 +31,7 @@ var (
 )
 
 type server struct {
-	pluginpb.UnimplementedPluginServer
+	monitorpb.UnimplementedMonitorServer
 }
 
 func main() {
@@ -188,47 +188,47 @@ func writeStderr(lines string) {
 	}
 }
 
-func (*server) Describe(context.Context, *pluginpb.DescribeRequest) (*pluginpb.DescribeResponse, error) {
-	return &pluginpb.DescribeResponse{
+func (*server) Describe(context.Context, *monitorpb.DescribeRequest) (*monitorpb.DescribeResponse, error) {
+	return &monitorpb.DescribeResponse{
 		Name:        "testplugin",
 		DisplayName: "Test plugin",
 		Version:     "0.0.0",
-		Kinds:       []*pluginpb.EventKind{{Id: "ping", Description: "A test ping"}},
+		Kinds:       []*monitorpb.EventKind{{Id: "ping", Description: "A test ping"}},
 	}, nil
 }
 
-func (*server) Status(context.Context, *pluginpb.StatusRequest) (*pluginpb.StatusResponse, error) {
+func (*server) Status(context.Context, *monitorpb.StatusRequest) (*monitorpb.StatusResponse, error) {
 	if stall, err := time.ParseDuration(os.Getenv("STALL_STATUS")); err == nil {
 		time.Sleep(stall)
 	}
-	return &pluginpb.StatusResponse{
-		State:   pluginpb.State_STATE_IDLE,
+	return &monitorpb.StatusResponse{
+		State:   monitorpb.State_STATE_IDLE,
 		Message: os.Getenv(os.Getenv("ECHO")),
 	}, nil
 }
 
-func (*server) Check(context.Context, *pluginpb.CheckRequest) (*pluginpb.CheckResponse, error) {
+func (*server) Check(context.Context, *monitorpb.CheckRequest) (*monitorpb.CheckResponse, error) {
 	if os.Getenv("CRASH_ON_CHECK") == "1" {
 		os.Exit(1)
 	}
-	return &pluginpb.CheckResponse{Accepted: true}, nil
+	return &monitorpb.CheckResponse{Accepted: true}, nil
 }
 
-func (s *server) Watch(req *pluginpb.WatchRequest, stream grpc.ServerStreamingServer[pluginpb.WatchResponse]) error {
+func (s *server) Watch(req *monitorpb.WatchRequest, stream grpc.ServerStreamingServer[monitorpb.WatchResponse]) error {
 	mode := os.Getenv("WATCH")
 	if mode == "" {
-		return s.UnimplementedPluginServer.Watch(req, stream)
+		return s.UnimplementedMonitorServer.Watch(req, stream)
 	}
-	modes := map[string]func(grpc.ServerStreamingServer[pluginpb.WatchResponse]) error{
+	modes := map[string]func(grpc.ServerStreamingServer[monitorpb.WatchResponse]) error{
 		"follow": watchFollow,
-		"silent": func(stream grpc.ServerStreamingServer[pluginpb.WatchResponse]) error {
+		"silent": func(stream grpc.ServerStreamingServer[monitorpb.WatchResponse]) error {
 			<-stream.Context().Done()
 			return nil
 		},
-		"close": func(stream grpc.ServerStreamingServer[pluginpb.WatchResponse]) error {
-			return stream.Send(&pluginpb.WatchResponse{LatestSeq: eventCount()})
+		"close": func(stream grpc.ServerStreamingServer[monitorpb.WatchResponse]) error {
+			return stream.Send(&monitorpb.WatchResponse{LatestSeq: eventCount()})
 		},
-		"fail": func(grpc.ServerStreamingServer[pluginpb.WatchResponse]) error {
+		"fail": func(grpc.ServerStreamingServer[monitorpb.WatchResponse]) error {
 			return status.Error(codes.Internal, "watch failed")
 		},
 	}
@@ -239,9 +239,9 @@ func (s *server) Watch(req *pluginpb.WatchRequest, stream grpc.ServerStreamingSe
 	return watch(stream)
 }
 
-func watchFollow(stream grpc.ServerStreamingServer[pluginpb.WatchResponse]) error {
+func watchFollow(stream grpc.ServerStreamingServer[monitorpb.WatchResponse]) error {
 	last := eventCount()
-	if err := stream.Send(&pluginpb.WatchResponse{LatestSeq: last}); err != nil {
+	if err := stream.Send(&monitorpb.WatchResponse{LatestSeq: last}); err != nil {
 		return err
 	}
 	poll := time.NewTicker(10 * time.Millisecond)
@@ -258,34 +258,34 @@ func watchFollow(stream grpc.ServerStreamingServer[pluginpb.WatchResponse]) erro
 				continue
 			}
 			last = current
-			if err := stream.Send(&pluginpb.WatchResponse{LatestSeq: current}); err != nil {
+			if err := stream.Send(&monitorpb.WatchResponse{LatestSeq: current}); err != nil {
 				return err
 			}
 		case <-beat.C:
-			if err := stream.Send(&pluginpb.WatchResponse{LatestSeq: last}); err != nil {
+			if err := stream.Send(&monitorpb.WatchResponse{LatestSeq: last}); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func (*server) Events(_ context.Context, req *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
+func (*server) Events(_ context.Context, req *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 	if unavailableFor, err := time.ParseDuration(os.Getenv("UNAVAILABLE_FOR")); err == nil && time.Since(started) < unavailableFor {
 		return nil, status.Error(codes.Unavailable, "not ready yet")
 	}
 	limit := pageLimit(req.GetLimit())
-	var events []*pluginpb.Event
+	var events []*monitorpb.Event
 	for n := max(req.GetAfter(), 0) + 1; n <= eventCount() && int64(len(events)) < limit; n++ {
-		events = append(events, &pluginpb.Event{
+		events = append(events, &monitorpb.Event{
 			Seq:        n,
 			Id:         "e" + strconv.FormatInt(n, 10),
 			Kind:       "ping",
-			Severity:   pluginpb.Severity_SEVERITY_INFO,
+			Severity:   monitorpb.Severity_SEVERITY_INFO,
 			OccurredAt: timestamppb.New(baseTime.Add(time.Duration(n) * time.Minute)),
 			Title:      "ping " + strconv.FormatInt(n, 10),
 		})
 	}
-	return &pluginpb.EventsResponse{Events: events}, nil
+	return &monitorpb.EventsResponse{Events: events}, nil
 }
 
 func pageLimit(requested int32) int64 {

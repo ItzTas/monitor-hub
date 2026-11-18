@@ -11,7 +11,7 @@ use tracing::Level;
 
 use crate::logging;
 
-pub const MAGIC_COOKIE_KEY: &str = "MONITOR_HUB_PLUGIN";
+pub const MAGIC_COOKIE_KEY: &str = "MONITOR_HUB_MONITOR";
 pub const MAGIC_COOKIE_VALUE: &str = "7c0e5a52-monitor-hub";
 pub const DATA_DIR_ENV: &str = "MONITOR_HUB_DATA_DIR";
 pub const NOT_LAUNCHED_BY_HUB: &str =
@@ -46,7 +46,7 @@ impl Socket {
 
     pub(crate) fn announce(&self) -> io::Result<()> {
         let mut stdout = io::stdout().lock();
-        writeln!(stdout, "1|1|unix|{}|grpc", self.path)?;
+        writeln!(stdout, "1|2|unix|{}|grpc", self.path)?;
         stdout.flush()
     }
 }

@@ -100,7 +100,7 @@ func installTestplugin(t *testing.T, dir string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	manifest := `{"protocol_version": 1, "name": "testplugin", "command": ["testplugin"]}`
+	manifest := `{"protocol_version": 2, "name": "testplugin", "command": ["testplugin"]}`
 	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}

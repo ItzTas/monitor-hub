@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -14,7 +14,7 @@ import (
 )
 
 type stubServer struct {
-	pluginpb.UnimplementedPluginServer
+	monitorpb.UnimplementedMonitorServer
 }
 
 func TestPluginSetHoldsTheMonitorPlugin(t *testing.T) {
@@ -30,13 +30,13 @@ func TestGRPCServerRegistersImpl(t *testing.T) {
 	if err := p.GRPCServer(nil, s); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s.GetServiceInfo()["monitorhub.plugin.v1.Plugin"]; !ok {
-		t.Fatal("service monitorhub.plugin.v1.Plugin not registered")
+	if _, ok := s.GetServiceInfo()["monitorhub.monitor.v1.Monitor"]; !ok {
+		t.Fatal("service monitorhub.monitor.v1.Monitor not registered")
 	}
 }
 
 func TestHandshakeValues(t *testing.T) {
-	if Handshake.ProtocolVersion != 1 || Handshake.MagicCookieKey != "MONITOR_HUB_PLUGIN" || Handshake.MagicCookieValue != "7c0e5a52-monitor-hub" {
+	if Handshake.ProtocolVersion != 2 || Handshake.MagicCookieKey != "MONITOR_HUB_MONITOR" || Handshake.MagicCookieValue != "7c0e5a52-monitor-hub" {
 		t.Fatalf("unexpected handshake %+v", Handshake)
 	}
 }
@@ -61,7 +61,7 @@ func TestAPluginWithoutWatchAnswersUnimplemented(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 
-	stream, err := pluginpb.NewPluginClient(conn).Watch(ctx, &pluginpb.WatchRequest{})
+	stream, err := monitorpb.NewMonitorClient(conn).Watch(ctx, &monitorpb.WatchRequest{})
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
