@@ -6,6 +6,7 @@ use thiserror::Error;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::{oneshot, watch};
 use tokio_stream::wrappers::UnixListenerStream;
+use tonic::codegen::BoxStream;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 use tonic_health::ServingStatus;
@@ -14,6 +15,11 @@ use crate::controller::Empty;
 use crate::controller::grpc_controller_server::{GrpcController, GrpcControllerServer};
 use crate::handshake::{NOT_LAUNCHED_BY_HUB, Socket, launched_by_hub};
 use crate::proto::plugin_server::{Plugin, PluginServer};
+use crate::proto::{
+    CheckRequest, CheckResponse, DescribeRequest, DescribeResponse, EventsRequest, EventsResponse,
+    StatusRequest, StatusResponse, WatchRequest, WatchResponse,
+};
+use crate::watch::{Notifier, stream};
 
 const HEALTH_SERVICE: &str = "plugin";
 const DRAIN_LIMIT: Duration = Duration::from_secs(1);
@@ -34,6 +40,24 @@ pub enum ServeError {
 }
 
 pub async fn serve<P: Plugin>(plugin: P) -> Result<(), ServeError> {
+    run(|_| plugin).await
+}
+
+pub async fn serve_with_notifier<P: Plugin>(
+    plugin: P,
+    notifier: Notifier,
+) -> Result<(), ServeError> {
+    run(|closing| Watched {
+        plugin,
+        notifier,
+        closing,
+    })
+    .await
+}
+
+async fn run<P: Plugin>(
+    build_plugin: impl FnOnce(watch::Receiver<bool>) -> P,
+) -> Result<(), ServeError> {
     if !launched_by_hub() {
         eprintln!("{NOT_LAUNCHED_BY_HUB}");
         return Err(ServeError::NotLaunchedByHub);
@@ -46,16 +70,18 @@ pub async fn serve<P: Plugin>(plugin: P) -> Result<(), ServeError> {
         .set_service_status(HEALTH_SERVICE, ServingStatus::Serving)
         .await;
     let (stop, stop_requested) = watch::channel(false);
+    let (closing, closed) = watch::channel(false);
     let router = Server::builder()
         .add_service(health_service)
         .add_service(GrpcControllerServer::new(Controller { stop }))
-        .add_service(PluginServer::new(plugin));
+        .add_service(PluginServer::new(build_plugin(closed)));
 
     socket.announce().map_err(ServeError::Handshake)?;
 
     let (draining, drain_started) = oneshot::channel();
     let shutdown = async move {
         signals.or_stop(stop_requested).await;
+        closing.send_replace(true);
         let _ = draining.send(());
     };
     let server = router.serve_with_incoming_shutdown(UnixListenerStream::new(listener), shutdown);
@@ -103,5 +129,49 @@ impl GrpcController for Controller {
     async fn shutdown(&self, _: Request<Empty>) -> Result<Response<Empty>, Status> {
         self.stop.send_replace(true);
         Ok(Response::new(Empty {}))
+    }
+}
+
+struct Watched<P> {
+    plugin: P,
+    notifier: Notifier,
+    closing: watch::Receiver<bool>,
+}
+
+#[tonic::async_trait]
+impl<P: Plugin> Plugin for Watched<P> {
+    async fn describe(
+        &self,
+        request: Request<DescribeRequest>,
+    ) -> Result<Response<DescribeResponse>, Status> {
+        self.plugin.describe(request).await
+    }
+
+    async fn status(
+        &self,
+        request: Request<StatusRequest>,
+    ) -> Result<Response<StatusResponse>, Status> {
+        self.plugin.status(request).await
+    }
+
+    async fn check(
+        &self,
+        request: Request<CheckRequest>,
+    ) -> Result<Response<CheckResponse>, Status> {
+        self.plugin.check(request).await
+    }
+
+    async fn events(
+        &self,
+        request: Request<EventsRequest>,
+    ) -> Result<Response<EventsResponse>, Status> {
+        self.plugin.events(request).await
+    }
+
+    async fn watch(
+        &self,
+        _: Request<WatchRequest>,
+    ) -> Result<Response<BoxStream<WatchResponse>>, Status> {
+        Ok(Response::new(stream(&self.notifier, self.closing.clone())))
     }
 }

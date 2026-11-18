@@ -14,7 +14,7 @@ prost-types.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "net", "signal", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "signal", "sync", "time"] }
 tokio-postgres = { workspace = true, optional = true }
 tokio-stream = { workspace = true, features = ["net"] }
 tonic = { workspace = true, features = ["codegen", "router", "server"] }
@@ -26,7 +26,7 @@ tracing-subscriber = { workspace = true, features = ["registry", "std"] }
 [dev-dependencies]
 monitor-hub-plugin-testkit = { path = "../testkit" }
 tempfile.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 tonic = { workspace = true, features = ["channel"] }
 
 [[example]]

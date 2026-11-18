@@ -9,7 +9,7 @@ use monitor_hub_plugin::proto::{
     EventsRequest, EventsResponse, Severity, State, StatusRequest, StatusResponse,
 };
 use monitor_hub_plugin::settings::{self, Problem, VALIDATE_SETTINGS_ARG};
-use monitor_hub_plugin::{ServeError, serve};
+use monitor_hub_plugin::{Notifier, ServeError, serve_with_notifier};
 use prost_types::Timestamp;
 use tonic::{Request, Response, Status};
 
@@ -147,7 +147,9 @@ async fn main() -> ExitCode {
         tracing::error!("{err}");
         return ExitCode::FAILURE;
     }
-    match serve(Fixed { events }).await {
+    let notifier = Notifier::new();
+    notifier.notify(events);
+    match serve_with_notifier(Fixed { events }, notifier).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,
         Err(err) => {
