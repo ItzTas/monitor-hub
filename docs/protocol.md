@@ -617,7 +617,7 @@ Also:
 - **One token, one connection.** A new connection of a consumer ends its older ones, so a notebook that wakes up is not blocked by a connection the hub still thinks is open. Two programs with the same token would keep knocking each other off, so each program, even two on one machine, should be its own consumer.
 - **A token that is missing or unknown** gets `401` with `WWW-Authenticate: Bearer`. A consumer revoked or rotated while connected has its stream ended at the next ping, and its next acknowledgement gets `401`.
 - **At most 16 streams are open at once**, across all consumers. The 17th request gets `503` with `Retry-After: 30`, before the stream starts.
-- **A position ahead of the hub** (the hub's database was restored from an older copy) makes the stream start from the newest event.
+- **A position ahead of the hub** (for example after a partial restore of the hub's database) makes the stream start from the newest event.
 
 ### Acknowledging
 

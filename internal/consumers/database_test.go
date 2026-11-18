@@ -170,3 +170,27 @@ func TestAckOnlyMovesForwardAndStopsAtTheNewestEvent(t *testing.T) {
 		t.Errorf("Ack of a missing consumer error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestClampPositionLowersAPositionAboveTheSeqAndNeverRaisesOne(t *testing.T) {
+	pool := coretest.Pool(t)
+	s := NewService(pool)
+	addEvents(t, pool, 0, false, 4)
+	if _, err := s.Add(t.Context(), "notebook"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClampPosition(t.Context(), "notebook", 9); err != nil {
+		t.Fatal(err)
+	}
+	if c := only(t, s); c.Position != 4 {
+		t.Fatalf("position = %d after clamping to 9, want it to stay 4", c.Position)
+	}
+	if _, err := pool.Exec(t.Context(), `UPDATE consumers SET position = 90`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClampPosition(t.Context(), "notebook", 4); err != nil {
+		t.Fatal(err)
+	}
+	if c := only(t, s); c.Position != 4 {
+		t.Fatalf("position = %d after clamping 90 to 4, want 4", c.Position)
+	}
+}

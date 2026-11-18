@@ -29,6 +29,21 @@ func (q *Queries) AckConsumer(ctx context.Context, arg AckConsumerParams) (int64
 	return position, err
 }
 
+const clampConsumerPosition = `-- name: ClampConsumerPosition :exec
+UPDATE consumers SET position = $1::bigint
+WHERE name = $2 AND position > $1::bigint
+`
+
+type ClampConsumerPositionParams struct {
+	Latest int64
+	Name   string
+}
+
+func (q *Queries) ClampConsumerPosition(ctx context.Context, arg ClampConsumerPositionParams) error {
+	_, err := q.db.Exec(ctx, clampConsumerPosition, arg.Latest, arg.Name)
+	return err
+}
+
 const consumerByTokenHash = `-- name: ConsumerByTokenHash :one
 SELECT c.name, c.position, c.created_at, c.acked_at, c.seen_at,
   (SELECT count(*) FROM events e WHERE e.baseline = false AND e.seq > c.position)::bigint AS behind

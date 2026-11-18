@@ -421,3 +421,32 @@ func TestTheStreamRefusesAnyMethodButGet(t *testing.T) {
 		t.Fatalf("the open stream got %+v after the HEAD request, want notification 1", got)
 	}
 }
+
+func TestAPositionAheadOfTheHubIsMovedBackToTheNewestEvent(t *testing.T) {
+	h := newHub(t)
+	h.store(t, 1, 5)
+	token := h.add(t, "desk")
+	if _, err := h.pool.Exec(t.Context(), `UPDATE consumers SET position = 90 WHERE name = 'desk'`); err != nil {
+		t.Fatal(err)
+	}
+
+	first := h.open(t, token, "")
+	if got, want := first.untilCaughtUp(t), (frame{id: "5", event: "caught_up", data: `{"seq":5,"backlog":0}`}); len(got) != 1 || got[0] != want {
+		t.Fatalf("first connection got %+v, want only %+v", got, want)
+	}
+	var position int64
+	if err := h.pool.QueryRow(t.Context(), `SELECT position FROM consumers WHERE name = 'desk'`).Scan(&position); err != nil || position != 5 {
+		t.Errorf("stored position = %d (err %v), want 5", position, err)
+	}
+	first.close()
+
+	h.store(t, 6, 7)
+	second := h.open(t, token, "")
+	got := second.untilCaughtUp(t)
+	if len(got) != 3 || got[0].id != "6" || got[1].id != "7" {
+		t.Fatalf("second connection got %+v, want 6, 7 and caught_up", got)
+	}
+	if want := (frame{id: "7", event: "caught_up", data: `{"seq":7,"backlog":2}`}); got[2] != want {
+		t.Errorf("got %+v, want %+v", got[2], want)
+	}
+}

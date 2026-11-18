@@ -19,6 +19,7 @@ type Client struct {
 	Name     string
 	Position int64
 	Check    func(context.Context) (bool, error)
+	Clamp    func(ctx context.Context, latest int64) error
 }
 
 type Service struct {
@@ -54,6 +55,9 @@ func (s *Service) Stream(ctx context.Context, c Client, send sse.Sender) error {
 	}
 	cursor := c.Position
 	if cursor > latest {
+		if err := c.Clamp(ctx, latest); err != nil {
+			return err
+		}
 		cursor = latest
 	}
 	cursor, backlog, err := s.drain(ctx, cursor, send)

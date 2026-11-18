@@ -30,3 +30,7 @@ UPDATE consumers
 SET position = GREATEST(position, sqlc.arg(seq)::bigint), acked_at = now(), seen_at = now()
 WHERE name = sqlc.arg(name)
 RETURNING position;
+
+-- name: ClampConsumerPosition :exec
+UPDATE consumers SET position = sqlc.arg(latest)::bigint
+WHERE name = sqlc.arg(name) AND position > sqlc.arg(latest)::bigint;

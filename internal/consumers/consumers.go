@@ -124,6 +124,10 @@ func (s *Service) Ack(ctx context.Context, name string, seq int64) (int64, error
 	return position, nil
 }
 
+func (s *Service) ClampPosition(ctx context.Context, name string, latest int64) error {
+	return s.queries.ClampConsumerPosition(ctx, db.ClampConsumerPositionParams{Name: name, Latest: latest})
+}
+
 func notFound(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound

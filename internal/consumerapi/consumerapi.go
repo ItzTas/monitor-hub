@@ -142,6 +142,7 @@ func (h *handler) stream(ctx context.Context, _ *struct{}, send sse.Sender) {
 		Name:     name,
 		Position: c.consumer.Position,
 		Check:    func(ctx context.Context) (bool, error) { return h.consumers.Touch(ctx, name, c.tokenHash) },
+		Clamp:    func(ctx context.Context, latest int64) error { return h.consumers.ClampPosition(ctx, name, latest) },
 	}, send)
 	if err == nil || ctx.Err() != nil {
 		return

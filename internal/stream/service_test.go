@@ -210,18 +210,40 @@ func TestTheBacklogIsReadInPages(t *testing.T) {
 	}
 }
 
-func TestAPositionAheadOfTheHubStartsFromTheEnd(t *testing.T) {
+func TestAPositionAheadOfTheHubStartsFromTheEndAndIsSaved(t *testing.T) {
 	repo := &fakeRepo{latest: 4}
 	repo.add(1, 2, 3, 4)
 	h := newHarness(t, repo)
-	r := h.start(Client{Name: "desk", Position: 90})
+	clamped := make(chan int64, 2)
+	r := h.start(Client{Name: "desk", Position: 90, Clamp: func(_ context.Context, latest int64) error {
+		clamped <- latest
+		return nil
+	}})
 	if got := r.caughtUp(t); got != (CaughtUp{Seq: 4, Backlog: 0}) {
 		t.Fatalf("got %+v", got)
+	}
+	if got := len(clamped); got != 1 {
+		t.Fatalf("the position was saved %d times before caught_up, want once", got)
+	}
+	if got := <-clamped; got != 4 {
+		t.Fatalf("saved position %d, want 4", got)
 	}
 	repo.add(5)
 	h.signal.Notify()
 	if n := r.notification(t); n.Seq != 5 {
 		t.Fatalf("got seq %d", n.Seq)
+	}
+}
+
+func TestAFailedClampEndsTheStreamWithTheError(t *testing.T) {
+	h := newHarness(t, &fakeRepo{latest: 4})
+	boom := errors.New("boom")
+	r := h.start(Client{Name: "desk", Position: 90, Clamp: func(context.Context, int64) error { return boom }})
+	if err := r.end(t); !errors.Is(err, boom) {
+		t.Fatalf("got %v", err)
+	}
+	if got := len(r.msgs); got != 0 {
+		t.Fatalf("the stream sent %d messages, want none", got)
 	}
 }
 
