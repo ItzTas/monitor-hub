@@ -1,6 +1,6 @@
 //go:build unix
 
-package plugintest
+package monitortest
 
 import (
 	"bytes"

@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
-	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitortest"
 )
 
 const (
@@ -55,7 +55,7 @@ func conformanceWithin(t *testing.T, limit time.Duration, args ...string) (int, 
 func ownLines(stderr string) []string {
 	var own []string
 	for line := range strings.Lines(stderr) {
-		if !strings.HasPrefix(line, "plugin: ") {
+		if !strings.HasPrefix(line, "monitor: ") {
 			own = append(own, strings.TrimSuffix(line, "\n"))
 		}
 	}
@@ -72,7 +72,7 @@ func isLine(lines []string, want string, prefix bool) bool {
 	return lines[0] == want
 }
 
-func pluginDir(t *testing.T, settings, mode string) string {
+func monitorDir(t *testing.T, settings, mode string) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Cleanup(func() { killProcessesIn(t, dir) })
@@ -115,14 +115,14 @@ func killProcessesIn(t *testing.T, dir string) {
 }
 
 func settingsArgs(dir string) []string {
-	return []string{"-plugin-dir", dir, "-min-events", "1", "-env", "EVENTS=1", "--", binary}
+	return []string{"-monitor-dir", dir, "-min-events", "1", "-env", "EVENTS=1", "--", binary}
 }
 
 func TestConformanceChecksSettings(t *testing.T) {
 	t.Setenv("LEAK", "x")
 	for name, mode := range map[string]string{"default mode": "", "problems": "problems"} {
 		t.Run(name, func(t *testing.T) {
-			code, stdout, stderr := conformance(t, settingsArgs(pluginDir(t, "", mode))...)
+			code, stdout, stderr := conformance(t, settingsArgs(monitorDir(t, "", mode))...)
 			if code != 0 {
 				t.Fatalf("exit code = %d, want 0; stderr: %s", code, stderr)
 			}
@@ -145,7 +145,7 @@ func TestConformanceWithoutSettingsFile(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0; stderr: %s", code, stderr)
 	}
 	if stdout != want {
-		t.Fatalf("stdout = %q, want %q as without -plugin-dir", stdout, want)
+		t.Fatalf("stdout = %q, want %q as without -monitor-dir", stdout, want)
 	}
 }
 
@@ -178,7 +178,7 @@ func TestConformanceReportsValidatorViolations(t *testing.T) {
 	for mode, tt := range tests {
 		t.Run(mode, func(t *testing.T) {
 			limit := cmp.Or(tt.limit, time.Minute)
-			code, stdout, stderr := conformanceWithin(t, limit, settingsArgs(pluginDir(t, "", mode))...)
+			code, stdout, stderr := conformanceWithin(t, limit, settingsArgs(monitorDir(t, "", mode))...)
 			if code != 1 || stdout != "" {
 				t.Fatalf("exit code = %d, stdout = %q, want 1 and empty; stderr: %s", code, stdout, stderr)
 			}
@@ -191,19 +191,19 @@ func TestConformanceReportsValidatorViolations(t *testing.T) {
 }
 
 func TestConformanceReportsValidatorStartFailure(t *testing.T) {
-	code, stdout, stderr := conformance(t, "-plugin-dir", pluginDir(t, "", ""), "--", "/nonexistent/plugin")
+	code, stdout, stderr := conformance(t, "-monitor-dir", monitorDir(t, "", ""), "--", "/nonexistent/monitor")
 	if code != 1 || stdout != "" {
 		t.Fatalf("exit code = %d, stdout = %q, want 1 and empty", code, stdout)
 	}
 	own := ownLines(stderr)
-	if len(own) != 2 || !strings.HasPrefix(own[0], "validate-settings could not be started: ") || !strings.HasPrefix(own[1], "plugin-conformance: ") {
-		t.Fatalf("the command's own stderr lines = %q, want the validator start failure, then the plugin start failure", own)
+	if len(own) != 2 || !strings.HasPrefix(own[0], "validate-settings could not be started: ") || !strings.HasPrefix(own[1], "monitor-conformance: ") {
+		t.Fatalf("the command's own stderr lines = %q, want the validator start failure, then the monitor start failure", own)
 	}
 }
 
 func TestConformanceValidatorBackgroundChild(t *testing.T) {
 	requirePgrep(t)
-	code, _, stderr := conformanceWithin(t, 4*time.Second, settingsArgs(pluginDir(t, "", "background"))...)
+	code, _, stderr := conformanceWithin(t, 4*time.Second, settingsArgs(monitorDir(t, "", "background"))...)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr: %s", code, stderr)
 	}
@@ -223,7 +223,7 @@ func TestConformanceValidatorDetachedChild(t *testing.T) {
 	}
 	for mode, tt := range tests {
 		t.Run(mode, func(t *testing.T) {
-			code, _, stderr := conformanceWithin(t, tt.limit, settingsArgs(pluginDir(t, "", mode))...)
+			code, _, stderr := conformanceWithin(t, tt.limit, settingsArgs(monitorDir(t, "", mode))...)
 			if code != tt.code {
 				t.Fatalf("exit code = %d, want %d; stderr: %s", code, tt.code, stderr)
 			}
@@ -242,7 +242,7 @@ func TestConformanceReportsSettingsFileViolations(t *testing.T) {
 	}{
 		"bad name": {
 			dir: func(t *testing.T) string {
-				return pluginDir(t, badSettings, "")
+				return monitorDir(t, badSettings, "")
 			},
 			want: badSettingsLine,
 		},
@@ -274,7 +274,7 @@ func TestConformanceReportsSettingsFileViolations(t *testing.T) {
 }
 
 func TestConformanceReportsFileViolationsBeforeTheValidators(t *testing.T) {
-	code, stdout, stderr := conformance(t, settingsArgs(pluginDir(t, badSettings, "exit-2"))...)
+	code, stdout, stderr := conformance(t, settingsArgs(monitorDir(t, badSettings, "exit-2"))...)
 	if code != 1 || stdout != "" {
 		t.Fatalf("exit code = %d, stdout = %q, want 1 and empty; stderr: %s", code, stdout, stderr)
 	}
@@ -285,7 +285,7 @@ func TestConformanceReportsFileViolationsBeforeTheValidators(t *testing.T) {
 }
 
 func TestConformanceChecksProblemNamesOnlyAgainstAValidFile(t *testing.T) {
-	code, stdout, stderr := conformance(t, settingsArgs(pluginDir(t, badSettings, "undeclared"))...)
+	code, stdout, stderr := conformance(t, settingsArgs(monitorDir(t, badSettings, "undeclared"))...)
 	if code != 1 || stdout != "" {
 		t.Fatalf("exit code = %d, stdout = %q, want 1 and empty; stderr: %s", code, stdout, stderr)
 	}
@@ -295,14 +295,14 @@ func TestConformanceChecksProblemNamesOnlyAgainstAValidFile(t *testing.T) {
 }
 
 func TestConformanceSettingsViolationsComeBeforeStartFailure(t *testing.T) {
-	dir := pluginDir(t, badSettings, "log-stderr")
-	code, stdout, stderr := conformance(t, "-plugin-dir", dir, "-env", "STDERR_LINES=cannot open the database", "-env", "EXIT_BEFORE_HANDSHAKE=1", "--", binary)
+	dir := monitorDir(t, badSettings, "log-stderr")
+	code, stdout, stderr := conformance(t, "-monitor-dir", dir, "-env", "STDERR_LINES=cannot open the database", "-env", "EXIT_BEFORE_HANDSHAKE=1", "--", binary)
 	if code != 1 || stdout != "" {
 		t.Fatalf("exit code = %d, stdout = %q, want 1 and empty", code, stdout)
 	}
 	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
-	want := []string{"plugin: validating settings", "plugin: cannot open the database", badSettingsLine}
-	if len(lines) != 4 || !slices.Equal(lines[:3], want) || !strings.HasPrefix(lines[3], "plugin-conformance: ") {
+	want := []string{"monitor: validating settings", "monitor: cannot open the database", badSettingsLine}
+	if len(lines) != 4 || !slices.Equal(lines[:3], want) || !strings.HasPrefix(lines[3], "monitor-conformance: ") {
 		t.Fatalf("stderr lines = %q, want %q, then the start failure", lines, want)
 	}
 }
@@ -329,7 +329,7 @@ func TestConformanceChecksWatch(t *testing.T) {
 	}{
 		"follow": {code: 0},
 		"silent": {code: 1, want: []string{"Watch sent no signal within 5s"}, limit: 20 * time.Second},
-		"close":  {code: 1, want: []string{"Watch ended after its first signal; it must stay open while the plugin runs"}},
+		"close":  {code: 1, want: []string{"Watch ended after its first signal; it must stay open while the monitor runs"}},
 		"fail":   {code: 1, want: []string{"Watch failed: rpc error: code = Internal desc = watch failed"}},
 	}
 	for mode, tt := range tests {
@@ -427,11 +427,11 @@ func TestConformanceKeepsValueAfterFirstEquals(t *testing.T) {
 
 func TestConformanceUsage(t *testing.T) {
 	tests := map[string][]string{
-		"no separator":         {"-min-events", "1"},
-		"no command":           {"-min-events", "1", "--"},
-		"command no -- sep.":   {binary},
-		"env without equals":   {"-env", "EVENTS", "--", binary},
-		"plugin dir is a file": {"-plugin-dir", binary, "--", binary},
+		"no separator":          {"-min-events", "1"},
+		"no command":            {"-min-events", "1", "--"},
+		"command no -- sep.":    {binary},
+		"env without equals":    {"-env", "EVENTS", "--", binary},
+		"monitor dir is a file": {"-monitor-dir", binary, "--", binary},
 	}
 	for name, args := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -443,7 +443,7 @@ func TestConformanceUsage(t *testing.T) {
 }
 
 func TestConformanceStartFailure(t *testing.T) {
-	code, stdout, stderr := conformance(t, "--", "/nonexistent/plugin")
+	code, stdout, stderr := conformance(t, "--", "/nonexistent/monitor")
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
@@ -452,15 +452,15 @@ func TestConformanceStartFailure(t *testing.T) {
 	}
 }
 
-func TestConformancePrefixesPluginStderrBeforeItsOwnLines(t *testing.T) {
+func TestConformancePrefixesMonitorStderrBeforeItsOwnLines(t *testing.T) {
 	code, stdout, stderr := conformance(t, "-env", "STDERR_LINES=cannot open the database\x1fgiving up", "-env", "EXIT_BEFORE_HANDSHAKE=1", "--", binary)
 	if code != 1 || stdout != "" {
 		t.Fatalf("exit code = %d, stdout = %q, want 1 and empty", code, stdout)
 	}
 	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
-	want := []string{"plugin: cannot open the database", "plugin: giving up"}
-	if len(lines) != 3 || !slices.Equal(lines[:2], want) || !strings.HasPrefix(lines[2], "plugin-conformance: ") {
-		t.Fatalf("stderr = %q, want the plugin's two lines prefixed with \"plugin: \", then the command's own line", stderr)
+	want := []string{"monitor: cannot open the database", "monitor: giving up"}
+	if len(lines) != 3 || !slices.Equal(lines[:2], want) || !strings.HasPrefix(lines[2], "monitor-conformance: ") {
+		t.Fatalf("stderr = %q, want the monitor's two lines prefixed with \"monitor: \", then the command's own line", stderr)
 	}
 }
 
@@ -468,7 +468,7 @@ func TestConformancePassesOnlyDeclaredEnv(t *testing.T) {
 	t.Setenv("LEAK", "x")
 	cmd := exec.CommandContext(t.Context(), binary)
 	cmd.Env = []string{"ECHO=LEAK"}
-	status, err := plugintest.Dial(t, cmd).Status(t.Context(), &monitorpb.StatusRequest{})
+	status, err := monitortest.Dial(t, cmd).Status(t.Context(), &monitorpb.StatusRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,7 +500,7 @@ func processes(t *testing.T, match, pattern string) []string {
 	return strings.Fields(string(out))
 }
 
-func TestConformanceStopsPluginOnInterrupt(t *testing.T) {
+func TestConformanceStopsMonitorOnInterrupt(t *testing.T) {
 	requirePgrep(t)
 	named := filepath.Join(t.TempDir(), "interrupted")
 	if err := os.Symlink(binary, named); err != nil {
@@ -522,7 +522,7 @@ func TestConformanceStopsPluginOnInterrupt(t *testing.T) {
 		started = processes(t, "-x", "interrupted")
 	}
 	if len(started) == 0 {
-		t.Fatal("the plugin did not start within 10s")
+		t.Fatal("the monitor did not start within 10s")
 	}
 
 	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
@@ -534,6 +534,6 @@ func TestConformanceStopsPluginOnInterrupt(t *testing.T) {
 		t.Fatalf("wait = %v, want exit code 1", err)
 	}
 	if left := processes(t, "-x", "interrupted"); len(left) != 0 {
-		t.Fatalf("plugin still running: %v", left)
+		t.Fatalf("monitor still running: %v", left)
 	}
 }

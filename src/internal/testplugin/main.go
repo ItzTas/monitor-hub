@@ -158,7 +158,7 @@ func withChild(cmd *exec.Cmd, then func() int) int {
 func serveOneAtATime() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: sdk.Handshake,
-		Plugins:         plugin.PluginSet{sdk.PluginKey: &sdk.GRPCPlugin{Impl: &server{}}},
+		Plugins:         plugin.PluginSet{sdk.MonitorKey: &sdk.GRPCMonitor{Impl: &server{}}},
 		GRPCServer: func(opts []grpc.ServerOption) *grpc.Server {
 			return plugin.DefaultGRPCServer(append(opts, grpc.ChainUnaryInterceptor(oneAtATime)))
 		},

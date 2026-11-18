@@ -16,16 +16,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitortest"
 )
 
 const (
-	pluginPrefix   = "plugin: "
+	monitorPrefix  = "monitor: "
 	lineLimit      = 64 << 10
 	exitOK         = 0
 	exitViolations = 1
 	exitUsage      = 2
-	usage          = "usage: plugin-conformance [-min-events N] [-ready-timeout D] [-plugin-dir DIR] [-env NAME=value]... -- <command> [args...]"
+	usage          = "usage: monitor-conformance [-min-events N] [-ready-timeout D] [-monitor-dir DIR] [-env NAME=value]... -- <command> [args...]"
 )
 
 type envFlags []string
@@ -59,7 +59,7 @@ func (p *prefixed) flush() error {
 }
 
 func (p *prefixed) writeLine(line []byte) error {
-	_, err := p.out.Write(slices.Concat([]byte(pluginPrefix), line, []byte("\n")))
+	_, err := p.out.Write(slices.Concat([]byte(monitorPrefix), line, []byte("\n")))
 	return err
 }
 
@@ -92,19 +92,19 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var (
-		env       envFlags
-		opts      plugintest.Options
-		pluginDir *string
+		env        envFlags
+		opts       monitortest.Options
+		monitorDir *string
 	)
-	fs := flag.NewFlagSet("plugin-conformance", flag.ContinueOnError)
+	fs := flag.NewFlagSet("monitor-conformance", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.IntVar(&opts.MinEvents, "min-events", 0, "minimum number of events the plugin must return")
+	fs.IntVar(&opts.MinEvents, "min-events", 0, "minimum number of events the monitor must return")
 	fs.DurationVar(&opts.ReadyTimeout, "ready-timeout", 0, "how long to wait while Events answers UNAVAILABLE")
-	fs.Func("plugin-dir", "plugin directory `DIR`: check its settings.json and run <command> validate-settings in it", func(dir string) error {
-		pluginDir = &dir
+	fs.Func("monitor-dir", "monitor directory `DIR`: check its settings.json and run <command> validate-settings in it", func(dir string) error {
+		monitorDir = &dir
 		return nil
 	})
-	fs.Var(&env, "env", "environment variable NAME=value for the plugin (repeatable)")
+	fs.Var(&env, "env", "environment variable NAME=value for the monitor (repeatable)")
 
 	sep := slices.Index(args, "--")
 	if sep < 0 || sep == len(args)-1 {
@@ -121,9 +121,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, usage)
 		return exitUsage
 	}
-	dir, err := settingsDir(pluginDir)
+	dir, err := settingsDir(monitorDir)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "plugin-conformance: -plugin-dir: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "monitor-conformance: -monitor-dir: %v\n", err)
 		return exitUsage
 	}
 
@@ -131,13 +131,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Env = env
 	settings := checkSettings(ctx, dir, cmd.Path, stderr)
-	pluginStderr := &prefixed{out: stderr}
-	opts.Stderr = pluginStderr
-	violations, err := plugintest.Check(ctx, cmd, opts)
-	_ = pluginStderr.flush()
+	monitorStderr := &prefixed{out: stderr}
+	opts.Stderr = monitorStderr
+	violations, err := monitortest.Check(ctx, cmd, opts)
+	_ = monitorStderr.flush()
 	writeLines(stderr, settings)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "plugin-conformance: %v\n", oneLine(err))
+		_, _ = fmt.Fprintf(stderr, "monitor-conformance: %v\n", oneLine(err))
 		return exitViolations
 	}
 	writeLines(stderr, violations)
@@ -163,7 +163,7 @@ func checkSettings(ctx context.Context, dir, program string, stderr io.Writer) [
 		return nil
 	}
 	validatorStderr := &prefixed{out: stderr}
-	violations := plugintest.CheckSettings(ctx, dir, program, validatorStderr)
+	violations := monitortest.CheckSettings(ctx, dir, program, validatorStderr)
 	_ = validatorStderr.flush()
 	return violations
 }

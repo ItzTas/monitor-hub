@@ -1,4 +1,4 @@
-package plugintest
+package monitortest
 
 import (
 	"context"
@@ -43,7 +43,7 @@ const (
 func start(ctx context.Context, cmd *exec.Cmd, stderr io.Writer) (*plugin.Client, monitorpb.MonitorClient, error) {
 	client := plugin.NewClient(&plugin.ClientConfig{
 		HandshakeConfig:  sdk.Handshake,
-		Plugins:          sdk.PluginSet(),
+		Plugins:          sdk.MonitorSet(),
 		Cmd:              cmd,
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
 		SkipHostEnv:      true,
@@ -55,17 +55,17 @@ func start(ctx context.Context, cmd *exec.Cmd, stderr io.Writer) (*plugin.Client
 	rpc, err := client.Client()
 	if err != nil {
 		client.Kill()
-		return nil, nil, fmt.Errorf("dial plugin: %w", err)
+		return nil, nil, fmt.Errorf("dial monitor: %w", err)
 	}
-	raw, err := rpc.Dispense(sdk.PluginKey)
+	raw, err := rpc.Dispense(sdk.MonitorKey)
 	if err != nil {
 		client.Kill()
-		return nil, nil, fmt.Errorf("dispense plugin: %w", err)
+		return nil, nil, fmt.Errorf("dispense monitor: %w", err)
 	}
 	c, ok := raw.(monitorpb.MonitorClient)
 	if !ok {
 		client.Kill()
-		return nil, nil, fmt.Errorf("dispense plugin: unexpected client type %T", raw)
+		return nil, nil, fmt.Errorf("dispense monitor: unexpected client type %T", raw)
 	}
 	return client, c, nil
 }
@@ -397,7 +397,7 @@ func watchFirstFailure(err error) []string {
 
 func watchLaterFailure(err error) []string {
 	if errors.Is(err, io.EOF) {
-		return []string{"Watch ended after its first signal; it must stay open while the plugin runs"}
+		return []string{"Watch ended after its first signal; it must stay open while the monitor runs"}
 	}
 	return []string{fmt.Sprintf("Watch failed after its first signal: %v", err)}
 }

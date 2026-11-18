@@ -16,14 +16,14 @@ use crate::process::{Failure, Finished, Keep, STDERR_TAIL, execute};
 
 pub const SDK_GO_VERSION: &str = "sdk-go/v0.4.0";
 
-const GO_PACKAGE: &str = "github.com/ItzTas/monitor-hub/sdk-go/cmd/plugin-conformance";
-const BINARY: &str = "plugin-conformance";
-const CACHE_PATH: [&str; 2] = ["monitor-hub", "plugin-conformance"];
+const GO_PACKAGE: &str = "github.com/ItzTas/monitor-hub/sdk-go/cmd/monitor-conformance";
+const BINARY: &str = "monitor-conformance";
+const CACHE_PATH: [&str; 2] = ["monitor-hub", "monitor-conformance"];
 const TEMPORARY_PREFIX: &str = "monitor-hub-conformance";
 const STAGING_PREFIX: &str = ".install";
 const USER_PROBE_PREFIX: &str = ".monitor-hub-user";
 const UNIQUE_ATTEMPTS: u64 = 16;
-const COMMAND_ENV: &str = "PLUGIN_CONFORMANCE";
+const COMMAND_ENV: &str = "MONITOR_CONFORMANCE";
 const INSTALL_LIMIT: Duration = Duration::from_secs(600);
 const ALLOWANCE: Duration = Duration::from_secs(120);
 const EXIT_VIOLATIONS: i32 = 1;
@@ -35,7 +35,7 @@ pub struct Conformance {
     pub env: Vec<(String, String)>,
     pub min_events: usize,
     pub ready_timeout: Duration,
-    pub plugin_dir: Option<PathBuf>,
+    pub monitor_dir: Option<PathBuf>,
 }
 
 impl Conformance {
@@ -45,7 +45,7 @@ impl Conformance {
             env: Vec::new(),
             min_events: 0,
             ready_timeout: Duration::ZERO,
-            plugin_dir: None,
+            monitor_dir: None,
         }
     }
 }
@@ -83,7 +83,7 @@ pub fn run(conformance: &Conformance) -> Outcome {
     }
     let Some(source) = locate() else {
         return unavailable(&format!(
-            "set {COMMAND_ENV} to a built plugin-conformance binary or put go on PATH"
+            "set {COMMAND_ENV} to a built monitor-conformance binary or put go on PATH"
         ));
     };
     run_from(source, conformance)
@@ -91,7 +91,7 @@ pub fn run(conformance: &Conformance) -> Outcome {
 
 fn problem(conformance: &Conformance) -> Option<String> {
     if conformance.command.is_empty() {
-        return Some("Conformance.command is empty: there is no plugin to run".into());
+        return Some("Conformance.command is empty: there is no monitor to run".into());
     }
     if let Some((name, _)) = conformance
         .env
@@ -102,10 +102,10 @@ fn problem(conformance: &Conformance) -> Option<String> {
             "Conformance.env has the invalid variable name {name:?}: a name must not be empty or contain '='"
         ));
     }
-    let dir = conformance.plugin_dir.as_deref()?;
+    let dir = conformance.monitor_dir.as_deref()?;
     (!dir.is_dir()).then(|| {
         format!(
-            "Conformance.plugin_dir {} is not a directory",
+            "Conformance.monitor_dir {} is not a directory",
             dir.display()
         )
     })
@@ -125,7 +125,7 @@ fn run_from(source: Source, conformance: &Conformance) -> Outcome {
             Outcome::Failed(format!("cannot start {}: {err}", program.to_string_lossy()))
         }
         Err(Failure::Timeout(stderr)) => Outcome::Failed(format!(
-            "plugin-conformance did not finish within {limit:?} and was stopped\n{stderr}"
+            "monitor-conformance did not finish within {limit:?} and was stopped\n{stderr}"
         )),
     }
 }
@@ -379,8 +379,8 @@ fn arguments(conformance: &Conformance) -> Vec<OsString> {
         args.push("-env".into());
         args.push(format!("{name}={value}").into());
     }
-    if let Some(dir) = &conformance.plugin_dir {
-        args.push("-plugin-dir".into());
+    if let Some(dir) = &conformance.monitor_dir {
+        args.push("-monitor-dir".into());
         args.push(dir.into());
     }
     args.push("--".into());
@@ -397,14 +397,14 @@ fn outcome(finished: Finished) -> Outcome {
     let code = status.code();
     if code == Some(EXIT_USAGE) {
         return Outcome::Failed(format!(
-            "plugin-conformance rejected its arguments (a bug in the conformance runner, not a plugin violation):\n{output}"
+            "monitor-conformance rejected its arguments (a bug in the conformance runner, not a monitor violation):\n{output}"
         ));
     }
     if code == Some(EXIT_VIOLATIONS) && !output.is_empty() {
         return Outcome::Failed(output.to_owned());
     }
     Outcome::Failed(format!(
-        "plugin-conformance ended unexpectedly ({}):\n{output}",
+        "monitor-conformance ended unexpectedly ({}):\n{output}",
         describe(status)
     ))
 }
@@ -430,7 +430,7 @@ mod tests {
     use crate::leftovers;
     use crate::process::GRACE;
 
-    const SUCCEEDS: &str = "echo call >>\"$FAKE_GO_CALLS\"\nprintf '#!/bin/sh\\n' >\"$GOBIN/plugin-conformance\"\nchmod 755 \"$GOBIN/plugin-conformance\"\n";
+    const SUCCEEDS: &str = "echo call >>\"$FAKE_GO_CALLS\"\nprintf '#!/bin/sh\\n' >\"$GOBIN/monitor-conformance\"\nchmod 755 \"$GOBIN/monitor-conformance\"\n";
     const FAILS: &str = "echo 'go: module not found' >&2\nexit 1\n";
     const HANGS: &str = "exec sleep 30\n";
     const DETACHES: &str = "setsid sleep 31.3 &\necho 'go: module not found' >&2\nexit 1\n";
@@ -502,15 +502,15 @@ mod tests {
         let second = obtain(Source::Go(install));
 
         let tool = cache.path().join("monitor-hub");
-        let version = tool.join("plugin-conformance/v1.2.3");
-        let binary = version.join("plugin-conformance").into_os_string();
+        let version = tool.join("monitor-conformance/v1.2.3");
+        let binary = version.join("monitor-conformance").into_os_string();
         assert_eq!(first, Ok(binary.clone()));
         assert_eq!(second, Ok(binary));
         assert_eq!(fake.calls(), 1);
-        for dir in [&tool, &tool.join("plugin-conformance"), &version] {
+        for dir in [&tool, &tool.join("monitor-conformance"), &version] {
             assert_eq!(mode(dir), 0o700, "{}", dir.display());
         }
-        assert_eq!(names(&version), ["plugin-conformance"]);
+        assert_eq!(names(&version), ["monitor-conformance"]);
     }
 
     fn owner() -> u32 {
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn a_cached_binary_is_reused_only_when_it_is_an_executable_file_of_the_user() {
         let dir = TempDir::new().expect("create temp dir");
-        let binary = dir.path().join("plugin-conformance");
+        let binary = dir.path().join("monitor-conformance");
         fs::write(&binary, "").expect("write a file");
         set_mode(&binary, 0o755);
 
@@ -626,7 +626,7 @@ mod tests {
     fn staging_dirs_older_than_the_install_limit_are_removed_when_an_install_starts() {
         let fake = Fake::new(SUCCEEDS);
         let cache = TempDir::new().expect("create temp dir");
-        let version = cache.path().join("monitor-hub/plugin-conformance/v1.2.3");
+        let version = cache.path().join("monitor-hub/monitor-conformance/v1.2.3");
         fs::create_dir_all(&version).expect("create the version dir");
         let (stale, fresh) = (
             version.join(".install-stale"),
@@ -645,7 +645,7 @@ mod tests {
 
         let mut left = names(&version);
         left.sort();
-        assert_eq!(left, [".install-fresh", "plugin-conformance"]);
+        assert_eq!(left, [".install-fresh", "monitor-conformance"]);
     }
 
     #[test]
@@ -672,12 +672,12 @@ mod tests {
         assert_eq!(uncreatable, Ok(binary.clone()));
         assert_eq!(dir.parent(), Some(env::temp_dir().as_path()));
         assert!(name.starts_with("monitor-hub-conformance-"), "{name}");
-        assert_eq!(binary.file_name(), Some("plugin-conformance".as_ref()));
+        assert_eq!(binary.file_name(), Some("monitor-conformance".as_ref()));
         assert_eq!(fake.calls(), 1);
     }
 
     #[test]
-    fn a_command_that_cannot_be_fetched_is_not_a_plugin_violation() {
+    fn a_command_that_cannot_be_fetched_is_not_a_monitor_violation() {
         let fake = Fake::new(FAILS);
         let cache = TempDir::new().expect("create temp dir");
 
@@ -694,7 +694,7 @@ mod tests {
             message.ends_with("could not be fetched or built:\ngo: module not found"),
             "{message}"
         );
-        assert!(names(&cache.path().join("monitor-hub/plugin-conformance/v1.2.3")).is_empty());
+        assert!(names(&cache.path().join("monitor-hub/monitor-conformance/v1.2.3")).is_empty());
     }
 
     #[test]

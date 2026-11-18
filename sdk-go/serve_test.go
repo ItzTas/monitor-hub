@@ -17,16 +17,16 @@ type stubServer struct {
 	monitorpb.UnimplementedMonitorServer
 }
 
-func TestPluginSetHoldsTheMonitorPlugin(t *testing.T) {
-	set := PluginSet()
-	if _, ok := set[PluginKey].(*GRPCPlugin); !ok {
-		t.Fatalf("PluginSet()[%q] = %T, want *GRPCPlugin", PluginKey, set[PluginKey])
+func TestMonitorSetHoldsTheMonitor(t *testing.T) {
+	set := MonitorSet()
+	if _, ok := set[MonitorKey].(*GRPCMonitor); !ok {
+		t.Fatalf("MonitorSet()[%q] = %T, want *GRPCMonitor", MonitorKey, set[MonitorKey])
 	}
 }
 
 func TestGRPCServerRegistersImpl(t *testing.T) {
 	s := grpc.NewServer()
-	p := &GRPCPlugin{Impl: stubServer{}}
+	p := &GRPCMonitor{Impl: stubServer{}}
 	if err := p.GRPCServer(nil, s); err != nil {
 		t.Fatal(err)
 	}
@@ -41,9 +41,9 @@ func TestHandshakeValues(t *testing.T) {
 	}
 }
 
-func TestAPluginWithoutWatchAnswersUnimplemented(t *testing.T) {
+func TestAMonitorWithoutWatchAnswersUnimplemented(t *testing.T) {
 	server := grpc.NewServer()
-	if err := (&GRPCPlugin{Impl: stubServer{}}).GRPCServer(nil, server); err != nil {
+	if err := (&GRPCMonitor{Impl: stubServer{}}).GRPCServer(nil, server); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

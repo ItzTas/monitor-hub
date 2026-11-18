@@ -183,7 +183,7 @@ func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *
 	}
 	return plugin.NewClient(&plugin.ClientConfig{
 		HandshakeConfig:  sdk.Handshake,
-		Plugins:          sdk.PluginSet(),
+		Plugins:          sdk.MonitorSet(),
 		Cmd:              cmd,
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
 		SkipHostEnv:      true,
@@ -200,7 +200,7 @@ func dispense(client *plugin.Client) (monitorpb.MonitorClient, error) {
 	if err := rpc.Ping(); err != nil {
 		return nil, fmt.Errorf("health check: %w", err)
 	}
-	raw, err := rpc.Dispense(sdk.PluginKey)
+	raw, err := rpc.Dispense(sdk.MonitorKey)
 	if err != nil {
 		return nil, fmt.Errorf("dispense: %w", err)
 	}

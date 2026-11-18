@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
-	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitortest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -73,7 +73,7 @@ func TestPythonPluginConformance(t *testing.T) {
 	cmd.Dir = filepath.Dir(script)
 	cmd.Env = []string{magicCookie, "MONITOR_HUB_DATA_DIR=" + dataDir, "TMPDIR=" + socketDir}
 
-	violations, err := plugintest.Check(t.Context(), cmd, plugintest.Options{MinEvents: 1})
+	violations, err := monitortest.Check(t.Context(), cmd, monitortest.Options{MinEvents: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

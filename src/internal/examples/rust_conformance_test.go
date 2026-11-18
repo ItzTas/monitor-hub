@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitortest"
 )
 
 func TestRustExampleConformance(t *testing.T) {
@@ -19,7 +19,7 @@ func TestRustExampleConformance(t *testing.T) {
 	cmd := exec.CommandContext(t.Context(), command)
 	cmd.Env = []string{"EVENTS=3", "TMPDIR=" + socketDir}
 
-	violations, err := plugintest.Check(t.Context(), cmd, plugintest.Options{MinEvents: 3})
+	violations, err := monitortest.Check(t.Context(), cmd, monitortest.Options{MinEvents: 3})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitortest"
 )
 
 func TestRustExampleSettings(t *testing.T) {
@@ -12,7 +12,7 @@ func TestRustExampleSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, violation := range plugintest.CheckSettings(t.Context(), dir, buildRustExample(t, "fixed"), nil) {
+	for _, violation := range monitortest.CheckSettings(t.Context(), dir, buildRustExample(t, "fixed"), nil) {
 		t.Errorf("settings: %s", violation)
 	}
 }

@@ -11,7 +11,7 @@ mod example;
 
 const EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn plugin_dir() -> PathBuf {
+fn monitor_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/fixed-plugin")
 }
 
@@ -20,7 +20,7 @@ fn validate(vars: &[(&str, &str)]) -> Output {
         .arg(VALIDATE_SETTINGS_ARG)
         .env_clear()
         .envs(vars.iter().copied())
-        .current_dir(plugin_dir())
+        .current_dir(monitor_dir())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

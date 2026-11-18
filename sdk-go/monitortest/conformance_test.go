@@ -1,4 +1,4 @@
-package plugintest
+package monitortest
 
 import (
 	"context"
@@ -79,7 +79,7 @@ func event(seq int64, id string) *monitorpb.Event {
 	}
 }
 
-func TestCheckAcceptsValidPlugin(t *testing.T) {
+func TestCheckAcceptsValidMonitor(t *testing.T) {
 	c := &fakeClient{events: []*monitorpb.Event{event(1, "a"), event(2, "b"), event(3, "c")}}
 	if got := check(t.Context(), c, Options{MinEvents: 3}); len(got) != 0 {
 		t.Fatalf("violations = %v, want none", got)
@@ -210,7 +210,7 @@ func signal(seq int64) watchStep {
 func TestCheckWatch(t *testing.T) {
 	broken := status.Error(codes.Internal, "broken")
 	unimplemented := status.Error(codes.Unimplemented, "no")
-	const afterSignal = "Watch ended after its first signal; it must stay open while the plugin runs"
+	const afterSignal = "Watch ended after its first signal; it must stay open while the monitor runs"
 	tests := map[string]struct {
 		steps   []watchStep
 		openErr error

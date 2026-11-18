@@ -1,4 +1,4 @@
-package plugintest
+package monitortest
 
 import (
 	"bytes"

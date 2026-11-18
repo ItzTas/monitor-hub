@@ -107,7 +107,7 @@ impl Drop for Plugin {
     }
 }
 
-fn fixed_plugin_dir() -> PathBuf {
+fn fixed_monitor_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugin/examples/fixed-plugin")
 }
 
@@ -122,7 +122,7 @@ fn matches(got: &[String], want: &[Want]) -> bool {
 #[test]
 fn the_fixed_example_passes() {
     assert_eq!(
-        check(fixed_plugin_dir(), example::fixed()),
+        check(fixed_monitor_dir(), example::fixed()),
         Vec::<String>::new()
     );
 }

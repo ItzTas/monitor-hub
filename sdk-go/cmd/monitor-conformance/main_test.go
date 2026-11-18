@@ -24,13 +24,13 @@ func TestPrefixedSplitsLongLines(t *testing.T) {
 	}
 	var got strings.Builder
 	for piece := range strings.Lines(out.String()) {
-		if !strings.HasPrefix(piece, pluginPrefix) || !strings.HasSuffix(piece, "\n") {
+		if !strings.HasPrefix(piece, monitorPrefix) || !strings.HasSuffix(piece, "\n") {
 			t.Fatalf("piece %.40q... is not a prefixed line", piece)
 		}
-		if body := len(piece) - len(pluginPrefix) - 1; body > lineLimit {
+		if body := len(piece) - len(monitorPrefix) - 1; body > lineLimit {
 			t.Fatalf("piece holds %d bytes, want at most %d", body, lineLimit)
 		}
-		got.WriteString(strings.TrimSuffix(strings.TrimPrefix(piece, pluginPrefix), "\n"))
+		got.WriteString(strings.TrimSuffix(strings.TrimPrefix(piece, monitorPrefix), "\n"))
 	}
 	if got.String() != line {
 		t.Fatalf("pieces hold %d bytes, want the %d bytes written", got.Len(), len(line))
@@ -49,26 +49,26 @@ func TestPrefixedFlushWritesTheLastLine(t *testing.T) {
 	if err := p.flush(); err != nil {
 		t.Fatal(err)
 	}
-	if want := "plugin: done\nplugin: giving up\n"; out.String() != want {
+	if want := "monitor: done\nmonitor: giving up\n"; out.String() != want {
 		t.Fatalf("output = %q, want %q", out.String(), want)
 	}
 }
 
-func TestEmptyPluginDirIsAUsageError(t *testing.T) {
+func TestEmptyMonitorDirIsAUsageError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := run(t.Context(), []string{"-plugin-dir", "", "--", "/nonexistent/plugin"}, &stdout, &stderr)
+	code := run(t.Context(), []string{"-monitor-dir", "", "--", "/nonexistent/monitor"}, &stdout, &stderr)
 	if code != exitUsage || stdout.Len() != 0 {
 		t.Fatalf("exit code = %d, stdout = %q, want %d and empty", code, stdout.String(), exitUsage)
 	}
-	if want := "plugin-conformance: -plugin-dir:  is not a directory\n"; stderr.String() != want {
+	if want := "monitor-conformance: -monitor-dir:  is not a directory\n"; stderr.String() != want {
 		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
 	}
 }
 
-func TestHelpNamesThePluginDirArgument(t *testing.T) {
+func TestHelpNamesTheMonitorDirArgument(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	run(t.Context(), []string{"-h", "--", "/nonexistent/plugin"}, &stdout, &stderr)
-	if want := "  -plugin-dir DIR\n"; !strings.Contains(stderr.String(), want) {
+	run(t.Context(), []string{"-h", "--", "/nonexistent/monitor"}, &stdout, &stderr)
+	if want := "  -monitor-dir DIR\n"; !strings.Contains(stderr.String(), want) {
 		t.Fatalf("help = %q, want it to hold %q", stderr.String(), want)
 	}
 }

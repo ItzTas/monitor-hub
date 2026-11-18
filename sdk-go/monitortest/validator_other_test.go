@@ -1,6 +1,6 @@
 //go:build !unix
 
-package plugintest
+package monitortest
 
 import (
 	"os"
@@ -19,7 +19,7 @@ func TestValidatorNeedsUnix(t *testing.T) {
 		`settings.json: fields[0]: name "events" does not match ^[A-Z][A-Z0-9_]*$`,
 		"validate-settings was not run: the validator check needs a Unix system",
 	}
-	if got := CheckSettings(t.Context(), dir, "plugin", nil); !slices.Equal(got, want) {
+	if got := CheckSettings(t.Context(), dir, "monitor", nil); !slices.Equal(got, want) {
 		t.Fatalf("violations = %q, want %q", got, want)
 	}
 }

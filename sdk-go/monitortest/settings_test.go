@@ -1,4 +1,4 @@
-package plugintest
+package monitortest
 
 import (
 	"fmt"
@@ -181,14 +181,14 @@ func TestCheckSettingsDirectory(t *testing.T) {
 	}
 	for name, dir := range unreadable {
 		t.Run(name, func(t *testing.T) {
-			got := CheckSettings(t.Context(), dir, "/nonexistent/plugin", nil)
+			got := CheckSettings(t.Context(), dir, "/nonexistent/monitor", nil)
 			if len(got) != 1 || !strings.HasPrefix(got[0], "settings.json: cannot read: ") {
 				t.Fatalf("violations = %q, want one starting with %q", got, "settings.json: cannot read: ")
 			}
 		})
 	}
 	t.Run("directory without settings.json", func(t *testing.T) {
-		if got := CheckSettings(t.Context(), t.TempDir(), "/nonexistent/plugin", nil); got != nil {
+		if got := CheckSettings(t.Context(), t.TempDir(), "/nonexistent/monitor", nil); got != nil {
 			t.Fatalf("violations = %q, want none", got)
 		}
 	})

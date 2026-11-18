@@ -25,13 +25,13 @@ fn unavailable(reason: &str) -> Option<&'static Setup> {
 fn build_command() -> Option<PathBuf> {
     let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sdk-go");
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    let binary = dir.join("plugin-conformance");
-    let staging = dir.join(format!("plugin-conformance.{}", process::id()));
+    let binary = dir.join("monitor-conformance");
+    let staging = dir.join(format!("monitor-conformance.{}", process::id()));
     let output = match Command::new("go")
         .current_dir(sdk)
         .args(["build", "-o"])
         .arg(&staging)
-        .arg("./cmd/plugin-conformance")
+        .arg("./cmd/monitor-conformance")
         .output()
     {
         Ok(output) => output,
@@ -42,7 +42,7 @@ fn build_command() -> Option<PathBuf> {
     };
     assert!(
         output.status.success(),
-        "go build ./cmd/plugin-conformance failed:\n{}",
+        "go build ./cmd/monitor-conformance failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
     fs::rename(&staging, &binary).expect("move the built command into place");
@@ -54,7 +54,7 @@ fn setup() -> Option<&'static Setup> {
     SETUP
         .get_or_init(|| {
             let binary = build_command()?;
-            unsafe { env::set_var("PLUGIN_CONFORMANCE", binary) };
+            unsafe { env::set_var("MONITOR_CONFORMANCE", binary) };
             Some(Setup {
                 example: example::fixed().to_owned(),
             })
@@ -72,7 +72,7 @@ fn conformance(setup: &Setup, min_events: usize) -> Conformance {
 }
 
 #[test]
-fn a_conforming_plugin_passes() {
+fn a_conforming_monitor_passes() {
     let Some(setup) = setup() else { return };
     assert_eq!(run(&conformance(setup, 2)), Outcome::Passed);
 }
@@ -81,13 +81,13 @@ fn a_conforming_plugin_passes() {
 fn a_violation_is_reported_with_the_command_output() {
     let Some(setup) = setup() else { return };
     let Outcome::Failed(output) = run(&conformance(setup, 5)) else {
-        panic!("a plugin with two events must fail min_events 5");
+        panic!("a monitor with two events must fail min_events 5");
     };
     assert!(output.contains("got 2 events, want at least 5"), "{output}");
 }
 
 #[test]
-fn a_plugin_that_fails_before_the_handshake_shows_its_stderr_first() {
+fn a_monitor_that_fails_before_the_handshake_shows_its_stderr_first() {
     let Some(setup) = setup() else { return };
     let dir = TempDir::new().expect("create temp dir");
     let mut conformance = conformance(setup, 0);
@@ -97,34 +97,34 @@ fn a_plugin_that_fails_before_the_handshake_shows_its_stderr_first() {
         .push(("TMPDIR".into(), missing.to_string_lossy().into_owned()));
 
     let Outcome::Failed(output) = run(&conformance) else {
-        panic!("a plugin that cannot create its socket must fail");
+        panic!("a monitor that cannot create its socket must fail");
     };
 
     let lines: Vec<&str> = output.lines().collect();
-    let plugin = lines.iter().position(|line| {
-        line.starts_with("plugin: {") && line.contains("cannot create the plugin socket")
+    let monitor = lines.iter().position(|line| {
+        line.starts_with("monitor: {") && line.contains("cannot create the plugin socket")
     });
     let own = lines
         .iter()
-        .position(|line| line.starts_with("plugin-conformance: "));
+        .position(|line| line.starts_with("monitor-conformance: "));
     assert!(
-        matches!((plugin, own), (Some(plugin), Some(own)) if plugin < own),
+        matches!((monitor, own), (Some(monitor), Some(own)) if monitor < own),
         "{output}"
     );
 }
 
 #[test]
-fn a_plugin_directory_with_valid_settings_passes() {
+fn a_monitor_directory_with_valid_settings_passes() {
     let Some(setup) = setup() else { return };
     let mut conformance = conformance(setup, 2);
-    conformance.plugin_dir =
+    conformance.monitor_dir =
         Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugin/examples/fixed-plugin"));
 
     assert_eq!(run(&conformance), Outcome::Passed);
 }
 
 #[test]
-fn a_settings_violation_in_the_plugin_directory_fails_the_run() {
+fn a_settings_violation_in_the_monitor_directory_fails_the_run() {
     let Some(setup) = setup() else { return };
     let dir = TempDir::new().expect("create temp dir");
     fs::write(
@@ -133,7 +133,7 @@ fn a_settings_violation_in_the_plugin_directory_fails_the_run() {
     )
     .expect("write settings.json");
     let mut conformance = conformance(setup, 2);
-    conformance.plugin_dir = Some(dir.path().to_owned());
+    conformance.monitor_dir = Some(dir.path().to_owned());
 
     let Outcome::Failed(output) = run(&conformance) else {
         panic!("a lowercase setting name must fail the run");
@@ -158,17 +158,17 @@ fn an_env_name_that_is_empty_or_holds_an_equals_sign_is_rejected() {
 }
 
 #[test]
-fn a_plugin_dir_that_is_not_a_directory_is_rejected() {
+fn a_monitor_dir_that_is_not_a_directory_is_rejected() {
     let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
     let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("missing");
     for dir in [Path::new(""), &file, &missing] {
         let mut conformance = Conformance::new("unused");
-        conformance.plugin_dir = Some(dir.to_owned());
+        conformance.monitor_dir = Some(dir.to_owned());
 
         assert_eq!(
             run(&conformance),
             Outcome::Failed(format!(
-                "Conformance.plugin_dir {} is not a directory",
+                "Conformance.monitor_dir {} is not a directory",
                 dir.display()
             ))
         );

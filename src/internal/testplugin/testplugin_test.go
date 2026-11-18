@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
+	"github.com/ItzTas/monitor-hub/sdk-go/monitortest"
 )
 
 var (
@@ -33,8 +33,8 @@ func run(m *testing.M) int {
 		fmt.Fprintf(os.Stderr, "build failed: %v\n%s", err, out)
 		return 1
 	}
-	conformer = filepath.Join(dir, "plugin-conformance")
-	out, err = exec.CommandContext(context.Background(), "go", "build", "-o", conformer, "github.com/ItzTas/monitor-hub/sdk-go/cmd/plugin-conformance").CombinedOutput()
+	conformer = filepath.Join(dir, "monitor-conformance")
+	out, err = exec.CommandContext(context.Background(), "go", "build", "-o", conformer, "github.com/ItzTas/monitor-hub/sdk-go/cmd/monitor-conformance").CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build conformance command failed: %v\n%s", err, out)
 		return 1
@@ -45,5 +45,5 @@ func run(m *testing.M) int {
 func TestTestPluginConformance(t *testing.T) {
 	cmd := exec.CommandContext(t.Context(), binary)
 	cmd.Env = []string{"EVENTS=3"}
-	plugintest.Run(t, cmd, 3)
+	monitortest.Run(t, cmd, 3)
 }
