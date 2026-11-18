@@ -67,7 +67,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 		Summary:     "Stream the notifications",
 		Description: "Sends every event after the consumer's position, then caught_up, then each new event as the hub stores it, with a ping comment every 25 seconds. Last-Event-ID is ignored. A newer stream of the same consumer replaces this one.",
 		Tags:        []string{"consumers"},
-		Errors:      []int{http.StatusUnauthorized, http.StatusServiceUnavailable},
+		Errors:      []int{http.StatusUnauthorized, http.StatusMethodNotAllowed, http.StatusServiceUnavailable},
 		Middlewares: huma.Middlewares{onlyGet(protocol), limit(protocol, make(chan struct{}, maxStreams))},
 	}, map[string]any{
 		"notification": stream.Notification{},
