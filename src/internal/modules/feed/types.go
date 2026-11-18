@@ -11,7 +11,7 @@ type Options struct {
 }
 
 type Event struct {
-	Plugin      string
+	Monitor     string
 	DisplayName string
 	ID          string
 	Kind        string

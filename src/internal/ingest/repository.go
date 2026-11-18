@@ -21,11 +21,11 @@ const eventOrderLock = 1836019304
 var errCursorMoved = errors.New("ingest: the stored cursor no longer matches the page's after")
 
 type Repository interface {
-	Cursor(ctx context.Context, plugin string) (cursor int64, known bool, err error)
+	Cursor(ctx context.Context, monitor string) (cursor int64, known bool, err error)
 	SaveDescription(ctx context.Context, description *monitorpb.DescribeResponse) error
-	SaveStatus(ctx context.Context, plugin string, status *monitorpb.StatusResponse, seenAt time.Time) error
+	SaveStatus(ctx context.Context, monitor string, status *monitorpb.StatusResponse, seenAt time.Time) error
 	StoreEvents(ctx context.Context, batch Batch) (inserted int, err error)
-	CompleteBaseline(ctx context.Context, plugin string) error
+	CompleteBaseline(ctx context.Context, monitor string) error
 }
 
 type postgres struct {
@@ -37,8 +37,8 @@ func NewPostgres(pool *pgxpool.Pool) Repository {
 	return &postgres{pool: pool, queries: db.New(pool)}
 }
 
-func (r *postgres) Cursor(ctx context.Context, plugin string) (int64, bool, error) {
-	row, err := r.queries.MonitorCursor(ctx, plugin)
+func (r *postgres) Cursor(ctx context.Context, monitor string) (int64, bool, error) {
+	row, err := r.queries.MonitorCursor(ctx, monitor)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -56,13 +56,13 @@ func (r *postgres) SaveDescription(ctx context.Context, description *monitorpb.D
 	})
 }
 
-func (r *postgres) SaveStatus(ctx context.Context, plugin string, status *monitorpb.StatusResponse, seenAt time.Time) error {
+func (r *postgres) SaveStatus(ctx context.Context, monitor string, status *monitorpb.StatusResponse, seenAt time.Time) error {
 	state, err := smallint("state", status.GetState())
 	if err != nil {
 		return err
 	}
 	return r.queries.SaveMonitorStatus(ctx, db.SaveMonitorStatusParams{
-		Name:               plugin,
+		Name:               monitor,
 		State:              state,
 		Message:            status.GetMessage(),
 		LastCheckStartedAt: optionalTime(status.GetLastCheckStartedAt()),
@@ -85,7 +85,7 @@ func (r *postgres) StoreEvents(ctx context.Context, batch Batch) (int, error) {
 			return err
 		}
 		moved, err := q.AdvanceMonitorCursor(ctx, db.AdvanceMonitorCursorParams{
-			Name:  batch.Plugin,
+			Name:  batch.Monitor,
 			After: batch.After,
 			Next:  batch.Events[len(batch.Events)-1].GetSeq(),
 		})
@@ -113,7 +113,7 @@ func (r *postgres) StoreEvents(ctx context.Context, batch Batch) (int, error) {
 }
 
 func storeEvent(ctx context.Context, q *db.Queries, batch Batch, e *monitorpb.Event) (bool, error) {
-	params, err := insertParams(batch.Plugin, e, batch.Baseline)
+	params, err := insertParams(batch.Monitor, e, batch.Baseline)
 	if err != nil {
 		return false, err
 	}
@@ -134,8 +134,8 @@ func storeEvent(ctx context.Context, q *db.Queries, batch Batch, e *monitorpb.Ev
 	})
 }
 
-func (r *postgres) CompleteBaseline(ctx context.Context, plugin string) error {
-	return r.queries.CompleteMonitorBaseline(ctx, plugin)
+func (r *postgres) CompleteBaseline(ctx context.Context, monitor string) error {
+	return r.queries.CompleteMonitorBaseline(ctx, monitor)
 }
 
 func (r *postgres) inTx(ctx context.Context, run func(*db.Queries) error) (err error) {
@@ -157,13 +157,13 @@ func (r *postgres) inTx(ctx context.Context, run func(*db.Queries) error) (err e
 	return nil
 }
 
-func insertParams(plugin string, e *monitorpb.Event, baseline bool) (db.InsertEventParams, error) {
+func insertParams(monitor string, e *monitorpb.Event, baseline bool) (db.InsertEventParams, error) {
 	severity, err := smallint("severity", e.GetSeverity())
 	if err != nil {
 		return db.InsertEventParams{}, fmt.Errorf("event seq %d: %w", e.GetSeq(), err)
 	}
 	params := db.InsertEventParams{
-		Monitor:    plugin,
+		Monitor:    monitor,
 		EventID:    e.GetId(),
 		MonitorSeq: e.GetSeq(),
 		Kind:       e.GetKind(),

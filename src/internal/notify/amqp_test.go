@@ -132,7 +132,7 @@ func testAMQP(address string, broker *fakeBroker) *amqpChannel {
 func seiMessage(kinds ...string) Message {
 	events := make([]Event, 0, len(kinds))
 	for _, kind := range kinds {
-		events = append(events, Event{Plugin: "sei", DisplayName: "SEI", Kind: kind, Title: "Title " + kind, OccurredAt: t0})
+		events = append(events, Event{Monitor: "sei", DisplayName: "SEI", Kind: kind, Title: "Title " + kind, OccurredAt: t0})
 	}
 	return Compose("SEI", events)
 }
@@ -143,8 +143,8 @@ func TestAMQPRoutingKey(t *testing.T) {
 		key  string
 		kind string
 	}{
-		"one event is plugin.kind":                {seiMessage("return_overdue"), "sei.return_overdue", "return_overdue"},
-		"several events are plugin.batch":         {seiMessage("activity", "document"), "sei.batch", "batch"},
+		"one event is monitor.kind":               {seiMessage("return_overdue"), "sei.return_overdue", "return_overdue"},
+		"several events are monitor.batch":        {seiMessage("activity", "document"), "sei.batch", "batch"},
 		"a dot in the kind cannot split the key":  {seiMessage("a.b"), "sei.a_b", "a.b"},
 		"a space and a star cannot break the key": {seiMessage("new *thing"), "sei.new__thing", "new *thing"},
 		"an empty kind keeps the segment":         {seiMessage(""), "sei._", ""},
@@ -811,7 +811,7 @@ func (b *testBroker) drain(t *testing.T, queue string) []amqp.Delivery {
 	}
 }
 
-func TestAMQPBrokerRoutesEachNotificationUnderItsPluginAndKind(t *testing.T) {
+func TestAMQPBrokerRoutesEachNotificationUnderItsMonitorAndKind(t *testing.T) {
 	broker := newTestBroker(t)
 	everything := broker.queue(t, "#")
 	overdue := broker.queue(t, "sei.return_overdue")

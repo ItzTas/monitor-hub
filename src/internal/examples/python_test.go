@@ -59,7 +59,7 @@ func pythonScript(t *testing.T) string {
 	return script
 }
 
-func TestPythonPluginConformance(t *testing.T) {
+func TestPythonMonitorConformance(t *testing.T) {
 	python := pythonInterpreter(t)
 	script := pythonScript(t)
 	dataDir := t.TempDir()
@@ -91,7 +91,7 @@ func TestPythonPluginConformance(t *testing.T) {
 	}
 }
 
-func TestPythonPluginRefusesToRunByHand(t *testing.T) {
+func TestPythonMonitorRefusesToRunByHand(t *testing.T) {
 	python := pythonInterpreter(t)
 	script := pythonScript(t)
 
@@ -114,14 +114,14 @@ func TestPythonPluginRefusesToRunByHand(t *testing.T) {
 	}
 }
 
-type pythonPlugin struct {
+type pythonMonitor struct {
 	cmd       *exec.Cmd
 	conn      *grpc.ClientConn
 	socket    string
 	socketDir string
 }
 
-func startPython(t *testing.T, dataDir string) *pythonPlugin {
+func startPython(t *testing.T, dataDir string) *pythonMonitor {
 	t.Helper()
 	python := pythonInterpreter(t)
 	script := pythonScript(t)
@@ -157,7 +157,7 @@ func startPython(t *testing.T, dataDir string) *pythonPlugin {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	p := &pythonPlugin{cmd: cmd, conn: conn, socket: fields[3], socketDir: socketDir}
+	p := &pythonMonitor{cmd: cmd, conn: conn, socket: fields[3], socketDir: socketDir}
 	t.Cleanup(func() {
 		if cmd.ProcessState == nil {
 			_ = cmd.Process.Kill()
@@ -167,21 +167,21 @@ func startPython(t *testing.T, dataDir string) *pythonPlugin {
 	return p
 }
 
-func (p *pythonPlugin) shutdown(t *testing.T) {
+func (p *pythonMonitor) shutdown(t *testing.T) {
 	t.Helper()
 	err := p.conn.Invoke(t.Context(), "/plugin.GRPCController/Shutdown", &emptypb.Empty{}, &emptypb.Empty{})
 	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
 	if err := p.cmd.Wait(); err != nil {
-		t.Fatalf("plugin exit: %v", err)
+		t.Fatalf("monitor exit: %v", err)
 	}
 	if _, err := os.Stat(p.socket); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("socket %s still exists after shutdown (stat error: %v)", p.socket, err)
 	}
 }
 
-func (p *pythonPlugin) events(t *testing.T) []*monitorpb.Event {
+func (p *pythonMonitor) events(t *testing.T) []*monitorpb.Event {
 	t.Helper()
 	resp, err := monitorpb.NewMonitorClient(p.conn).Events(t.Context(), &monitorpb.EventsRequest{})
 	if err != nil {
@@ -190,7 +190,7 @@ func (p *pythonPlugin) events(t *testing.T) []*monitorpb.Event {
 	return resp.GetEvents()
 }
 
-func (p *pythonPlugin) check(t *testing.T) {
+func (p *pythonMonitor) check(t *testing.T) {
 	t.Helper()
 	resp, err := monitorpb.NewMonitorClient(p.conn).Check(t.Context(), &monitorpb.CheckRequest{})
 	if err != nil {
@@ -209,7 +209,7 @@ func titles(events []*monitorpb.Event) []string {
 	return out
 }
 
-func TestPythonPluginHealthAndShutdown(t *testing.T) {
+func TestPythonMonitorHealthAndShutdown(t *testing.T) {
 	p := startPython(t, t.TempDir())
 	health := grpc_health_v1.NewHealthClient(p.conn)
 
@@ -233,7 +233,7 @@ func deleteAllEvents(t *testing.T, dataDir string) {
 	t.Helper()
 	database := filepath.Join(dataDir, "events.sqlite3")
 	if _, err := os.Stat(database); err != nil {
-		t.Fatalf("plugin database: %v", err)
+		t.Fatalf("monitor database: %v", err)
 	}
 	script := "import sqlite3, sys\nconn = sqlite3.connect(sys.argv[1])\nconn.execute('DELETE FROM events')\nconn.commit()\nconn.close()"
 	out, err := exec.CommandContext(t.Context(), pythonInterpreter(t), "-I", "-c", script, database).CombinedOutput()
@@ -242,7 +242,7 @@ func deleteAllEvents(t *testing.T, dataDir string) {
 	}
 }
 
-func TestPythonPluginNeverReusesSeqAfterEventsAreDeleted(t *testing.T) {
+func TestPythonMonitorNeverReusesSeqAfterEventsAreDeleted(t *testing.T) {
 	dataDir := t.TempDir()
 
 	first := startPython(t, dataDir)

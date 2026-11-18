@@ -29,7 +29,7 @@ func seed(t *testing.T, pool *pgxpool.Pool, events ...db.InsertEventParams) {
 	t.Helper()
 	queries := db.New(pool)
 	for i, e := range events {
-		if err := queries.SaveMonitorDescription(t.Context(), db.SaveMonitorDescriptionParams{Name: e.Monitor, DisplayName: "Plugin " + e.Monitor, Version: "1.0.0"}); err != nil {
+		if err := queries.SaveMonitorDescription(t.Context(), db.SaveMonitorDescriptionParams{Name: e.Monitor, DisplayName: "Monitor " + e.Monitor, Version: "1.0.0"}); err != nil {
 			t.Fatal(err)
 		}
 		e.MonitorSeq = int64(i + 1)
@@ -74,7 +74,7 @@ func seqs(p page) []float64 {
 	return values
 }
 
-func TestEventsShowWhatThePluginSent(t *testing.T) {
+func TestEventsShowWhatTheMonitorSent(t *testing.T) {
 	pool := coretest.Pool(t)
 	seed(t, pool, db.InsertEventParams{
 		Monitor: "sei", EventID: "activity-50001", Kind: "activity_added", Severity: int16(monitorpb.Severity_SEVERITY_URGENT),
@@ -89,7 +89,7 @@ func TestEventsShowWhatThePluginSent(t *testing.T) {
 	item := body.Items[0]
 	delete(item, "detected_at")
 	want := map[string]any{
-		"seq": float64(1), "plugin": "sei", "display_name": "Plugin sei", "id": "activity-50001", "kind": "activity_added",
+		"seq": float64(1), "monitor": "sei", "display_name": "Monitor sei", "id": "activity-50001", "kind": "activity_added",
 		"severity": "urgent", "occurred_at": "2026-11-10T12:00:00Z", "title": "New activity", "body": "Processo recebido",
 		"url": "https://sei.example.org/p/1", "payload": map[string]any{"unit": "NUPROC", "count": float64(2)},
 	}
@@ -116,12 +116,12 @@ func TestEventsPageNewestFirst(t *testing.T) {
 		"first page":          {"?limit=2", []float64{5, 4}, new(int64(4))},
 		"second page":         {"?limit=2&before=4", []float64{3, 2}, new(int64(2))},
 		"last page":           {"?limit=2&before=2", []float64{1}, nil},
-		"one plugin":          {"?plugin=sei", []float64{4, 3, 1}, nil},
+		"one monitor":         {"?monitor=sei", []float64{4, 3, 1}, nil},
 		"one kind":            {"?kind=match", []float64{3, 2}, nil},
-		"plugin and kind":     {"?plugin=sei&kind=match", []float64{3}, nil},
-		"unknown plugin":      {"?plugin=nobody", []float64{}, nil},
+		"monitor and kind":    {"?monitor=sei&kind=match", []float64{3}, nil},
+		"unknown monitor":     {"?monitor=nobody", []float64{}, nil},
 		"before the first":    {"?before=1", []float64{}, nil},
-		"filter while paging": {"?plugin=sei&limit=1&before=4", []float64{3}, new(int64(3))},
+		"filter while paging": {"?monitor=sei&limit=1&before=4", []float64{3}, new(int64(3))},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

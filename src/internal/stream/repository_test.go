@@ -23,7 +23,7 @@ func store(t *testing.T, pool *pgxpool.Pool, after int64, baseline bool, severit
 		seq := after + int64(i) + 1
 		events = append(events, &monitorpb.Event{Seq: seq, Id: "e" + string(rune('a'+seq)), Kind: "ping", Severity: severity, OccurredAt: timestamppb.Now(), Title: "ping"})
 	}
-	if _, err := repo.StoreEvents(t.Context(), ingest.Batch{Plugin: "sei", After: after, Events: events, Baseline: baseline}); err != nil {
+	if _, err := repo.StoreEvents(t.Context(), ingest.Batch{Monitor: "sei", After: after, Events: events, Baseline: baseline}); err != nil {
 		t.Fatal(err)
 	}
 }

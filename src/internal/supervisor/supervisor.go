@@ -122,10 +122,10 @@ func (s *Supervisor) supervise(ctx context.Context, entry catalog.Entry) {
 
 func (s *Supervisor) reportStop(name string, uptime, delay time.Duration, startErr error) {
 	if startErr != nil {
-		s.log.Error("plugin failed to start", "plugin", name, "error", startErr, "retry_in", delay)
+		s.log.Error("monitor failed to start", "monitor", name, "error", startErr, "retry_in", delay)
 		return
 	}
-	s.log.Warn("plugin exited", "plugin", name, "uptime", uptime.Round(time.Millisecond), "restart_in", delay)
+	s.log.Warn("monitor exited", "monitor", name, "uptime", uptime.Round(time.Millisecond), "restart_in", delay)
 }
 
 func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Duration, error) {
@@ -143,7 +143,7 @@ func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Dur
 	}
 	ready.Store(true)
 	s.setClient(name, rpc)
-	s.log.Info("plugin started", "plugin", name)
+	s.log.Info("monitor started", "monitor", name)
 	started := time.Now()
 	exited := watchExit(client, *cmd.SysProcAttr.PidFD)
 	select {
@@ -155,7 +155,7 @@ func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Dur
 	s.stop(name, client, cmd, ctx.Err() != nil)
 	<-exited
 	if ctx.Err() != nil {
-		s.log.Info("plugin stopped", "plugin", name)
+		s.log.Info("monitor stopped", "monitor", name)
 	}
 	return uptime, nil
 }
@@ -256,7 +256,7 @@ func (s *Supervisor) stop(name string, client *plugin.Client, cmd *exec.Cmd, gra
 		return
 	}
 	if left, gone := awaitGroupExit(s.groupMembers, pgid, groupExitLimit); !gone {
-		s.log.Warn("plugin processes still running after the kill; continuing", "plugin", name, "process_group", pgid, "pids", left, "waited", groupExitLimit)
+		s.log.Warn("monitor processes still running after the kill; continuing", "monitor", name, "process_group", pgid, "pids", left, "waited", groupExitLimit)
 	}
 }
 
@@ -353,7 +353,7 @@ func resolveCommand(entry catalog.Entry, env []string) (string, error) {
 	if path, ok := lookPath(command, envValue(env, "PATH")); ok {
 		return path, nil
 	}
-	return "", fmt.Errorf("plugin %s: command %q not found", entry.Manifest.Name, command)
+	return "", fmt.Errorf("monitor %s: command %q not found", entry.Manifest.Name, command)
 }
 
 func lookPath(command, pathList string) (string, bool) {

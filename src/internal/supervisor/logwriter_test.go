@@ -45,45 +45,45 @@ func capture() (*slog.Logger, *logBuffer) {
 }
 
 func plain(line string) map[string]any {
-	return map[string]any{"level": "DEBUG", "msg": line, "plugin": "sei"}
+	return map[string]any{"level": "DEBUG", "msg": line, "monitor": "sei"}
 }
 
-func TestPluginLogLinesBecomeRecords(t *testing.T) {
+func TestMonitorLogLinesBecomeRecords(t *testing.T) {
 	cases := map[string]struct {
 		line string
 		want map[string]any
 	}{
 		"trace": {
 			`{"@level":"trace","@message":"tick"}`,
-			map[string]any{"level": "DEBUG", "msg": "tick", "plugin": "sei"},
+			map[string]any{"level": "DEBUG", "msg": "tick", "monitor": "sei"},
 		},
 		"debug": {
-			`{"@level":"debug","@message":"plugin address","@module":"sei.sei","@timestamp":"2026-11-10T12:00:00.000000-03:00","address":"/tmp/plugin1","network":"unix"}`,
-			map[string]any{"level": "DEBUG", "msg": "plugin address", "plugin": "sei", "module": "sei.sei", "address": "/tmp/plugin1", "network": "unix"},
+			`{"@level":"debug","@message":"plugin address","@module":"sei.sei","@timestamp":"2026-11-10T12:00:00.000000-03:00","address":"/tmp/monitor1","network":"unix"}`,
+			map[string]any{"level": "DEBUG", "msg": "plugin address", "monitor": "sei", "module": "sei.sei", "address": "/tmp/monitor1", "network": "unix"},
 		},
 		"info": {
 			`{"@level":"info","@message":"logged in","@module":"sei","units":3}`,
-			map[string]any{"level": "INFO", "msg": "logged in", "plugin": "sei", "module": "sei", "units": json.Number("3")},
+			map[string]any{"level": "INFO", "msg": "logged in", "monitor": "sei", "module": "sei", "units": json.Number("3")},
 		},
 		"warn, timestamp in milliseconds": {
 			`{"@level":"warn","@message":"slow answer","@timestamp":"2026-11-10T12:00:00.000Z"}`,
-			map[string]any{"level": "WARN", "msg": "slow answer", "plugin": "sei"},
+			map[string]any{"level": "WARN", "msg": "slow answer", "monitor": "sei"},
 		},
 		"error, timestamp not a string": {
 			`{"@level":"error","@message":"login failed","@timestamp":7,"reason":{"code":401}}`,
-			map[string]any{"level": "ERROR", "msg": "login failed", "plugin": "sei", "reason": map[string]any{"code": json.Number("401")}},
+			map[string]any{"level": "ERROR", "msg": "login failed", "monitor": "sei", "reason": map[string]any{"code": json.Number("401")}},
 		},
 		"unknown level": {
 			`{"@level":"loud","@message":"hello"}`,
-			map[string]any{"level": "DEBUG", "msg": "hello", "plugin": "sei"},
+			map[string]any{"level": "DEBUG", "msg": "hello", "monitor": "sei"},
 		},
 		"large numbers keep their digits": {
 			`{"@level":"info","@message":"ids","id":12345678901234567890,"ratio":0.1000000000000000055511151231257827}`,
-			map[string]any{"level": "INFO", "msg": "ids", "plugin": "sei", "id": json.Number("12345678901234567890"), "ratio": json.Number("0.1000000000000000055511151231257827")},
+			map[string]any{"level": "INFO", "msg": "ids", "monitor": "sei", "id": json.Number("12345678901234567890"), "ratio": json.Number("0.1000000000000000055511151231257827")},
 		},
 		"fields named like the record's own": {
-			`{"@level":"info","@message":"plugin process exited","@module":"sei","plugin":"/opt/plugins/sei/sei","msg":"x","id":7}`,
-			map[string]any{"level": "INFO", "msg": "plugin process exited", "plugin": "sei", "module": "sei", "field_plugin": "/opt/plugins/sei/sei", "field_msg": "x", "id": json.Number("7")},
+			`{"@level":"info","@message":"plugin process exited","@module":"sei","monitor":"/opt/monitor-hub/monitors/sei/sei","msg":"x","id":7}`,
+			map[string]any{"level": "INFO", "msg": "plugin process exited", "monitor": "sei", "module": "sei", "field_monitor": "/opt/monitor-hub/monitors/sei/sei", "field_msg": "x", "id": json.Number("7")},
 		},
 		"no level":                   {`{"@message":"hello"}`, plain(`{"@message":"hello"}`)},
 		"no message":                 {`{"@level":"warn"}`, plain(`{"@level":"warn"}`)},
@@ -109,7 +109,7 @@ func TestPluginLogLinesBecomeRecords(t *testing.T) {
 	}
 }
 
-func TestPluginLogLineSplitAcrossWritesIsOneRecord(t *testing.T) {
+func TestMonitorLogLineSplitAcrossWritesIsOneRecord(t *testing.T) {
 	logger, buf := capture()
 	w := newLogWriter(logger, "sei")
 	for _, part := range []string{`{"@level":"info","@mes`, `sage":"one"}` + "\n" + `{"@level":"warn",`, `"@message":"two"}` + "\n"} {
@@ -118,15 +118,15 @@ func TestPluginLogLineSplitAcrossWritesIsOneRecord(t *testing.T) {
 		}
 	}
 	want := []map[string]any{
-		{"level": "INFO", "msg": "one", "plugin": "sei"},
-		{"level": "WARN", "msg": "two", "plugin": "sei"},
+		{"level": "INFO", "msg": "one", "monitor": "sei"},
+		{"level": "WARN", "msg": "two", "monitor": "sei"},
 	}
 	if got := buf.records(t); !reflect.DeepEqual(got, want) {
 		t.Errorf("records = %v\nwant      %v", got, want)
 	}
 }
 
-func TestPluginLogLineOverTheLimitIsTruncated(t *testing.T) {
+func TestMonitorLogLineOverTheLimitIsTruncated(t *testing.T) {
 	logger, buf := capture()
 	w := newLogWriter(logger, "sei")
 	long := strings.Repeat("a", maxLogLine)
@@ -139,7 +139,7 @@ func TestPluginLogLineOverTheLimitIsTruncated(t *testing.T) {
 		}
 	}
 	want := []map[string]any{
-		{"level": "DEBUG", "msg": long, "plugin": "sei", "truncated": true},
+		{"level": "DEBUG", "msg": long, "monitor": "sei", "truncated": true},
 		plain("next"),
 	}
 	if got := buf.records(t); !reflect.DeepEqual(got, want) {
@@ -147,7 +147,7 @@ func TestPluginLogLineOverTheLimitIsTruncated(t *testing.T) {
 	}
 }
 
-func TestPluginLogWritesAreSafeConcurrently(t *testing.T) {
+func TestMonitorLogWritesAreSafeConcurrently(t *testing.T) {
 	logger, buf := capture()
 	w := newLogWriter(logger, "sei")
 	var wg sync.WaitGroup
@@ -162,7 +162,7 @@ func TestPluginLogWritesAreSafeConcurrently(t *testing.T) {
 	}
 }
 
-func FuzzPluginLogLines(f *testing.F) {
+func FuzzMonitorLogLines(f *testing.F) {
 	seeds := []string{
 		"\xff\xfe\xfd",
 		`{"@level":"info","@message":"` + "\xff" + `"}`,

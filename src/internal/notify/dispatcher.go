@@ -95,7 +95,7 @@ func (d *Dispatcher) deliver(ctx context.Context, channel Channel) {
 		d.log.Error("could not read the pending notifications", "channel", channel.Name(), "error", err)
 		return
 	}
-	for _, group := range byPlugin(due) {
+	for _, group := range byMonitor(due) {
 		if ctx.Err() != nil {
 			return
 		}
@@ -134,14 +134,14 @@ func (d *Dispatcher) record(ctx context.Context, attempts []Delivery) error {
 	return d.outbox.UpdateDeliveries(recordCtx, attempts)
 }
 
-func byPlugin(due []DueDelivery) [][]DueDelivery {
+func byMonitor(due []DueDelivery) [][]DueDelivery {
 	index := map[string]int{}
 	var groups [][]DueDelivery
 	for _, delivery := range due {
-		i, seen := index[delivery.Event.Plugin]
+		i, seen := index[delivery.Event.Monitor]
 		if !seen {
 			i = len(groups)
-			index[delivery.Event.Plugin] = i
+			index[delivery.Event.Monitor] = i
 			groups = append(groups, nil)
 		}
 		groups[i] = append(groups[i], delivery)
@@ -154,7 +154,7 @@ func (d *Dispatcher) send(ctx context.Context, channel Channel, group []DueDeliv
 	for _, delivery := range group {
 		events = append(events, delivery.Event)
 	}
-	plugin := group[0].Event.Plugin
+	monitor := group[0].Event.Monitor
 	sendErr := channel.Send(ctx, Compose(group[0].Event.DisplayName, events))
 	if sendErr != nil && ctx.Err() != nil {
 		return false
@@ -166,16 +166,16 @@ func (d *Dispatcher) send(ctx context.Context, channel Channel, group []DueDeliv
 	}
 	if err := d.record(ctx, attempts); err != nil {
 		d.hold(channel.Name(), attempts)
-		d.log.Error("could not record the notification attempt; the channel waits until it can", "channel", channel.Name(), "plugin", plugin, "error", err)
+		d.log.Error("could not record the notification attempt; the channel waits until it can", "channel", channel.Name(), "monitor", monitor, "error", err)
 		return false
 	}
-	d.report(channel.Name(), plugin, attempts, sendErr)
+	d.report(channel.Name(), monitor, attempts, sendErr)
 	return true
 }
 
-func (d *Dispatcher) report(channel, plugin string, attempts []Delivery, sendErr error) {
+func (d *Dispatcher) report(channel, monitor string, attempts []Delivery, sendErr error) {
 	if sendErr == nil {
-		d.log.Info("notifications sent", "channel", channel, "plugin", plugin, "events", len(attempts))
+		d.log.Info("notifications sent", "channel", channel, "monitor", monitor, "events", len(attempts))
 		return
 	}
 	gaveUp := 0
@@ -184,7 +184,7 @@ func (d *Dispatcher) report(channel, plugin string, attempts []Delivery, sendErr
 			gaveUp++
 		}
 	}
-	d.log.Warn("could not send the notifications", "channel", channel, "plugin", plugin, "events", len(attempts), "gave_up", gaveUp, "error", sendErr)
+	d.log.Warn("could not send the notifications", "channel", channel, "monitor", monitor, "events", len(attempts), "gave_up", gaveUp, "error", sendErr)
 }
 
 func attempt(delivery Delivery, sendErr error, now time.Time) Delivery {

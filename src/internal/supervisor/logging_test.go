@@ -16,7 +16,7 @@ import (
 )
 
 func stderrLines(lines ...string) string {
-	return "TESTPLUGIN__STDERR_LINES=" + strings.Join(lines, "\x1f")
+	return "TESTMONITOR__STDERR_LINES=" + strings.Join(lines, "\x1f")
 }
 
 func waitForRecords(t *testing.T, buf *logBuffer, want int, match func(map[string]any) bool) []map[string]any {
@@ -44,7 +44,7 @@ func messages(records []map[string]any) []string {
 	return values
 }
 
-func TestHostileStderrLinesLeaveThePluginRunning(t *testing.T) {
+func TestHostileStderrLinesLeaveTheMonitorRunning(t *testing.T) {
 	hostile := []string{
 		`{"@message":1}`,
 		`{"@level":5,"@message":"x"}`,
@@ -68,14 +68,14 @@ func TestHostileStderrLinesLeaveThePluginRunning(t *testing.T) {
 		t.Errorf("the line with a numeric @timestamp gave %d warn records, want 1", len(warn))
 	}
 	if !describes(t, client) {
-		t.Error("the plugin stopped answering after its stderr lines")
+		t.Error("the monitor stopped answering after its stderr lines")
 	}
-	if started := waitForRecords(t, buf, 0, func(r map[string]any) bool { return r["msg"] == "plugin started" }); len(started) != 1 {
-		t.Errorf("the plugin started %d times, want once", len(started))
+	if started := waitForRecords(t, buf, 0, func(r map[string]any) bool { return r["msg"] == "monitor started" }); len(started) != 1 {
+		t.Errorf("the monitor started %d times, want once", len(started))
 	}
 }
 
-func TestPluginStderrRecordsKeepTheirLevel(t *testing.T) {
+func TestMonitorStderrRecordsKeepTheirLevel(t *testing.T) {
 	logger, buf := capture()
 	s, _, _ := startLoggingSupervisor(t, []string{stderrLines(
 		`{"@level":"warn","@message":"careful","@timestamp":"2026-11-10T12:00:00.000Z","answer":42}`,
@@ -88,34 +88,34 @@ func TestPluginStderrRecordsKeepTheirLevel(t *testing.T) {
 		return r["msg"] == "careful" || r["msg"] == "plain words on stderr"
 	})
 
-	careful := map[string]any{"level": "WARN", "msg": "careful", "plugin": "testplugin", "answer": json.Number("42")}
-	want := []map[string]any{careful, careful, {"level": "DEBUG", "msg": "plain words on stderr", "plugin": "testplugin"}}
+	careful := map[string]any{"level": "WARN", "msg": "careful", "monitor": "testmonitor", "answer": json.Number("42")}
+	want := []map[string]any{careful, careful, {"level": "DEBUG", "msg": "plain words on stderr", "monitor": "testmonitor"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("records = %v\nwant      %v", got, want)
 	}
 }
 
 func lifecycle(r map[string]any) bool {
-	return slices.Contains([]string{"plugin started", "plugin failed to start", "plugin exited", "plugin stopped"}, fmt.Sprint(r["msg"]))
+	return slices.Contains([]string{"monitor started", "monitor failed to start", "monitor exited", "monitor stopped"}, fmt.Sprint(r["msg"]))
 }
 
-func TestPluginLifecycleIsLogged(t *testing.T) {
+func TestMonitorLifecycleIsLogged(t *testing.T) {
 	logger, buf := capture()
-	s, _, stop := startLoggingSupervisor(t, []string{"TESTPLUGIN__CRASH_ON_CHECK=1"}, logger)
+	s, _, stop := startLoggingSupervisor(t, []string{"TESTMONITOR__CRASH_ON_CHECK=1"}, logger)
 	c := waitDescribe(t, s, 10*time.Second)
 	if _, err := c.Check(t.Context(), &monitorpb.CheckRequest{}); err == nil {
-		t.Fatal("Check succeeded, want the plugin to crash")
+		t.Fatal("Check succeeded, want the monitor to crash")
 	}
-	waitForRecords(t, buf, 2, func(r map[string]any) bool { return r["msg"] == "plugin started" })
+	waitForRecords(t, buf, 2, func(r map[string]any) bool { return r["msg"] == "monitor started" })
 	stop()
 
 	records := waitForRecords(t, buf, 4, lifecycle)
-	if got := messages(records); !slices.Equal(got, []string{"plugin started", "plugin exited", "plugin started", "plugin stopped"}) {
+	if got := messages(records); !slices.Equal(got, []string{"monitor started", "monitor exited", "monitor started", "monitor stopped"}) {
 		t.Fatalf("lifecycle records = %v", got)
 	}
 	for _, record := range records {
-		if record["plugin"] != "testplugin" {
-			t.Errorf("record without the plugin name: %v", record)
+		if record["monitor"] != "testmonitor" {
+			t.Errorf("record without the monitor name: %v", record)
 		}
 	}
 	if exited := records[1]; exited["level"] != "WARN" || exited["restart_in"] == nil || exited["uptime"] == nil {
@@ -128,9 +128,9 @@ func TestPluginLifecycleIsLogged(t *testing.T) {
 	}
 }
 
-func TestPluginThatCannotStartIsLogged(t *testing.T) {
+func TestMonitorThatCannotStartIsLogged(t *testing.T) {
 	logger, buf := capture()
-	s := New([]catalog.Entry{entry("testplugin", t.TempDir(), "missing-binary")}, nil, t.TempDir(), logger)
+	s := New([]catalog.Entry{entry("testmonitor", t.TempDir(), "missing-binary")}, nil, t.TempDir(), logger)
 	s.restartDelays = []time.Duration{time.Hour}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -142,8 +142,8 @@ func TestPluginThatCannotStartIsLogged(t *testing.T) {
 		t.Errorf("Run returned %v", err)
 	}
 
-	if len(records) != 1 || records[0]["msg"] != "plugin failed to start" || records[0]["level"] != "ERROR" ||
-		records[0]["plugin"] != "testplugin" || records[0]["retry_in"] != json.Number(strconv.FormatInt(int64(time.Hour), 10)) || !strings.Contains(fmt.Sprint(records[0]["error"]), "missing-binary") {
+	if len(records) != 1 || records[0]["msg"] != "monitor failed to start" || records[0]["level"] != "ERROR" ||
+		records[0]["monitor"] != "testmonitor" || records[0]["retry_in"] != json.Number(strconv.FormatInt(int64(time.Hour), 10)) || !strings.Contains(fmt.Sprint(records[0]["error"]), "missing-binary") {
 		t.Errorf("records = %v, want one error naming the command with retry_in", records)
 	}
 }

@@ -26,7 +26,7 @@ func queue(t *testing.T, pool *pgxpool.Pool, channels []string, at time.Time, ev
 	q := db.New(pool)
 	seqs := make([]int64, 0, len(events))
 	for i, e := range events {
-		err := q.SaveMonitorDescription(t.Context(), db.SaveMonitorDescriptionParams{Name: e.Plugin, DisplayName: e.DisplayName, Version: "1.0.0"})
+		err := q.SaveMonitorDescription(t.Context(), db.SaveMonitorDescriptionParams{Name: e.Monitor, DisplayName: e.DisplayName, Version: "1.0.0"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -35,7 +35,7 @@ func queue(t *testing.T, pool *pgxpool.Pool, channels []string, at time.Time, ev
 			severity = int16(monitorpb.Severity_SEVERITY_URGENT)
 		}
 		seq, err := q.InsertEvent(t.Context(), db.InsertEventParams{
-			Monitor: e.Plugin, EventID: e.Title, MonitorSeq: int64(i + 1), Kind: e.Kind, Severity: severity,
+			Monitor: e.Monitor, EventID: e.Title, MonitorSeq: int64(i + 1), Kind: e.Kind, Severity: severity,
 			OccurredAt: e.OccurredAt, Title: e.Title, Body: e.Body, Url: e.URL,
 		})
 		if err != nil {
@@ -80,10 +80,10 @@ func deliveriesOf(t *testing.T, pool *pgxpool.Pool, channel string) map[string]s
 
 func TestDueDeliveriesReturnsWhatIsDueInOrder(t *testing.T) {
 	pool := coretest.Pool(t)
-	urgent := Event{Plugin: "sei", DisplayName: "SEI", Kind: "return_overdue", Title: "Return overdue", Body: "Process 1\nUnit X", URL: "https://sei.example.org/1", Urgent: true, OccurredAt: t0.Add(-time.Hour)}
-	unnamed := Event{Plugin: "bare", Kind: "ping", Title: "Ping", OccurredAt: t0.Add(-2 * time.Hour)}
-	later := Event{Plugin: "sei", DisplayName: "SEI", Kind: "activity", Title: "Not due yet", OccurredAt: t0.Add(-3 * time.Hour)}
-	delivered := Event{Plugin: "sei", DisplayName: "SEI", Kind: "activity", Title: "Already sent on telegram", OccurredAt: t0.Add(-4 * time.Hour)}
+	urgent := Event{Monitor: "sei", DisplayName: "SEI", Kind: "return_overdue", Title: "Return overdue", Body: "Process 1\nUnit X", URL: "https://sei.example.org/1", Urgent: true, OccurredAt: t0.Add(-time.Hour)}
+	unnamed := Event{Monitor: "bare", Kind: "ping", Title: "Ping", OccurredAt: t0.Add(-2 * time.Hour)}
+	later := Event{Monitor: "sei", DisplayName: "SEI", Kind: "activity", Title: "Not due yet", OccurredAt: t0.Add(-3 * time.Hour)}
+	delivered := Event{Monitor: "sei", DisplayName: "SEI", Kind: "activity", Title: "Already sent on telegram", OccurredAt: t0.Add(-4 * time.Hour)}
 	due := t0.Add(-time.Minute)
 	seqs := queue(t, pool, []string{"telegram", "webhook"}, due, urgent, unnamed, delivered)
 	queue(t, pool, []string{"telegram"}, t0.Add(time.Second), later)
@@ -93,7 +93,7 @@ func TestDueDeliveriesReturnsWhatIsDueInOrder(t *testing.T) {
 	outbox := NewOutbox(pool)
 	pending := func(seq int64, channel string, e Event) DueDelivery {
 		if e.DisplayName == "" {
-			e.DisplayName = e.Plugin
+			e.DisplayName = e.Monitor
 		}
 		return DueDelivery{Delivery: Delivery{EventSeq: seq, Channel: channel, Status: deliveryPending, NextAttemptAt: due}, Event: e}
 	}
@@ -125,9 +125,9 @@ func TestDueDeliveriesReturnsWhatIsDueInOrder(t *testing.T) {
 func TestUpdateDeliveriesPersistsTheOutcome(t *testing.T) {
 	pool := coretest.Pool(t)
 	queue(t, pool, []string{"telegram"}, t0,
-		Event{Plugin: "sei", Kind: "activity", Title: "Sent", OccurredAt: t0},
-		Event{Plugin: "sei", Kind: "activity", Title: "Retried", OccurredAt: t0},
-		Event{Plugin: "sei", Kind: "activity", Title: "Given up", OccurredAt: t0},
+		Event{Monitor: "sei", Kind: "activity", Title: "Sent", OccurredAt: t0},
+		Event{Monitor: "sei", Kind: "activity", Title: "Retried", OccurredAt: t0},
+		Event{Monitor: "sei", Kind: "activity", Title: "Given up", OccurredAt: t0},
 	)
 	outbox := NewOutbox(pool)
 	due, err := outbox.DueDeliveries(t.Context(), "telegram", t0, 10)

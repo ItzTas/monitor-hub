@@ -24,7 +24,7 @@ func serveHealth(t *testing.T, pool *pgxpool.Pool) *httptest.ResponseRecorder {
 	return rec
 }
 
-func TestHealthIgnoresPluginState(t *testing.T) {
+func TestHealthIgnoresMonitorState(t *testing.T) {
 	pool := coretest.Pool(t)
 	queries := db.New(pool)
 	if err := queries.SaveMonitorDescription(t.Context(), db.SaveMonitorDescriptionParams{Name: "sei", DisplayName: "SEI", Version: "1.0.0"}); err != nil {

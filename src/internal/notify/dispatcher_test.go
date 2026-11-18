@@ -57,11 +57,11 @@ func newDispatcher(pool *pgxpool.Pool, now *time.Time, channels ...Channel) *Dis
 }
 
 func seiEvent(title string, at time.Time) Event {
-	return Event{Plugin: "sei", DisplayName: "SEI", Kind: "activity", Title: title, OccurredAt: at}
+	return Event{Monitor: "sei", DisplayName: "SEI", Kind: "activity", Title: title, OccurredAt: at}
 }
 
 func diarioEvent(title string, at time.Time) Event {
-	return Event{Plugin: "diario", DisplayName: "ALE/RR Official Gazette", Kind: "match", Title: title, OccurredAt: at}
+	return Event{Monitor: "diario", DisplayName: "ALE/RR Official Gazette", Kind: "match", Title: title, OccurredAt: at}
 }
 
 func titles(msg Message) []string {
@@ -72,7 +72,7 @@ func titles(msg Message) []string {
 	return list
 }
 
-func TestDispatcherSendsOneMessagePerPlugin(t *testing.T) {
+func TestDispatcherSendsOneMessagePerMonitor(t *testing.T) {
 	pool := coretest.Pool(t)
 	queue(t, pool, []string{"telegram"}, t0,
 		seiEvent("Process 1 moved", t0.Add(-3*time.Hour)),
@@ -104,7 +104,7 @@ func TestDispatcherSendsOneMessagePerPlugin(t *testing.T) {
 	}
 }
 
-func TestFailureStaysWithItsPluginAndChannel(t *testing.T) {
+func TestFailureStaysWithItsMonitorAndChannel(t *testing.T) {
 	pool := coretest.Pool(t)
 	queue(t, pool, []string{"telegram", "webhook"}, t0,
 		seiEvent("Process 1 moved", t0.Add(-2*time.Hour)),

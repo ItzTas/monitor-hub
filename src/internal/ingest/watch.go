@@ -62,7 +62,7 @@ func (s *Service) subscribe(ctx context.Context, name string, sch *schedule) {
 		case processChanged:
 			failures = 0
 		case unimplemented:
-			s.log.Info("the plugin has no Watch; polling it every 15s", "plugin", name)
+			s.log.Info("the monitor has no Watch; polling it every 15s", "monitor", name)
 			sch.request(pollRequest{full: true})
 			if !waitChange(ctx, changed) {
 				return
@@ -74,7 +74,7 @@ func (s *Service) subscribe(ctx context.Context, name string, sch *schedule) {
 			}
 			delay := reopenDelays[min(failures, len(reopenDelays)-1)]
 			failures++
-			s.log.Warn("the plugin's Watch stopped; polling it every 15s", "plugin", name, "error", end.err, "retry_in", delay)
+			s.log.Warn("the monitor's Watch stopped; polling it every 15s", "monitor", name, "error", end.err, "retry_in", delay)
 			select {
 			case <-ctx.Done():
 				return
@@ -183,5 +183,5 @@ func (s *Service) signal(name string, sch *schedule, w *watchStream, sig *monito
 	}
 	sch.setWatching(true)
 	sch.request(pollRequest{full: true})
-	s.log.Info("watching a plugin", "plugin", name)
+	s.log.Info("watching a monitor", "monitor", name)
 }

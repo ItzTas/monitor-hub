@@ -72,7 +72,7 @@ type bench struct {
 func newBench(t *testing.T, extra ...string) *bench {
 	t.Helper()
 	pluginsDir := t.TempDir()
-	installTestplugin(t, filepath.Join(pluginsDir, "testplugin"))
+	installTestmonitor(t, filepath.Join(pluginsDir, "testmonitor"))
 	b := &bench{t: t, dataDir: t.TempDir(), ntfy: &ntfyInbox{arrived: make(chan notification, 16)}}
 	ntfy := httptest.NewServer(b.ntfy)
 	t.Cleanup(ntfy.Close)
@@ -86,25 +86,25 @@ func newBench(t *testing.T, extra ...string) *bench {
 		"NTFY_URL=" + ntfy.URL + "/hub",
 		"NTFY_TOKEN=" + ntfyToken,
 		"PATH=" + os.Getenv("PATH"),
-		"TESTPLUGIN__EVENTS=2",
+		"TESTMONITOR__EVENTS=2",
 	}, extra...)
 	return b
 }
 
-func installTestplugin(t *testing.T, dir string) {
+func installTestmonitor(t *testing.T, dir string) {
 	t.Helper()
-	binary, err := os.ReadFile(testpluginBinary)
+	binary, err := os.ReadFile(testmonitorBinary)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	manifest := `{"protocol_version": 2, "name": "testplugin", "command": ["testplugin"]}`
+	manifest := `{"protocol_version": 2, "name": "testmonitor", "command": ["testmonitor"]}`
 	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "testplugin"), binary, 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "testmonitor"), binary, 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -125,7 +125,7 @@ func (b *bench) assemble(logger *slog.Logger) *application {
 
 func (b *bench) setEvents(count string) {
 	b.t.Helper()
-	path := filepath.Join(b.dataDir, "plugins", "testplugin", "events")
+	path := filepath.Join(b.dataDir, "plugins", "testmonitor", "events")
 	if err := os.WriteFile(path, []byte(count), 0o600); err != nil {
 		b.t.Fatal(err)
 	}
@@ -147,19 +147,19 @@ func startSupervisor(t *testing.T, app *application) {
 			t.Error("the supervisor did not stop within 15s")
 		}
 	})
-	waitForPlugin(t, app)
+	waitForMonitor(t, app)
 }
 
-func waitForPlugin(t *testing.T, app *application) {
+func waitForMonitor(t *testing.T, app *application) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, ok := app.supervisor.Client("testplugin"); ok {
+		if _, ok := app.supervisor.Client("testmonitor"); ok {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("the test plugin did not start within 15s")
+	t.Fatal("the test monitor did not start within 15s")
 }
 
 func request(t *testing.T, app *application, method, target, token string) *httptest.ResponseRecorder {

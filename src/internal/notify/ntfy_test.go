@@ -17,8 +17,8 @@ func TestNtfyPostsTheTextWithTitleTagsAndPriority(t *testing.T) {
 		priority      string
 		authorization string
 	}{
-		{"routine, public topic", Event{Plugin: "sei", Kind: "activity", Title: "New activity", OccurredAt: t0}, "", "default", ""},
-		{"urgent, protected topic", Event{Plugin: "sei", Kind: "return_overdue", Title: "Return overdue", Urgent: true, OccurredAt: t0}, "tk_0123456789", "high", "Bearer tk_0123456789"},
+		{"routine, public topic", Event{Monitor: "sei", Kind: "activity", Title: "New activity", OccurredAt: t0}, "", "default", ""},
+		{"urgent, protected topic", Event{Monitor: "sei", Kind: "return_overdue", Title: "Return overdue", Urgent: true, OccurredAt: t0}, "tk_0123456789", "high", "Bearer tk_0123456789"},
 	}
 	for _, tt := range tests {
 		server, rec := newServer(t, http.StatusOK, `{"id":"abc"}`)

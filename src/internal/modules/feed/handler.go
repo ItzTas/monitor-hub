@@ -17,7 +17,7 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	body, err := h.service.Render(r.Context(), r.URL.Query().Get("plugin"))
+	body, err := h.service.Render(r.Context(), r.URL.Query().Get("monitor"))
 	if err != nil {
 		h.log.Error("could not render the feed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

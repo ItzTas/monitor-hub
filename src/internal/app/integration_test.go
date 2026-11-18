@@ -36,7 +36,7 @@ func TestHubEndToEnd(t *testing.T) {
 	app.ingest.PollOnce(ctx)
 	app.dispatcher.RunOnce(ctx)
 
-	want := []notification{{title: "monitor-hub: 1 update from Test plugin", body: "ping 3"}}
+	want := []notification{{title: "monitor-hub: 1 update from Test monitor", body: "ping 3"}}
 	if got := b.ntfy.messages(); len(got) != 1 || got[0] != want[0] {
 		t.Errorf("ntfy received %+v, want %+v", got, want)
 	}
@@ -44,13 +44,13 @@ func TestHubEndToEnd(t *testing.T) {
 	if feed.Code != http.StatusOK || !strings.Contains(feed.Body.String(), "ping 3") {
 		t.Errorf("feed = %d, want it to list ping 3:\n%s", feed.Code, feed.Body.String())
 	}
-	plugins := request(t, app, http.MethodGet, "/api/plugins", apiToken)
-	for _, part := range []string{`"name":"testplugin"`, `"display_name":"Test plugin"`, `"running":true`, `"state":"idle"`} {
-		if !strings.Contains(plugins.Body.String(), part) {
-			t.Errorf("plugins = %d %s, want it to contain %s", plugins.Code, plugins.Body.String(), part)
+	monitors := request(t, app, http.MethodGet, "/api/monitors", apiToken)
+	for _, part := range []string{`"name":"testmonitor"`, `"display_name":"Test monitor"`, `"running":true`, `"state":"idle"`} {
+		if !strings.Contains(monitors.Body.String(), part) {
+			t.Errorf("monitors = %d %s, want it to contain %s", monitors.Code, monitors.Body.String(), part)
 		}
 	}
-	check := request(t, app, http.MethodPost, "/api/plugins/testplugin/check", apiToken)
+	check := request(t, app, http.MethodPost, "/api/monitors/testmonitor/check", apiToken)
 	if check.Code != http.StatusOK || strings.TrimSpace(check.Body.String()) != `{"accepted":true,"message":""}` {
 		t.Errorf("check = %d %s", check.Code, check.Body.String())
 	}
@@ -67,7 +67,7 @@ func TestRunStopsEverythingAndLogsNoSecret(t *testing.T) {
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx) }()
-	waitForPlugin(t, app)
+	waitForMonitor(t, app)
 
 	cancel()
 	select {
@@ -79,10 +79,10 @@ func TestRunStopsEverythingAndLogsNoSecret(t *testing.T) {
 		t.Fatal("Run did not return within 15s of the cancellation")
 	}
 
-	if _, ok := app.supervisor.Client("testplugin"); ok {
-		t.Error("the plugin is still connected after Run returned")
+	if _, ok := app.supervisor.Client("testmonitor"); ok {
+		t.Error("the monitor is still connected after Run returned")
 	}
-	for _, part := range []string{"monitor-hub starting", "plugins=testplugin", "channels=ntfy", "plugin=testplugin"} {
+	for _, part := range []string{"monitor-hub starting", "monitors=testmonitor", "channels=ntfy", "monitor=testmonitor"} {
 		if !strings.Contains(logs.String(), part) {
 			t.Errorf("the logs miss %q:\n%s", part, logs.String())
 		}
@@ -94,8 +94,8 @@ func TestRunStopsEverythingAndLogsNoSecret(t *testing.T) {
 	}
 }
 
-func TestHubNotifiesAsSoonAsThePluginSignals(t *testing.T) {
-	b := newBench(t, "TESTPLUGIN__WATCH=follow")
+func TestHubNotifiesAsSoonAsTheMonitorSignals(t *testing.T) {
+	b := newBench(t, "TESTMONITOR__WATCH=follow")
 	logs := newLogMessages()
 	app := b.assemble(slog.New(logs))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -106,7 +106,7 @@ func TestHubNotifiesAsSoonAsThePluginSignals(t *testing.T) {
 
 	b.setEvents("3")
 	written := time.Now()
-	want := notification{title: "monitor-hub: 1 update from Test plugin", body: "ping 3"}
+	want := notification{title: "monitor-hub: 1 update from Test monitor", body: "ping 3"}
 	select {
 	case got := <-b.ntfy.arrived:
 		t.Logf("the notification arrived %s after the event was written", time.Since(written))
@@ -114,7 +114,7 @@ func TestHubNotifiesAsSoonAsThePluginSignals(t *testing.T) {
 			t.Errorf("ntfy received %+v, want %+v", got, want)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("the notification did not arrive within 10s: the hub polls a plugin without Watch every 15s and the dispatcher every 30s, so the signal was not followed")
+		t.Fatal("the notification did not arrive within 10s: the hub polls a monitor without Watch every 15s and the dispatcher every 30s, so the signal was not followed")
 	}
 
 	cancel()
@@ -149,8 +149,8 @@ func TestRunFailsWhenTheAddressIsTaken(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("Run kept going with its address taken")
 	}
-	if _, ok := app.supervisor.Client("testplugin"); ok {
-		t.Error("a plugin runs although the hub could not serve")
+	if _, ok := app.supervisor.Client("testmonitor"); ok {
+		t.Error("a monitor runs although the hub could not serve")
 	}
 }
 
@@ -196,7 +196,7 @@ func TestAConsumerReceivesEventsAfterTheBaseline(t *testing.T) {
 		t.Errorf("notification fields = %q, want %q", names, fields)
 	}
 	bell := `{"emoji":"🔔","image":"` + icon + `"}`
-	for _, part := range []string{`"monitor":"testplugin"`, `"title":"ping 3"`, `"urgent":false`, `"icon":` + bell, `"monitor_icon":` + bell} {
+	for _, part := range []string{`"monitor":"testmonitor"`, `"title":"ping 3"`, `"urgent":false`, `"icon":` + bell, `"monitor_icon":` + bell} {
 		if !strings.Contains(got.data, part) {
 			t.Errorf("notification %s, want it to contain %s", got.data, part)
 		}
@@ -231,7 +231,7 @@ func TestRunEndsOpenStreams(t *testing.T) {
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx) }()
-	waitForPlugin(t, app)
+	waitForMonitor(t, app)
 	stream := openStream(t, "http://"+address, token)
 	if got := stream.next(t); got.event != "caught_up" {
 		t.Fatalf("got %+v, want caught_up", got)

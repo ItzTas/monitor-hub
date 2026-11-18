@@ -1,4 +1,4 @@
-package plugins
+package monitors
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 )
 
 type Repository interface {
-	ListPlugins(ctx context.Context) ([]stored, error)
+	ListMonitors(ctx context.Context) ([]stored, error)
 }
 
 type Postgres struct {
@@ -21,15 +21,15 @@ func NewPostgres(pool *pgxpool.Pool) *Postgres {
 	return &Postgres{queries: db.New(pool)}
 }
 
-func (r *Postgres) ListPlugins(ctx context.Context) ([]stored, error) {
+func (r *Postgres) ListMonitors(ctx context.Context) ([]stored, error) {
 	rows, err := r.queries.ListMonitors(ctx)
 	if err != nil {
 		return nil, err
 	}
-	plugins := make([]stored, 0, len(rows))
+	monitors := make([]stored, 0, len(rows))
 	for _, row := range rows {
-		plugins = append(plugins, stored{
-			Plugin: Plugin{
+		monitors = append(monitors, stored{
+			Monitor: Monitor{
 				Name:               row.Name,
 				DisplayName:        row.DisplayName,
 				Version:            row.Version,
@@ -42,7 +42,7 @@ func (r *Postgres) ListPlugins(ctx context.Context) ([]stored, error) {
 			State: row.State,
 		})
 	}
-	return plugins, nil
+	return monitors, nil
 }
 
 func utc(t *time.Time) *time.Time {

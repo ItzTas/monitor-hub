@@ -58,7 +58,7 @@ func (h *hub) store(t *testing.T, from, to int64) {
 	for seq := from; seq <= to; seq++ {
 		events = append(events, &monitorpb.Event{Seq: seq, Id: fmt.Sprintf("e%d", seq), Kind: "ping", OccurredAt: timestamppb.Now(), Title: fmt.Sprintf("ping %d", seq)})
 	}
-	if _, err := repo.StoreEvents(t.Context(), ingest.Batch{Plugin: "sei", After: from - 1, Events: events}); err != nil {
+	if _, err := repo.StoreEvents(t.Context(), ingest.Batch{Monitor: "sei", After: from - 1, Events: events}); err != nil {
 		t.Fatal(err)
 	}
 }

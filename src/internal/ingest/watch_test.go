@@ -25,12 +25,12 @@ func expectPoll(t *testing.T, r *running, want pollRequest) {
 }
 
 func restarting() error {
-	return status.Error(codes.Unavailable, "the plugin is restarting")
+	return status.Error(codes.Unavailable, "the monitor is restarting")
 }
 
-func TestASignalPollsThePluginAtOnce(t *testing.T) {
+func TestASignalPollsTheMonitorAtOnce(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := watched(plugin("sei", numbered(1, 3)...))
+	p := watched(monitor("sei", numbered(1, 3)...))
 	s := serviceOf(pool, newSwitchingClients(p))
 	var wakes atomic.Int64
 	s.wake = func() { wakes.Add(1) }
@@ -64,7 +64,7 @@ func TestASignalPollsThePluginAtOnce(t *testing.T) {
 
 func TestHeartbeatsDoNotPostponeTheSafetyPoll(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := watched(plugin("sei", numbered(1, 3)...))
+	p := watched(monitor("sei", numbered(1, 3)...))
 	r := start(t, serviceOf(pool, newSwitchingClients(p)))
 	r.clock.waitArmed(t, PollInterval)
 
@@ -96,9 +96,9 @@ func TestHeartbeatsDoNotPostponeTheSafetyPoll(t *testing.T) {
 	expectStored(t, pool, "sei", 4, 2, 4, true)
 }
 
-func TestAPluginWithoutWatchIsAskedOncePerProcess(t *testing.T) {
+func TestAMonitorWithoutWatchIsAskedOncePerProcess(t *testing.T) {
 	pool := coretest.Pool(t)
-	p1 := plugin("sei", numbered(1, 3)...)
+	p1 := monitor("sei", numbered(1, 3)...)
 	clients := newSwitchingClients(p1)
 	r := start(t, serviceOf(pool, clients))
 
@@ -116,7 +116,7 @@ func TestAPluginWithoutWatchIsAskedOncePerProcess(t *testing.T) {
 	}
 
 	statusBefore := p1.statusCalls.Load()
-	p2 := plugin("sei", numbered(1, 3)...)
+	p2 := monitor("sei", numbered(1, 3)...)
 	clients.drop("sei")
 	clients.set("sei", p2)
 	expectPoll(t, r, pollRequest{full: true})
@@ -134,14 +134,14 @@ func TestAPluginWithoutWatchIsAskedOncePerProcess(t *testing.T) {
 	}
 	for _, delay := range reopenDelays {
 		if armed := r.clock.armedCount(delay); armed != 0 {
-			t.Errorf("after(%s) calls = %d, want no back-off for a plugin without Watch", delay, armed)
+			t.Errorf("after(%s) calls = %d, want no back-off for a monitor without Watch", delay, armed)
 		}
 	}
 }
 
 func TestAFailedWatchIsRetriedWithBackOff(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := watched(plugin("sei", numbered(1, 3)...))
+	p := watched(monitor("sei", numbered(1, 3)...))
 	s := serviceOf(pool, newSwitchingClients(p))
 	wall := withSteppingClock(s)
 	r := start(t, s)
@@ -177,7 +177,7 @@ func TestAFailedWatchIsRetriedWithBackOff(t *testing.T) {
 
 func TestAStreamThatSignalsOnceAndEndsWalksTheBackOff(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := watched(plugin("sei", numbered(1, 3)...))
+	p := watched(monitor("sei", numbered(1, 3)...))
 	s := serviceOf(pool, newSwitchingClients(p))
 	wall := withSteppingClock(s)
 	r := start(t, s)
@@ -199,7 +199,7 @@ func TestAStreamThatSignalsOnceAndEndsWalksTheBackOff(t *testing.T) {
 
 func TestAShortStreamThatSignalsTwiceAndEndsWalksTheBackOff(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := watched(plugin("sei", numbered(1, 3)...))
+	p := watched(monitor("sei", numbered(1, 3)...))
 	s := serviceOf(pool, newSwitchingClients(p))
 	wall := withSteppingClock(s)
 	r := start(t, s)
@@ -223,7 +223,7 @@ func TestAShortStreamThatSignalsTwiceAndEndsWalksTheBackOff(t *testing.T) {
 
 func TestAProcessChangeDuringTheBackOffStartsItAgain(t *testing.T) {
 	pool := coretest.Pool(t)
-	p1 := watched(plugin("sei", numbered(1, 3)...))
+	p1 := watched(monitor("sei", numbered(1, 3)...))
 	clients := newSwitchingClients(p1)
 	r := start(t, serviceOf(pool, clients))
 
@@ -232,7 +232,7 @@ func TestAProcessChangeDuringTheBackOffStartsItAgain(t *testing.T) {
 	p1.nextStream(t).failWith(t, restarting())
 	r.clock.waitArmed(t, 5*time.Second)
 
-	p2 := watched(plugin("sei", numbered(1, 3)...))
+	p2 := watched(monitor("sei", numbered(1, 3)...))
 	clients.set("sei", p2)
 	p2.nextStream(t).failWith(t, restarting())
 	r.clock.fire(t, time.Second)
@@ -244,7 +244,7 @@ func TestAProcessChangeDuringTheBackOffStartsItAgain(t *testing.T) {
 
 func TestASilentWatchFallsBackToPollingAndReopens(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := watched(plugin("sei", numbered(1, 3)...))
+	p := watched(monitor("sei", numbered(1, 3)...))
 	r := start(t, serviceOf(pool, newSwitchingClients(p)))
 	r.clock.waitArmed(t, PollInterval)
 
@@ -266,9 +266,9 @@ func TestASilentWatchFallsBackToPollingAndReopens(t *testing.T) {
 	}
 }
 
-func TestARestartedPluginIsWatchedOnItsNewProcess(t *testing.T) {
+func TestARestartedMonitorIsWatchedOnItsNewProcess(t *testing.T) {
 	pool := coretest.Pool(t)
-	p1 := watched(plugin("sei", numbered(1, 3)...))
+	p1 := watched(monitor("sei", numbered(1, 3)...))
 	clients := newSwitchingClients(p1)
 	r := start(t, serviceOf(pool, clients))
 
@@ -281,7 +281,7 @@ func TestARestartedPluginIsWatchedOnItsNewProcess(t *testing.T) {
 	expectPoll(t, r, pollRequest{full: true})
 	describes, statuses, events, watches := p1.describeCalls.Load(), p1.statusCalls.Load(), p1.eventsCalls.Load(), p1.watchCalls.Load()
 
-	p2 := watched(plugin("sei", numbered(1, 4)...))
+	p2 := watched(monitor("sei", numbered(1, 4)...))
 	clients.set("sei", p2)
 	p2.nextStream(t).signal(t, 4)
 	expectPoll(t, r, pollRequest{full: true})
@@ -300,7 +300,7 @@ func TestABurstOfSignalsNeverOverlapsPolls(t *testing.T) {
 	pool := coretest.Pool(t)
 	gate := make(chan struct{})
 	held := make(chan struct{})
-	p := watched(plugin("sei", numbered(1, 3)...))
+	p := watched(monitor("sei", numbered(1, 3)...))
 	p.respond = func(ctx context.Context, req *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		if req.GetAfter() != 3 {
 			return p.page(req), nil
@@ -342,9 +342,9 @@ func TestABurstOfSignalsNeverOverlapsPolls(t *testing.T) {
 
 func TestRunEndsEveryStreamBeforeItReturns(t *testing.T) {
 	pool := coretest.Pool(t)
-	a := watched(plugin("a", numbered(1, 2)...))
-	b := plugin("b", numbered(1, 2)...)
-	c := watched(plugin("c", numbered(1, 2)...))
+	a := watched(monitor("a", numbered(1, 2)...))
+	b := monitor("b", numbered(1, 2)...)
+	c := watched(monitor("c", numbered(1, 2)...))
 	a.release = make(chan struct{})
 	release := sync.OnceFunc(func() { close(a.release) })
 	r := start(t, serviceOf(pool, newSwitchingClients(a, b, c)))
@@ -389,14 +389,14 @@ func TestRunEndsEveryStreamBeforeItReturns(t *testing.T) {
 func TestPollsCutShortByTheEndOfRunLogNoWarning(t *testing.T) {
 	pool := coretest.Pool(t)
 	entered := make(chan struct{})
-	p := plugin("sei", numbered(1, 3)...)
+	p := monitor("sei", numbered(1, 3)...)
 	p.stallStatus = make(chan struct{}, 1)
 	p.respond = func(ctx context.Context, _ *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		close(entered)
 		<-ctx.Done()
 		return nil, status.FromContextError(ctx.Err()).Err()
 	}
-	failing := plugin("tjsp", numbered(1, 3)...)
+	failing := monitor("tjsp", numbered(1, 3)...)
 	failing.respond = unavailable
 	s := newService(pool, p, failing)
 	logs := &recordedLogs{}
@@ -409,7 +409,7 @@ func TestPollsCutShortByTheEndOfRunLogNoWarning(t *testing.T) {
 	waitFor(t, p.stallStatus, "the Status call")
 
 	r.stop(t)
-	if warnings := logs.atLeast(slog.LevelWarn); len(warnings) != 1 || warnings[0] != "poll a plugin" {
+	if warnings := logs.atLeast(slog.LevelWarn); len(warnings) != 1 || warnings[0] != "poll a monitor" {
 		t.Errorf("warnings = %q, want only the failed poll of tjsp before the end of Run", warnings)
 	}
 }

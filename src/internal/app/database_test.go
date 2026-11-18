@@ -11,7 +11,7 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 )
 
-var testpluginBinary string
+var testmonitorBinary string
 
 func TestMain(m *testing.M) {
 	os.Exit(runTests(m))
@@ -24,10 +24,10 @@ func runTests(m *testing.M) int {
 		return 1
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	testpluginBinary = filepath.Join(dir, "testplugin")
-	output, err := exec.CommandContext(context.Background(), "go", "build", "-o", testpluginBinary, "github.com/ItzTas/monitor-hub/src/internal/testplugin").CombinedOutput()
+	testmonitorBinary = filepath.Join(dir, "testmonitor")
+	output, err := exec.CommandContext(context.Background(), "go", "build", "-o", testmonitorBinary, "github.com/ItzTas/monitor-hub/src/internal/testmonitor").CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "build the test plugin: %v\n%s", err, output)
+		fmt.Fprintf(os.Stderr, "build the test monitor: %v\n%s", err, output)
 		return 1
 	}
 	return coretest.Run(m)

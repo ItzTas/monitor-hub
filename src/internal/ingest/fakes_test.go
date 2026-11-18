@@ -26,7 +26,7 @@ var (
 	occurredAt = time.Date(2026, 11, 9, 8, 30, 0, 0, time.UTC)
 )
 
-type fakePlugin struct {
+type fakeMonitor struct {
 	monitorpb.MonitorClient
 	name          string
 	version       string
@@ -46,8 +46,8 @@ type fakePlugin struct {
 	stallStatus   chan struct{}
 }
 
-func plugin(name string, events ...*monitorpb.Event) *fakePlugin {
-	return &fakePlugin{
+func monitor(name string, events ...*monitorpb.Event) *fakeMonitor {
+	return &fakeMonitor{
 		name:    name,
 		version: "1.0.0",
 		status:  &monitorpb.StatusResponse{State: monitorpb.State_STATE_IDLE},
@@ -55,12 +55,12 @@ func plugin(name string, events ...*monitorpb.Event) *fakePlugin {
 	}
 }
 
-func (p *fakePlugin) Describe(context.Context, *monitorpb.DescribeRequest, ...grpc.CallOption) (*monitorpb.DescribeResponse, error) {
+func (p *fakeMonitor) Describe(context.Context, *monitorpb.DescribeRequest, ...grpc.CallOption) (*monitorpb.DescribeResponse, error) {
 	p.describeCalls.Add(1)
 	return &monitorpb.DescribeResponse{Name: p.name, DisplayName: strings.ToUpper(p.name), Version: p.version}, nil
 }
 
-func (p *fakePlugin) Status(ctx context.Context, _ *monitorpb.StatusRequest, _ ...grpc.CallOption) (*monitorpb.StatusResponse, error) {
+func (p *fakeMonitor) Status(ctx context.Context, _ *monitorpb.StatusRequest, _ ...grpc.CallOption) (*monitorpb.StatusResponse, error) {
 	p.statusCalls.Add(1)
 	if p.stallStatus != nil {
 		p.stallStatus <- struct{}{}
@@ -72,7 +72,7 @@ func (p *fakePlugin) Status(ctx context.Context, _ *monitorpb.StatusRequest, _ .
 	return p.status, nil
 }
 
-func (p *fakePlugin) Events(ctx context.Context, req *monitorpb.EventsRequest, _ ...grpc.CallOption) (*monitorpb.EventsResponse, error) {
+func (p *fakeMonitor) Events(ctx context.Context, req *monitorpb.EventsRequest, _ ...grpc.CallOption) (*monitorpb.EventsResponse, error) {
 	p.eventsCalls.Add(1)
 	p.noteRunningEvents(p.eventsRunning.Add(1))
 	defer p.eventsRunning.Add(-1)
@@ -82,7 +82,7 @@ func (p *fakePlugin) Events(ctx context.Context, req *monitorpb.EventsRequest, _
 	return p.page(req), nil
 }
 
-func (p *fakePlugin) Watch(ctx context.Context, _ *monitorpb.WatchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[monitorpb.WatchResponse], error) {
+func (p *fakeMonitor) Watch(ctx context.Context, _ *monitorpb.WatchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[monitorpb.WatchResponse], error) {
 	p.watchCalls.Add(1)
 	if p.watch == nil {
 		return nil, status.Error(codes.Unimplemented, "method Watch not implemented")
@@ -90,7 +90,7 @@ func (p *fakePlugin) Watch(ctx context.Context, _ *monitorpb.WatchRequest, _ ...
 	return p.watch(ctx)
 }
 
-func watched(p *fakePlugin) *fakePlugin {
+func watched(p *fakeMonitor) *fakeMonitor {
 	p.streams = make(chan *fakeStream, 16)
 	p.release = make(chan struct{})
 	close(p.release)
@@ -110,7 +110,7 @@ func watched(p *fakePlugin) *fakePlugin {
 	return p
 }
 
-func (p *fakePlugin) nextStream(t *testing.T) *fakeStream {
+func (p *fakeMonitor) nextStream(t *testing.T) *fakeStream {
 	t.Helper()
 	select {
 	case stream := <-p.streams:
@@ -174,7 +174,7 @@ func (f *fakeStream) failWith(t *testing.T, err error) {
 	}
 }
 
-func (p *fakePlugin) noteRunningEvents(running int64) {
+func (p *fakeMonitor) noteRunningEvents(running int64) {
 	for {
 		most := p.eventsMost.Load()
 		if running <= most || p.eventsMost.CompareAndSwap(most, running) {
@@ -183,13 +183,13 @@ func (p *fakePlugin) noteRunningEvents(running int64) {
 	}
 }
 
-func (p *fakePlugin) add(events ...*monitorpb.Event) {
+func (p *fakeMonitor) add(events ...*monitorpb.Event) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, events...)
 }
 
-func (p *fakePlugin) page(req *monitorpb.EventsRequest) *monitorpb.EventsResponse {
+func (p *fakeMonitor) page(req *monitorpb.EventsRequest) *monitorpb.EventsResponse {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var page []*monitorpb.Event
@@ -211,7 +211,7 @@ func unavailable(context.Context, *monitorpb.EventsRequest) (*monitorpb.EventsRe
 	return nil, status.Error(codes.Unavailable, "not logged in yet")
 }
 
-type fakeClients map[string]*fakePlugin
+type fakeClients map[string]*fakeMonitor
 
 func (c fakeClients) Names() []string {
 	return slices.Sorted(maps.Keys(c))
@@ -233,13 +233,13 @@ func (c fakeClients) Track(name string) (monitorpb.MonitorClient, bool, <-chan s
 type switchingClients struct {
 	mu      sync.Mutex
 	names   []string
-	current map[string]*fakePlugin
+	current map[string]*fakeMonitor
 	changes map[string]chan struct{}
 }
 
-func newSwitchingClients(plugins ...*fakePlugin) *switchingClients {
-	c := &switchingClients{current: map[string]*fakePlugin{}, changes: map[string]chan struct{}{}}
-	for _, p := range plugins {
+func newSwitchingClients(monitors ...*fakeMonitor) *switchingClients {
+	c := &switchingClients{current: map[string]*fakeMonitor{}, changes: map[string]chan struct{}{}}
+	for _, p := range monitors {
 		c.names = append(c.names, p.name)
 		c.current[p.name] = p
 	}
@@ -276,7 +276,7 @@ func (c *switchingClients) Track(name string) (monitorpb.MonitorClient, bool, <-
 	return p, true, changed
 }
 
-func (c *switchingClients) set(name string, p *fakePlugin) {
+func (c *switchingClients) set(name string, p *fakeMonitor) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.current[name] = p
@@ -297,9 +297,9 @@ func (c *switchingClients) announce(name string) {
 	c.changes[name] = make(chan struct{})
 }
 
-func newService(pool *pgxpool.Pool, plugins ...*fakePlugin) *Service {
+func newService(pool *pgxpool.Pool, monitors ...*fakeMonitor) *Service {
 	clients := fakeClients{}
-	for _, p := range plugins {
+	for _, p := range monitors {
 		clients[p.name] = p
 	}
 	return serviceOf(pool, clients)

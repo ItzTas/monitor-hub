@@ -16,14 +16,14 @@ import (
 
 func TestFirstIngestStoresWithoutDeliveries(t *testing.T) {
 	pool := coretest.Pool(t)
-	newService(pool, plugin("sei", numbered(1, 3)...)).PollOnce(t.Context())
+	newService(pool, monitor("sei", numbered(1, 3)...)).PollOnce(t.Context())
 
 	expectStored(t, pool, "sei", 3, 0, 3, true)
 }
 
 func TestNewEventsQueueOneDeliveryPerChannel(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := plugin("sei", numbered(1, 3)...)
+	p := monitor("sei", numbered(1, 3)...)
 	s := newService(pool, p)
 	s.PollOnce(t.Context())
 
@@ -31,7 +31,7 @@ func TestNewEventsQueueOneDeliveryPerChannel(t *testing.T) {
 	s.PollOnce(t.Context())
 
 	type delivery struct {
-		pluginSeq     int64
+		monitorSeq    int64
 		channel       string
 		status        string
 		attempts      int32
@@ -48,7 +48,7 @@ func TestNewEventsQueueOneDeliveryPerChannel(t *testing.T) {
 	var got []delivery
 	for rows.Next() {
 		var d delivery
-		if err := rows.Scan(&d.pluginSeq, &d.channel, &d.status, &d.attempts, &d.nextAttemptAt); err != nil {
+		if err := rows.Scan(&d.monitorSeq, &d.channel, &d.status, &d.attempts, &d.nextAttemptAt); err != nil {
 			t.Fatal(err)
 		}
 		d.nextAttemptAt = d.nextAttemptAt.UTC()
@@ -58,8 +58,8 @@ func TestNewEventsQueueOneDeliveryPerChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []delivery{
-		{pluginSeq: 4, channel: "ntfy", status: "pending", nextAttemptAt: fixedNow},
-		{pluginSeq: 4, channel: "telegram", status: "pending", nextAttemptAt: fixedNow},
+		{monitorSeq: 4, channel: "ntfy", status: "pending", nextAttemptAt: fixedNow},
+		{monitorSeq: 4, channel: "telegram", status: "pending", nextAttemptAt: fixedNow},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("deliveries = %+v\nwant         %+v", got, want)
@@ -69,7 +69,7 @@ func TestNewEventsQueueOneDeliveryPerChannel(t *testing.T) {
 
 func TestResentEventsAreStoredOnce(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := plugin("sei", numbered(1, 3)...)
+	p := monitor("sei", numbered(1, 3)...)
 	s := newService(pool, p)
 	s.PollOnce(t.Context())
 
@@ -85,24 +85,24 @@ func TestResentEventsAreStoredOnce(t *testing.T) {
 	}
 }
 
-func TestFailingPluginDoesNotStopOthers(t *testing.T) {
+func TestFailingMonitorDoesNotStopOthers(t *testing.T) {
 	pool := coretest.Pool(t)
-	failing := plugin("a")
+	failing := monitor("a")
 	failing.respond = unavailable
-	newService(pool, failing, plugin("b", numbered(1, 3)...)).PollOnce(t.Context())
+	newService(pool, failing, monitor("b", numbered(1, 3)...)).PollOnce(t.Context())
 
 	expectStored(t, pool, "b", 3, 0, 3, true)
 	expectStored(t, pool, "a", 0, 0, 0, false)
 }
 
-func TestHungPluginDoesNotStallOthers(t *testing.T) {
+func TestHungMonitorDoesNotStallOthers(t *testing.T) {
 	pool := coretest.Pool(t)
-	hung := plugin("a")
+	hung := monitor("a")
 	hung.respond = func(ctx context.Context, _ *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		<-ctx.Done()
 		return nil, status.FromContextError(ctx.Err()).Err()
 	}
-	s := newService(pool, hung, plugin("b", numbered(1, 3)...))
+	s := newService(pool, hung, monitor("b", numbered(1, 3)...))
 	s.callTimeout = 100 * time.Millisecond
 
 	done := make(chan struct{})
@@ -113,7 +113,7 @@ func TestHungPluginDoesNotStallOthers(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
-		t.Fatal("PollOnce did not return while a plugin hung")
+		t.Fatal("PollOnce did not return while a monitor hung")
 	}
 
 	expectStored(t, pool, "b", 3, 0, 3, true)
@@ -122,7 +122,7 @@ func TestHungPluginDoesNotStallOthers(t *testing.T) {
 
 func TestPagesUntilShortPage(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := plugin("sei", numbered(1, 1200)...)
+	p := monitor("sei", numbered(1, 1200)...)
 	var afters []int64
 	var baselinedWhenAsked []bool
 	p.respond = func(ctx context.Context, req *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
@@ -148,7 +148,7 @@ func TestPagesUntilShortPage(t *testing.T) {
 
 func TestBaselineSurvivesFailedFirstRead(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := plugin("sei")
+	p := monitor("sei")
 	p.respond = unavailable
 	s := newService(pool, p)
 	s.PollOnce(t.Context())
@@ -166,7 +166,7 @@ func TestBaselineSurvivesFailedFirstRead(t *testing.T) {
 
 func TestQueuedDeliveriesWakeTheDispatcher(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := plugin("sei", numbered(1, 3)...)
+	p := monitor("sei", numbered(1, 3)...)
 	s := newService(pool, p)
 	wakes := 0
 	s.wake = func() { wakes++ }
@@ -188,7 +188,7 @@ func TestQueuedDeliveriesWakeTheDispatcher(t *testing.T) {
 		t.Errorf("wakes after a resent event = %d, want 1", wakes)
 	}
 
-	quiet := plugin("quiet", numbered(1, 1)...)
+	quiet := monitor("quiet", numbered(1, 1)...)
 	silent := NewService(NewPostgres(pool), fakeClients{"quiet": quiet}, nil,
 		slog.New(slog.DiscardHandler), func() time.Time { return fixedNow })
 	silentWakes := 0
@@ -203,7 +203,7 @@ func TestQueuedDeliveriesWakeTheDispatcher(t *testing.T) {
 
 func TestNewEventsAreAnnouncedEvenWithoutChannels(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := plugin("sei", numbered(1, 3)...)
+	p := monitor("sei", numbered(1, 3)...)
 	announced := 0
 	s := NewService(NewPostgres(pool), fakeClients{"sei": p}, nil, slog.New(slog.DiscardHandler),
 		func() time.Time { return fixedNow }, WithNewEvents(func() { announced++ }))

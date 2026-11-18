@@ -12,8 +12,8 @@ var t0 = time.Date(2026, 11, 10, 18, 0, 0, 0, time.UTC)
 
 func TestComposeListsEachTitleWithItsBodyIndented(t *testing.T) {
 	events := []Event{
-		{Plugin: "sei", DisplayName: "SEI", Kind: "activity", Title: "New activity on process 00000.000001/2026-00", Body: "Process received\nby SEDEMO/NUPROC", OccurredAt: t0},
-		{Plugin: "sei", DisplayName: "SEI", Kind: "document", Title: "New document on process 00000.000002/2026-00", URL: "https://sei.example.org/2", OccurredAt: t0},
+		{Monitor: "sei", DisplayName: "SEI", Kind: "activity", Title: "New activity on process 00000.000001/2026-00", Body: "Process received\nby SEDEMO/NUPROC", OccurredAt: t0},
+		{Monitor: "sei", DisplayName: "SEI", Kind: "document", Title: "New document on process 00000.000002/2026-00", URL: "https://sei.example.org/2", OccurredAt: t0},
 	}
 
 	msg := Compose("SEI", events)
@@ -34,7 +34,7 @@ func TestComposeListsEachTitleWithItsBodyIndented(t *testing.T) {
 func TestComposeListsTenAndCountsTheRest(t *testing.T) {
 	var events []Event
 	for i := range 12 {
-		events = append(events, Event{Plugin: "diario", Kind: "match", Title: fmt.Sprintf("Edition %02d", i+1), OccurredAt: t0})
+		events = append(events, Event{Monitor: "diario", Kind: "match", Title: fmt.Sprintf("Edition %02d", i+1), OccurredAt: t0})
 	}
 
 	msg := Compose("ALE/RR Official Gazette", events)
@@ -47,8 +47,8 @@ func TestComposeListsTenAndCountsTheRest(t *testing.T) {
 }
 
 func TestComposeIsUrgentWhenAnyEventIs(t *testing.T) {
-	routine := Event{Plugin: "sei", Kind: "activity", Title: "Activity"}
-	urgent := Event{Plugin: "sei", Kind: "return_overdue", Title: "Overdue", Urgent: true}
+	routine := Event{Monitor: "sei", Kind: "activity", Title: "Activity"}
+	urgent := Event{Monitor: "sei", Kind: "return_overdue", Title: "Overdue", Urgent: true}
 	cases := map[string]struct {
 		events []Event
 		want   bool

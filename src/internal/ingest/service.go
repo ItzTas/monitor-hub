@@ -87,7 +87,7 @@ func (s *Service) loop(ctx context.Context, name string, sch *schedule) {
 		if !ok {
 			continue
 		}
-		s.pollPlugin(ctx, name, req)
+		s.pollMonitor(ctx, name, req)
 		if req.full {
 			timer = nil
 		}
@@ -118,18 +118,18 @@ func (s *Service) wait(ctx context.Context, sch *schedule, timer <-chan time.Tim
 func (s *Service) PollOnce(ctx context.Context) {
 	var wg sync.WaitGroup
 	for _, name := range s.clients.Names() {
-		wg.Go(func() { s.pollPlugin(ctx, name, pollRequest{full: true}) })
+		wg.Go(func() { s.pollMonitor(ctx, name, pollRequest{full: true}) })
 	}
 	wg.Wait()
 }
 
-func (s *Service) pollPlugin(ctx context.Context, name string, req pollRequest) {
+func (s *Service) pollMonitor(ctx context.Context, name string, req pollRequest) {
 	client, ok := s.clients.Client(name)
 	if !ok {
 		return
 	}
 	if err := s.poll(ctx, name, client, req); err != nil {
-		s.failed(ctx, slog.LevelWarn, "poll a plugin", name, err)
+		s.failed(ctx, slog.LevelWarn, "poll a monitor", name, err)
 	}
 }
 
@@ -137,7 +137,7 @@ func (s *Service) failed(ctx context.Context, level slog.Level, message, name st
 	if ctx.Err() != nil {
 		return
 	}
-	s.log.Log(ctx, level, message, "plugin", name, "error", err)
+	s.log.Log(ctx, level, message, "monitor", name, "error", err)
 }
 
 func (s *Service) polled(name string, req pollRequest) {
@@ -175,7 +175,7 @@ func (s *Service) describe(ctx context.Context, name string, client monitorpb.Mo
 		return fmt.Errorf("describe: %w", err)
 	}
 	if description.GetName() != name {
-		return fmt.Errorf("the plugin describes itself as %q", description.GetName())
+		return fmt.Errorf("the monitor describes itself as %q", description.GetName())
 	}
 	if err := s.repo.SaveDescription(ctx, description); err != nil {
 		return fmt.Errorf("save the description: %w", err)
@@ -186,11 +186,11 @@ func (s *Service) describe(ctx context.Context, name string, client monitorpb.Mo
 func (s *Service) refreshStatus(ctx context.Context, name string, client monitorpb.MonitorClient) {
 	status, err := call(ctx, s.callTimeout, client.Status, &monitorpb.StatusRequest{})
 	if err != nil {
-		s.failed(ctx, slog.LevelWarn, "read a plugin status", name, err)
+		s.failed(ctx, slog.LevelWarn, "read a monitor status", name, err)
 		return
 	}
 	if err := s.repo.SaveStatus(ctx, name, status, s.now()); err != nil {
-		s.failed(ctx, slog.LevelError, "save a plugin status", name, err)
+		s.failed(ctx, slog.LevelError, "save a monitor status", name, err)
 	}
 }
 
@@ -205,7 +205,7 @@ func (s *Service) ingest(ctx context.Context, name string, client monitorpb.Moni
 			return fmt.Errorf("the page after %d has %d events, over the limit of %d", cursor, len(events), EventsPageSize)
 		}
 		inserted, err := s.repo.StoreEvents(ctx, Batch{
-			Plugin:   name,
+			Monitor:  name,
 			After:    cursor,
 			Events:   events,
 			Channels: s.channels,
@@ -216,7 +216,7 @@ func (s *Service) ingest(ctx context.Context, name string, client monitorpb.Moni
 			return fmt.Errorf("store events after %d: %w", cursor, err)
 		}
 		if inserted > 0 {
-			s.log.Info("stored events", "plugin", name, "count", inserted, "baseline", baseline)
+			s.log.Info("stored events", "monitor", name, "count", inserted, "baseline", baseline)
 		}
 		if inserted > 0 && !baseline {
 			s.newEvents()
@@ -235,7 +235,7 @@ func (s *Service) ingest(ctx context.Context, name string, client monitorpb.Moni
 	if err := s.repo.CompleteBaseline(ctx, name); err != nil {
 		return fmt.Errorf("complete the baseline: %w", err)
 	}
-	s.log.Info("baseline complete", "plugin", name)
+	s.log.Info("baseline complete", "monitor", name)
 	return nil
 }
 

@@ -15,7 +15,7 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/supervisor"
 )
 
-const rustPlugin = "example-rust"
+const rustMonitor = "example-rust"
 
 type record struct {
 	level   slog.Level
@@ -74,17 +74,17 @@ func (r *records) waitFor(timeout time.Duration, done func([]record) bool) []rec
 	}
 }
 
-func fromPlugin(r record) bool {
-	return r.attrs["plugin"].String() == rustPlugin
+func fromMonitor(r record) bool {
+	return r.attrs["monitor"].String() == rustMonitor
 }
 
 func isHello(r record) bool {
 	answer, ok := r.attrs["answer"].Any().(json.Number)
-	return fromPlugin(r) && r.level == slog.LevelInfo && r.message == "hello from rust" && ok && answer == "42"
+	return fromMonitor(r) && r.level == slog.LevelInfo && r.message == "hello from rust" && ok && answer == "42"
 }
 
-func isPluginError(r record) bool {
-	return fromPlugin(r) && r.level == slog.LevelError
+func isMonitorError(r record) bool {
+	return fromMonitor(r) && r.level == slog.LevelError
 }
 
 func parsedFromJSON(r record) bool {
@@ -93,19 +93,19 @@ func parsedFromJSON(r record) bool {
 }
 
 func isLifecycle(r record) bool {
-	return slices.Contains([]string{"plugin started", "plugin exited", "plugin stopped", "plugin failed to start"}, r.message)
+	return slices.Contains([]string{"monitor started", "monitor exited", "monitor stopped", "monitor failed to start"}, r.message)
 }
 
 func TestRustLogsKeepTheirLevels(t *testing.T) {
 	binary := buildRustExample(t, "fixed")
-	pluginDir := t.TempDir()
-	command := filepath.Join(pluginDir, rustPlugin)
+	monitorDir := t.TempDir()
+	command := filepath.Join(monitorDir, rustMonitor)
 	if err := os.Symlink(binary, command); err != nil {
 		t.Fatal(err)
 	}
 	entry := catalog.Entry{
-		Manifest: catalog.Manifest{ProtocolVersion: 2, Name: rustPlugin, Command: []string{rustPlugin}},
-		Dir:      pluginDir,
+		Manifest: catalog.Manifest{ProtocolVersion: 2, Name: rustMonitor, Command: []string{rustMonitor}},
+		Dir:      monitorDir,
 	}
 	captured := &records{}
 	s := supervisor.New([]catalog.Entry{entry}, []string{"EXAMPLE_RUST__LOG_DEMO=1"}, t.TempDir(), slog.New(recorder{records: captured}))
@@ -115,7 +115,7 @@ func TestRustLogsKeepTheirLevels(t *testing.T) {
 	go func() { done <- s.Run(ctx) }()
 
 	got := captured.waitFor(10*time.Second, func(rs []record) bool {
-		return slices.ContainsFunc(rs, isHello) && slices.ContainsFunc(rs, isPluginError)
+		return slices.ContainsFunc(rs, isHello) && slices.ContainsFunc(rs, isMonitorError)
 	})
 	cancel()
 	select {
@@ -128,14 +128,14 @@ func TestRustLogsKeepTheirLevels(t *testing.T) {
 	}
 
 	if !slices.ContainsFunc(got, isHello) {
-		t.Error("no info record \"hello from rust\" with plugin=example-rust and answer=42")
+		t.Error("no info record \"hello from rust\" with monitor=example-rust and answer=42")
 	}
-	if !slices.ContainsFunc(got, isPluginError) {
-		t.Error("no error record from the plugin")
+	if !slices.ContainsFunc(got, isMonitorError) {
+		t.Error("no error record from the monitor")
 	}
 	for _, r := range captured.snapshot() {
-		if fromPlugin(r) && !isLifecycle(r) && !parsedFromJSON(r) {
-			t.Errorf("a plugin line was logged as plain text: %s %q", r.level, r.message)
+		if fromMonitor(r) && !isLifecycle(r) && !parsedFromJSON(r) {
+			t.Errorf("a monitor line was logged as plain text: %s %q", r.level, r.message)
 		}
 	}
 	assertNoProcess(t, command)

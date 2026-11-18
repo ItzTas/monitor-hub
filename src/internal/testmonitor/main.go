@@ -127,7 +127,7 @@ func needsCookie() int {
 	if os.Getenv(sdk.Handshake.MagicCookieKey) == sdk.Handshake.MagicCookieValue {
 		return answerNoProblems()
 	}
-	fmt.Fprintln(os.Stderr, "this binary is a monitor-hub plugin")
+	fmt.Fprintln(os.Stderr, "this binary is a monitor-hub monitor")
 	return 1
 }
 
@@ -190,8 +190,8 @@ func writeStderr(lines string) {
 
 func (*server) Describe(context.Context, *monitorpb.DescribeRequest) (*monitorpb.DescribeResponse, error) {
 	return &monitorpb.DescribeResponse{
-		Name:        "testplugin",
-		DisplayName: "Test plugin",
+		Name:        "testmonitor",
+		DisplayName: "Test monitor",
 		Version:     "0.0.0",
 		Kinds:       []*monitorpb.EventKind{{Id: "ping", Description: "A test ping"}},
 	}, nil

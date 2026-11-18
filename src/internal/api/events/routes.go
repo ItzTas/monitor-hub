@@ -17,7 +17,7 @@ func RegisterRoutes(api huma.API, h *Handler) {
 		Method:      http.MethodGet,
 		Path:        "/api/events",
 		Summary:     "List the events",
-		Description: "The events every plugin reported, newest first. Page with before and limit.",
+		Description: "The events every monitor reported, newest first. Page with before and limit.",
 		Tags:        []string{"events"},
 		Errors:      []int{http.StatusUnauthorized, http.StatusUnprocessableEntity},
 	}, h.List)

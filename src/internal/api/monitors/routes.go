@@ -1,4 +1,4 @@
-package plugins
+package monitors
 
 import (
 	"net/http"
@@ -13,21 +13,21 @@ func Configure(api huma.API, pool *pgxpool.Pool, supervisor Supervisor) {
 
 func RegisterRoutes(api huma.API, h *Handler) {
 	huma.Register(api, huma.Operation{
-		OperationID: "list-plugins",
+		OperationID: "list-monitors",
 		Method:      http.MethodGet,
-		Path:        "/api/plugins",
-		Summary:     "List the plugins",
-		Description: "Every configured plugin, plus any plugin the database still remembers, sorted by name.",
-		Tags:        []string{"plugins"},
+		Path:        "/api/monitors",
+		Summary:     "List the monitors",
+		Description: "Every configured monitor, plus any monitor the database still remembers, sorted by name.",
+		Tags:        []string{"monitors"},
 		Errors:      []int{http.StatusUnauthorized},
 	}, h.List)
 	huma.Register(api, huma.Operation{
-		OperationID: "check-plugin",
+		OperationID: "check-monitor",
 		Method:      http.MethodPost,
-		Path:        "/api/plugins/{name}/check",
-		Summary:     "Ask a plugin to check now",
-		Description: "Calls the plugin's Check and answers with what it said. The plugin decides whether to start a check.",
-		Tags:        []string{"plugins"},
+		Path:        "/api/monitors/{name}/check",
+		Summary:     "Ask a monitor to check now",
+		Description: "Calls the monitor's Check and answers with what it said. The monitor decides whether to start a check.",
+		Tags:        []string{"monitors"},
 		Errors:      []int{http.StatusUnauthorized, http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable},
 	}, h.Check)
 }

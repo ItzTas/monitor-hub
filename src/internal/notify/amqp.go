@@ -258,9 +258,9 @@ func newAMQPMessage(msg Message) (amqpMessage, error) {
 
 func amqpRouting(events []Event) (key, kind string) {
 	if len(events) > 1 {
-		return events[0].Plugin + "." + amqpBatchKey, amqpBatchKey
+		return events[0].Monitor + "." + amqpBatchKey, amqpBatchKey
 	}
-	return events[0].Plugin + "." + routingSegment(events[0].Kind), events[0].Kind
+	return events[0].Monitor + "." + routingSegment(events[0].Kind), events[0].Kind
 }
 
 func routingSegment(kind string) string {

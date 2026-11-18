@@ -14,7 +14,7 @@ func NewService(repo Repository) *Service {
 
 func (s *Service) List(ctx context.Context, input ListInput) (Page, error) {
 	limit := min(input.Limit, maxLimit)
-	events, err := s.repo.ListEvents(ctx, Filter{Plugin: input.Plugin, Kind: input.Kind, Before: input.Before, Limit: limit + 1})
+	events, err := s.repo.ListEvents(ctx, Filter{Monitor: input.Monitor, Kind: input.Kind, Before: input.Before, Limit: limit + 1})
 	if err != nil {
 		return Page{}, err
 	}

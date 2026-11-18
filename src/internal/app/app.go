@@ -50,7 +50,7 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 	if err != nil {
 		return nil, err
 	}
-	plugins := supervisor.New(entries, environ, cfg.DataDir, logger)
+	monitors := supervisor.New(entries, environ, cfg.DataDir, logger)
 	link, sessions := whatsAppChannels(ctx, cfg.Channels.WhatsApp, pool, logger)
 	channels := notify.Channels(cfg.Channels, userAgent(), sessions...)
 	names := notify.ChannelNames(channels)
@@ -62,14 +62,14 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 	feed.Configure(mux, pool, feed.Options{Token: cfg.FeedToken, PublicURL: cfg.PublicURL}, logger)
 	icons.Register(mux)
 	consumerapi.Register(mux, consumerapi.Deps{Consumers: consumerService, Stream: stream.NewService(stream.NewPostgres(pool), signal, registry), Log: logger})
-	api.Register(mux, api.Deps{Pool: pool, Plugins: plugins, Token: cfg.APIToken, Log: logger, Consumers: consumerService, Registry: registry})
+	api.Register(mux, api.Deps{Pool: pool, Monitors: monitors, Token: cfg.APIToken, Log: logger, Consumers: consumerService, Registry: registry})
 	dispatcher := notify.NewDispatcher(notify.NewOutbox(pool), channels, logger, notify.WithClock(now, time.After))
 	return &application{
 		address:    cfg.HTTPAddress,
 		log:        logger,
 		pool:       pool,
-		supervisor: plugins,
-		ingest:     ingest.NewService(ingest.NewPostgres(pool), plugins, names, logger, now, ingest.WithWake(dispatcher.Wake), ingest.WithNewEvents(signal.Notify)),
+		supervisor: monitors,
+		ingest:     ingest.NewService(ingest.NewPostgres(pool), monitors, names, logger, now, ingest.WithWake(dispatcher.Wake), ingest.WithNewEvents(signal.Notify)),
 		dispatcher: dispatcher,
 		channels:   names,
 		closers:    closers(channels),
@@ -88,7 +88,7 @@ func (a *application) Run(ctx context.Context) error {
 	a.log.Info("monitor-hub starting",
 		"version", version,
 		"address", listener.Addr().String(),
-		"plugins", strings.Join(a.supervisor.Names(), ","),
+		"monitors", strings.Join(a.supervisor.Names(), ","),
 		"channels", strings.Join(a.channels, ","),
 	)
 	g, gctx := errgroup.WithContext(ctx)

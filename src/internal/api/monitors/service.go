@@ -1,4 +1,4 @@
-package plugins
+package monitors
 
 import (
 	"context"
@@ -15,8 +15,8 @@ import (
 const checkTimeout = 10 * time.Second
 
 var (
-	ErrUnknown    = errors.New("no plugin has this name")
-	ErrNotRunning = errors.New("the plugin is not running")
+	ErrUnknown    = errors.New("no monitor has this name")
+	ErrNotRunning = errors.New("the monitor is not running")
 )
 
 type Supervisor interface {
@@ -33,27 +33,27 @@ func NewService(repo Repository, supervisor Supervisor) *Service {
 	return &Service{repo: repo, supervisor: supervisor}
 }
 
-func (s *Service) List(ctx context.Context) ([]Plugin, error) {
-	rows, err := s.repo.ListPlugins(ctx)
+func (s *Service) List(ctx context.Context) ([]Monitor, error) {
+	rows, err := s.repo.ListMonitors(ctx)
 	if err != nil {
 		return nil, err
 	}
-	byName := map[string]Plugin{}
+	byName := map[string]Monitor{}
 	for _, name := range s.supervisor.Names() {
-		byName[name] = Plugin{Name: name, State: stateName(0)}
+		byName[name] = Monitor{Name: name, State: stateName(0)}
 	}
 	for _, row := range rows {
-		plugin := row.Plugin
-		plugin.State = stateName(row.State)
-		byName[row.Name] = plugin
+		monitor := row.Monitor
+		monitor.State = stateName(row.State)
+		byName[row.Name] = monitor
 	}
-	plugins := make([]Plugin, 0, len(byName))
+	monitors := make([]Monitor, 0, len(byName))
 	for _, name := range slices.Sorted(maps.Keys(byName)) {
-		plugin := byName[name]
-		_, plugin.Running = s.supervisor.Client(name)
-		plugins = append(plugins, plugin)
+		monitor := byName[name]
+		_, monitor.Running = s.supervisor.Client(name)
+		monitors = append(monitors, monitor)
 	}
-	return plugins, nil
+	return monitors, nil
 }
 
 func (s *Service) Check(ctx context.Context, name string) (CheckResult, error) {

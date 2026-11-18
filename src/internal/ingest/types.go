@@ -14,7 +14,7 @@ type Clients interface {
 }
 
 type Batch struct {
-	Plugin   string
+	Monitor  string
 	After    int64
 	Events   []*monitorpb.Event
 	Channels []string

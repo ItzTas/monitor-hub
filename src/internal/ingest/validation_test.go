@@ -10,7 +10,7 @@ import (
 func rejectAfterBaseline(t *testing.T, page []*monitorpb.Event) {
 	t.Helper()
 	pool := coretest.Pool(t)
-	p := plugin("sei", numbered(1, 3)...)
+	p := monitor("sei", numbered(1, 3)...)
 	s := newService(pool, p)
 	s.PollOnce(t.Context())
 

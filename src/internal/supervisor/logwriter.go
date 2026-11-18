@@ -21,8 +21,8 @@ type logWriter struct {
 	dropping bool
 }
 
-func newLogWriter(log *slog.Logger, plugin string) *logWriter {
-	return &logWriter{log: log.With("plugin", plugin)}
+func newLogWriter(log *slog.Logger, monitor string) *logWriter {
+	return &logWriter{log: log.With("monitor", monitor)}
 }
 
 func (w *logWriter) Write(p []byte) (int, error) {
@@ -109,7 +109,7 @@ func attributes(fields map[string]any) []slog.Attr {
 	for _, key := range []string{"@level", "@message", "@module", "@timestamp"} {
 		delete(fields, key)
 	}
-	reserved := map[string]bool{"plugin": true, "module": true, slog.TimeKey: true, slog.LevelKey: true, slog.MessageKey: true, slog.SourceKey: true}
+	reserved := map[string]bool{"monitor": true, "module": true, slog.TimeKey: true, slog.LevelKey: true, slog.MessageKey: true, slog.SourceKey: true}
 	for _, key := range slices.Sorted(maps.Keys(fields)) {
 		name := key
 		if reserved[key] {

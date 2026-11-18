@@ -12,7 +12,7 @@ import (
 
 	consumerlist "github.com/ItzTas/monitor-hub/src/internal/api/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/api/events"
-	"github.com/ItzTas/monitor-hub/src/internal/api/plugins"
+	"github.com/ItzTas/monitor-hub/src/internal/api/monitors"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/stream"
 )
@@ -24,7 +24,7 @@ const (
 
 type Deps struct {
 	Pool      *pgxpool.Pool
-	Plugins   plugins.Supervisor
+	Monitors  monitors.Supervisor
 	Token     string
 	Log       *slog.Logger
 	Consumers *consumers.Service
@@ -33,11 +33,11 @@ type Deps struct {
 
 func Register(mux *http.ServeMux, deps Deps) huma.API {
 	api := humago.New(mux, HumaConfig(deps.Log,
-		"The plugins monitor-hub runs, the events they reported and the consumers that read them. Every route needs the header Authorization: Bearer <API_TOKEN>.",
+		"The monitors monitor-hub runs, the events they reported and the consumers that read them. Every route needs the header Authorization: Bearer <API_TOKEN>.",
 		"The API_TOKEN of the monitor-hub configuration.",
 	))
 	api.UseMiddleware(bearerAuth(api, deps.Token))
-	plugins.Configure(api, deps.Pool, deps.Plugins)
+	monitors.Configure(api, deps.Pool, deps.Monitors)
 	events.Configure(api, deps.Pool)
 	consumerlist.Configure(api, deps.Consumers, deps.Registry)
 	return api

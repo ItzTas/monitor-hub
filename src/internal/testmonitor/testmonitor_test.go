@@ -21,13 +21,13 @@ func TestMain(m *testing.M) {
 }
 
 func run(m *testing.M) int {
-	dir, err := os.MkdirTemp("", "testplugin")
+	dir, err := os.MkdirTemp("", "testmonitor")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
-	binary = filepath.Join(dir, "testplugin")
+	binary = filepath.Join(dir, "testmonitor")
 	out, err := exec.CommandContext(context.Background(), "go", "build", "-o", binary, ".").CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build failed: %v\n%s", err, out)
@@ -42,7 +42,7 @@ func run(m *testing.M) int {
 	return m.Run()
 }
 
-func TestTestPluginConformance(t *testing.T) {
+func TestTestMonitorConformance(t *testing.T) {
 	cmd := exec.CommandContext(t.Context(), binary)
 	cmd.Env = []string{"EVENTS=3"}
 	monitortest.Run(t, cmd, 3)

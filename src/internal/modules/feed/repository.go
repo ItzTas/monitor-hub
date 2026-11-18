@@ -10,7 +10,7 @@ import (
 )
 
 type Repository interface {
-	RecentEvents(ctx context.Context, plugin string, limit int) ([]Event, error)
+	RecentEvents(ctx context.Context, monitor string, limit int) ([]Event, error)
 }
 
 type Postgres struct {
@@ -21,9 +21,9 @@ func NewPostgres(pool *pgxpool.Pool) *Postgres {
 	return &Postgres{queries: db.New(pool)}
 }
 
-func (r *Postgres) RecentEvents(ctx context.Context, plugin string, limit int) ([]Event, error) {
+func (r *Postgres) RecentEvents(ctx context.Context, monitor string, limit int) ([]Event, error) {
 	rows, err := r.queries.ListEvents(ctx, db.ListEventsParams{
-		Monitor: pgtype.Text{String: plugin, Valid: plugin != ""},
+		Monitor: pgtype.Text{String: monitor, Valid: monitor != ""},
 		MaxRows: int64(limit),
 	})
 	if err != nil {
@@ -32,7 +32,7 @@ func (r *Postgres) RecentEvents(ctx context.Context, plugin string, limit int) (
 	events := make([]Event, 0, len(rows))
 	for _, row := range rows {
 		events = append(events, Event{
-			Plugin:      row.Monitor,
+			Monitor:     row.Monitor,
 			DisplayName: row.DisplayName,
 			ID:          row.EventID,
 			Kind:        row.Kind,

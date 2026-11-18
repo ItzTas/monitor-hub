@@ -21,8 +21,8 @@ func TestEmailOverStartTLSWithLogin(t *testing.T) {
 	cfg := emailConfig(server, core.TLSStartTLS)
 	cfg.Username, cfg.Password = "fulano", core.NewSecret("senha-smtp")
 	msg := Compose("SEI", []Event{
-		{Plugin: "sei", Kind: "activity", Title: "New activity on process 00000.000001/2026-00", Body: "Processo recebido na unidade", OccurredAt: t0},
-		{Plugin: "sei", Kind: "document", Title: "New document on process 00000.000002/2026-00", OccurredAt: t0},
+		{Monitor: "sei", Kind: "activity", Title: "New activity on process 00000.000001/2026-00", Body: "Processo recebido na unidade", OccurredAt: t0},
+		{Monitor: "sei", Kind: "document", Title: "New document on process 00000.000002/2026-00", OccurredAt: t0},
 	})
 
 	err := newEmail(cfg, "monitor-hub/test", server.ClientTLS).Send(t.Context(), msg)

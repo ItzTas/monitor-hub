@@ -1,4 +1,4 @@
-package plugins
+package monitors
 
 import (
 	"context"
@@ -63,31 +63,31 @@ func serve(t *testing.T, pool *pgxpool.Pool, supervisor Supervisor, method, targ
 	return rec.Code, body
 }
 
-func TestCheckUnknownPluginIs404(t *testing.T) {
+func TestCheckUnknownMonitorIs404(t *testing.T) {
 	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]monitorpb.MonitorClient{"sei": &fakeClient{answer: &monitorpb.CheckResponse{Accepted: true}}}}
 
-	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/plugins/diario/check")
+	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/monitors/diario/check")
 
 	if code != http.StatusNotFound {
 		t.Errorf("status = %d %v, want 404", code, body)
 	}
 }
 
-func TestCheckStoppedPluginIs503(t *testing.T) {
+func TestCheckStoppedMonitorIs503(t *testing.T) {
 	supervisor := fakeSupervisor{names: []string{"sei"}}
 
-	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/plugins/sei/check")
+	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/monitors/sei/check")
 
 	if code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d %v, want 503", code, body)
 	}
 }
 
-func TestCheckAnswersWhatThePluginSays(t *testing.T) {
+func TestCheckAnswersWhatTheMonitorSays(t *testing.T) {
 	client := &fakeClient{answer: &monitorpb.CheckResponse{Accepted: false, Message: "a check is already running"}}
 	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]monitorpb.MonitorClient{"sei": client}}
 
-	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/plugins/sei/check")
+	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/monitors/sei/check")
 
 	want := map[string]any{"accepted": false, "message": "a check is already running"}
 	if code != http.StatusOK || !reflect.DeepEqual(body, want) {
@@ -102,14 +102,14 @@ func TestCheckFailureIs502(t *testing.T) {
 	client := &fakeClient{err: errors.New("connection refused")}
 	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]monitorpb.MonitorClient{"sei": client}}
 
-	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/plugins/sei/check")
+	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/monitors/sei/check")
 
 	if code != http.StatusBadGateway {
 		t.Errorf("status = %d %v, want 502", code, body)
 	}
 }
 
-func TestListShowsConfiguredAndStoredPlugins(t *testing.T) {
+func TestListShowsConfiguredAndStoredMonitors(t *testing.T) {
 	pool := coretest.Pool(t)
 	queries := db.New(pool)
 	seen := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
@@ -133,7 +133,7 @@ func TestListShowsConfiguredAndStoredPlugins(t *testing.T) {
 		clients: map[string]monitorpb.MonitorClient{"diario": &fakeClient{}},
 	}
 
-	code, body := serve(t, pool, supervisor, http.MethodGet, "/api/plugins")
+	code, body := serve(t, pool, supervisor, http.MethodGet, "/api/monitors")
 
 	want := map[string]any{"items": []any{
 		map[string]any{
@@ -150,7 +150,7 @@ func TestListShowsConfiguredAndStoredPlugins(t *testing.T) {
 		},
 	}}
 	if code != http.StatusOK || !reflect.DeepEqual(body, want) {
-		t.Errorf("plugins = %d %v\nwant          %v", code, body, want)
+		t.Errorf("monitors = %d %v\nwant          %v", code, body, want)
 	}
 }
 

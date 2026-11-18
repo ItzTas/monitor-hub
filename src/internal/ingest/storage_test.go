@@ -30,10 +30,10 @@ func TestEventFieldsAreStored(t *testing.T) {
 		Url:        "https://sei.example.com/123",
 		Payload:    payload,
 	}
-	newService(pool, plugin("sei", full, event(8, "bare"))).PollOnce(t.Context())
+	newService(pool, monitor("sei", full, event(8, "bare"))).PollOnce(t.Context())
 
 	type stored struct {
-		pluginSeq  int64
+		monitorSeq int64
 		kind       string
 		severity   int16
 		occurredAt time.Time
@@ -47,7 +47,7 @@ func TestEventFieldsAreStored(t *testing.T) {
 		err := pool.QueryRow(t.Context(), `
 			SELECT monitor_seq, kind, severity, occurred_at, title, body, url, payload::text
 			FROM events WHERE monitor = 'sei' AND event_id = $1`, id).
-			Scan(&s.pluginSeq, &s.kind, &s.severity, &s.occurredAt, &s.title, &s.body, &s.url, &s.payload)
+			Scan(&s.monitorSeq, &s.kind, &s.severity, &s.occurredAt, &s.title, &s.body, &s.url, &s.payload)
 		if err != nil {
 			t.Fatalf("read event %s: %v", id, err)
 		}
@@ -57,7 +57,7 @@ func TestEventFieldsAreStored(t *testing.T) {
 
 	wantPayload := `{"count": 2, "process": "123"}`
 	if got, want := read("process-123"), (stored{
-		pluginSeq: 7, kind: "process-moved", severity: 2, occurredAt: occurredAt,
+		monitorSeq: 7, kind: "process-moved", severity: 2, occurredAt: occurredAt,
 		title: "Process 123 moved", body: "Now in the archive", url: "https://sei.example.com/123", payload: &wantPayload,
 	}); !reflect.DeepEqual(got, want) {
 		t.Errorf("event = %+v\nwant    %+v", got, want)
@@ -67,11 +67,11 @@ func TestEventFieldsAreStored(t *testing.T) {
 	}
 }
 
-func TestPluginRowRecordsDescriptionAndStatus(t *testing.T) {
+func TestMonitorRowRecordsDescriptionAndStatus(t *testing.T) {
 	pool := coretest.Pool(t)
 	started := time.Date(2026, 11, 10, 11, 0, 0, 0, time.UTC)
 	succeeded := time.Date(2026, 11, 10, 10, 0, 0, 0, time.UTC)
-	p := plugin("sei")
+	p := monitor("sei")
 	p.status = &monitorpb.StatusResponse{
 		State:              monitorpb.State_STATE_FAILING,
 		Message:            "login rejected",
@@ -112,7 +112,7 @@ func TestPluginRowRecordsDescriptionAndStatus(t *testing.T) {
 
 func storeBatch(t *testing.T, repo Repository, batch Batch) error {
 	t.Helper()
-	if err := repo.SaveDescription(t.Context(), &monitorpb.DescribeResponse{Name: batch.Plugin, DisplayName: batch.Plugin, Version: "1"}); err != nil {
+	if err := repo.SaveDescription(t.Context(), &monitorpb.DescribeResponse{Name: batch.Monitor, DisplayName: batch.Monitor, Version: "1"}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := repo.StoreEvents(t.Context(), batch)
@@ -122,10 +122,10 @@ func storeBatch(t *testing.T, repo Repository, batch Batch) error {
 func TestBaselineEventsAreMarked(t *testing.T) {
 	pool := coretest.Pool(t)
 	repo := NewPostgres(pool)
-	if err := storeBatch(t, repo, Batch{Plugin: "sei", Baseline: true, Events: []*monitorpb.Event{event(1, "a"), event(2, "b")}}); err != nil {
+	if err := storeBatch(t, repo, Batch{Monitor: "sei", Baseline: true, Events: []*monitorpb.Event{event(1, "a"), event(2, "b")}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.StoreEvents(t.Context(), Batch{Plugin: "sei", After: 2, Events: []*monitorpb.Event{event(3, "c")}}); err != nil {
+	if _, err := repo.StoreEvents(t.Context(), Batch{Monitor: "sei", After: 2, Events: []*monitorpb.Event{event(3, "c")}}); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := pool.Query(t.Context(), `SELECT baseline FROM events ORDER BY seq`)
@@ -177,7 +177,7 @@ func TestStoreEventsWaitsForTheEventOrderLock(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := repo.StoreEvents(t.Context(), Batch{Plugin: "sei", Events: []*monitorpb.Event{event(1, "a"), event(2, "b")}})
+		_, err := repo.StoreEvents(t.Context(), Batch{Monitor: "sei", Events: []*monitorpb.Event{event(1, "a"), event(2, "b")}})
 		done <- err
 	}()
 

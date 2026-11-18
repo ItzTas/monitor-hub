@@ -22,8 +22,8 @@ func testWebhook(url string) *webhook {
 func TestWebhookPostsTheEventsWithAnHMACSignature(t *testing.T) {
 	server, rec := newServer(t, http.StatusNoContent, "")
 	msg := Compose("SEI", []Event{
-		{Plugin: "sei", DisplayName: "SEI", Kind: "return_overdue", Title: "Return overdue", Body: "Process 1", URL: "https://sei.example.org/1", Urgent: true, OccurredAt: t0},
-		{Plugin: "sei", DisplayName: "SEI", Kind: "activity", Title: "New activity", OccurredAt: t0},
+		{Monitor: "sei", DisplayName: "SEI", Kind: "return_overdue", Title: "Return overdue", Body: "Process 1", URL: "https://sei.example.org/1", Urgent: true, OccurredAt: t0},
+		{Monitor: "sei", DisplayName: "SEI", Kind: "activity", Title: "New activity", OccurredAt: t0},
 	})
 
 	err := testWebhook(server.URL+"/hub?key=abc").Send(t.Context(), msg)
@@ -51,7 +51,7 @@ func TestWebhookPostsTheEventsWithAnHMACSignature(t *testing.T) {
 	if payload.Test != nil || !reflect.DeepEqual(payload.Events, msg.Events) {
 		t.Errorf("payload = %s", got.body)
 	}
-	wantFirst := `{"plugin":"sei","display_name":"SEI","kind":"return_overdue","title":"Return overdue","body":"Process 1","url":"https://sei.example.org/1","urgent":true,"occurred_at":"2026-11-10T18:00:00Z"}`
+	wantFirst := `{"monitor":"sei","display_name":"SEI","kind":"return_overdue","title":"Return overdue","body":"Process 1","url":"https://sei.example.org/1","urgent":true,"occurred_at":"2026-11-10T18:00:00Z"}`
 	if !strings.Contains(string(got.body), `"events":[`+wantFirst+`,`) {
 		t.Errorf("body = %s, want the first event as %s", got.body, wantFirst)
 	}

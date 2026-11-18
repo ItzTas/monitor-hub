@@ -85,10 +85,10 @@ func waitFor(t *testing.T, signal <-chan struct{}, what string) {
 	}
 }
 
-func TestRunPollsEachPluginOnItsOwn(t *testing.T) {
+func TestRunPollsEachMonitorOnItsOwn(t *testing.T) {
 	pool := coretest.Pool(t)
 	gate := make(chan struct{})
-	a := plugin("a", numbered(1, 2)...)
+	a := monitor("a", numbered(1, 2)...)
 	entered := make(chan struct{})
 	var once sync.Once
 	a.respond = func(ctx context.Context, req *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
@@ -100,7 +100,7 @@ func TestRunPollsEachPluginOnItsOwn(t *testing.T) {
 		}
 		return a.page(req), nil
 	}
-	b := plugin("b", numbered(1, 3)...)
+	b := monitor("b", numbered(1, 3)...)
 	r := start(t, newService(pool, a, b))
 
 	if got := r.nextPoll(t); got.name != "b" || got.req != (pollRequest{full: true}) {
@@ -133,7 +133,7 @@ func TestRequestsDuringAPollCollapseIntoOneDelayedFollowUp(t *testing.T) {
 	gate := make(chan struct{})
 	started := make(chan struct{})
 	var once sync.Once
-	p := plugin("sei", numbered(1, 3)...)
+	p := monitor("sei", numbered(1, 3)...)
 	p.respond = func(ctx context.Context, req *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		once.Do(func() {
 			close(started)
@@ -180,7 +180,7 @@ func TestRequestsDuringAPollCollapseIntoOneDelayedFollowUp(t *testing.T) {
 
 func TestAHintAtOrBelowTheCursorSkipsEvents(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := plugin("sei", numbered(1, 3)...)
+	p := monitor("sei", numbered(1, 3)...)
 	s := newService(pool, p)
 	r := start(t, s)
 	r.nextPoll(t)
@@ -206,7 +206,7 @@ func TestAHintAtOrBelowTheCursorSkipsEvents(t *testing.T) {
 
 func TestASignalAheadOfEventsStoresNothingAndALaterOneCatchesUp(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := plugin("sei", numbered(1, 3)...)
+	p := monitor("sei", numbered(1, 3)...)
 	s := newService(pool, p)
 	var wakes atomic.Int64
 	s.wake = func() { wakes.Add(1) }
@@ -234,7 +234,7 @@ func TestASignalAheadOfEventsStoresNothingAndALaterOneCatchesUp(t *testing.T) {
 
 func TestRunReturnsWhenTheContextEnds(t *testing.T) {
 	pool := coretest.Pool(t)
-	r := start(t, newService(pool, plugin("sei", numbered(1, 3)...)))
+	r := start(t, newService(pool, monitor("sei", numbered(1, 3)...)))
 	r.nextPoll(t)
 	r.clock.waitArmed(t, PollInterval)
 	r.clock.waitArmed(t, PollInterval)
@@ -280,7 +280,7 @@ func TestWhenAPollReadsEvents(t *testing.T) {
 		want   bool
 	}{
 		{name: "full", req: pollRequest{full: true}, cursor: 5, known: true, want: true},
-		{name: "unknown plugin", req: pollRequest{latestSeq: 0}, cursor: 5, known: false, want: true},
+		{name: "unknown monitor", req: pollRequest{latestSeq: 0}, cursor: 5, known: false, want: true},
 		{name: "hint above the cursor", req: pollRequest{latestSeq: 6}, cursor: 5, known: true, want: true},
 		{name: "hint at the cursor", req: pollRequest{latestSeq: 5}, cursor: 5, known: true, want: false},
 		{name: "hint below the cursor", req: pollRequest{latestSeq: 4}, cursor: 5, known: true, want: false},
@@ -296,7 +296,7 @@ func TestWhenAPollReadsEvents(t *testing.T) {
 
 func TestHintPollsKeepTheSafetyPollPending(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := plugin("sei", numbered(1, 3)...)
+	p := monitor("sei", numbered(1, 3)...)
 	s := newService(pool, p)
 	s.schedules["sei"].setWatching(true)
 	r := start(t, s)
@@ -334,7 +334,7 @@ func TestHintPollsKeepTheSafetyPollPending(t *testing.T) {
 
 func TestEachTimedPollArmsTheIntervalAgain(t *testing.T) {
 	pool := coretest.Pool(t)
-	p := plugin("sei", numbered(1, 3)...)
+	p := monitor("sei", numbered(1, 3)...)
 	r := start(t, newService(pool, p))
 	r.nextPoll(t)
 	r.clock.waitArmed(t, PollInterval)

@@ -1,4 +1,4 @@
-package plugins
+package monitors
 
 import (
 	"context"
@@ -12,12 +12,12 @@ type Handler struct {
 }
 
 func (h *Handler) List(ctx context.Context, _ *struct{}) (*ListOutput, error) {
-	plugins, err := h.service.List(ctx)
+	monitors, err := h.service.List(ctx)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("internal error", err)
 	}
 	output := &ListOutput{}
-	output.Body.Items = plugins
+	output.Body.Items = monitors
 	return output, nil
 }
 
@@ -32,5 +32,5 @@ func (h *Handler) Check(ctx context.Context, input *CheckInput) (*CheckOutput, e
 	if errors.Is(err, ErrNotRunning) {
 		return nil, huma.Error503ServiceUnavailable(err.Error())
 	}
-	return nil, huma.Error502BadGateway("the plugin did not answer the check", err)
+	return nil, huma.Error502BadGateway("the monitor did not answer the check", err)
 }

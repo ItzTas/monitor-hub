@@ -111,7 +111,7 @@ func TestFeedListsTheNewestEventsFirst(t *testing.T) {
 	want := Channel{
 		Title:       "monitor-hub",
 		Link:        "https://hub.example.org",
-		Description: "Events from every monitor-hub plugin",
+		Description: "Events from every monitor-hub monitor",
 		Items: []Item{
 			{Title: "DIARIO: second", GUID: GUID{IsPermaLink: "false", Value: "diario:b"}, PubDate: "Tue, 10 Nov 2026 12:01:00 +0000", Category: "ping"},
 			{Title: "SEI: first", Link: "https://sei.example.org/p/1", GUID: GUID{IsPermaLink: "false", Value: "sei:a"}, PubDate: "Tue, 10 Nov 2026 12:00:00 +0000", Category: "ping", Description: "line one\nline two"},
@@ -122,7 +122,7 @@ func TestFeedListsTheNewestEventsFirst(t *testing.T) {
 	}
 }
 
-func TestFeedFiltersByPlugin(t *testing.T) {
+func TestFeedFiltersByMonitor(t *testing.T) {
 	pool := coretest.Pool(t)
 	seed(t, pool, event{monitor: "sei", id: "a", title: "one"}, event{monitor: "diario", id: "b", title: "two"}, event{monitor: "sei", id: "c", title: "three"})
 	cases := map[string]struct {
@@ -130,8 +130,8 @@ func TestFeedFiltersByPlugin(t *testing.T) {
 		title  string
 		want   []string
 	}{
-		"one plugin":     {"/feed.xml?plugin=sei", "monitor-hub: sei", []string{"sei:c", "sei:a"}},
-		"unknown plugin": {"/feed.xml?plugin=nobody", "monitor-hub: nobody", []string{}},
+		"one monitor":     {"/feed.xml?monitor=sei", "monitor-hub: sei", []string{"sei:c", "sei:a"}},
+		"unknown monitor": {"/feed.xml?monitor=nobody", "monitor-hub: nobody", []string{}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -158,7 +158,7 @@ func TestFeedKeepsTheNewest100Events(t *testing.T) {
 	}
 }
 
-func TestFeedEscapesPluginText(t *testing.T) {
+func TestFeedEscapesMonitorText(t *testing.T) {
 	pool := coretest.Pool(t)
 	title := `<script>alert(1)</script> & ]]> "x"`
 	body := `<b>bold</b> & ]]><![CDATA[ more`
@@ -181,7 +181,7 @@ func TestFeedEscapesPluginText(t *testing.T) {
 	}
 	escaped := items[1]
 	if escaped.Title != "SEI: "+title || escaped.Description != body || escaped.Link != link || escaped.GUID.Value != "sei:<id>&" {
-		t.Errorf("item = %+v, want the plugin's text back unchanged", escaped)
+		t.Errorf("item = %+v, want the monitor's text back unchanged", escaped)
 	}
 	if items[0].Link != "" {
 		t.Errorf("a javascript: address became the item link %q", items[0].Link)

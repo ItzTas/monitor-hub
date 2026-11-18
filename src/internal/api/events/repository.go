@@ -24,7 +24,7 @@ func NewPostgres(pool *pgxpool.Pool) *Postgres {
 
 func (r *Postgres) ListEvents(ctx context.Context, filter Filter) ([]Event, error) {
 	rows, err := r.queries.ListEvents(ctx, db.ListEventsParams{
-		Monitor: pgtype.Text{String: filter.Plugin, Valid: filter.Plugin != ""},
+		Monitor: pgtype.Text{String: filter.Monitor, Valid: filter.Monitor != ""},
 		Kind:    pgtype.Text{String: filter.Kind, Valid: filter.Kind != ""},
 		Before:  pgtype.Int8{Int64: filter.Before, Valid: filter.Before > 0},
 		MaxRows: int64(filter.Limit),
@@ -36,7 +36,7 @@ func (r *Postgres) ListEvents(ctx context.Context, filter Filter) ([]Event, erro
 	for _, row := range rows {
 		events = append(events, Event{
 			Seq:         row.Seq,
-			Plugin:      row.Monitor,
+			Monitor:     row.Monitor,
 			DisplayName: row.DisplayName,
 			ID:          row.EventID,
 			Kind:        row.Kind,

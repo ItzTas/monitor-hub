@@ -25,7 +25,7 @@ func testTelegram(api string) *telegram {
 
 func TestTelegramSendsTheMessageToTheChat(t *testing.T) {
 	server, rec := newServer(t, http.StatusOK, `{"ok":true,"result":{"message_id":1}}`)
-	msg := Compose("SEI", []Event{{Plugin: "sei", Kind: "activity", Title: "New activity on process 00000.000001/2026-00", Body: "Process received", OccurredAt: t0}})
+	msg := Compose("SEI", []Event{{Monitor: "sei", Kind: "activity", Title: "New activity on process 00000.000001/2026-00", Body: "Process received", OccurredAt: t0}})
 
 	err := testTelegram(server.URL).Send(t.Context(), msg)
 
