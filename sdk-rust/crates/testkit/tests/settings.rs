@@ -268,6 +268,13 @@ fn misbehaving_validators_are_reported() {
             vec![Want::Prefix("validate-settings answer is invalid: ")],
         ),
         Case::new(
+            "positional problem",
+            r#"echo '{"problems":[["API_URL","set it"]]}'; exit 1"#,
+            vec![Want::Exact(
+                "validate-settings answer is invalid: problem 0 is not an object",
+            )],
+        ),
+        Case::new(
             "empty message",
             r#"echo '{"problems":[{"name":"X","message":""}]}'; exit 1"#,
             vec![Want::Exact(

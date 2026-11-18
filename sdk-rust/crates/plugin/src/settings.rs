@@ -3,7 +3,9 @@ use std::io::{self, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
+use serde::de::{Error as _, Unexpected};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub const SETTINGS_FILE: &str = "settings.json";
 pub const VALIDATE_SETTINGS_ARG: &str = "validate-settings";
@@ -141,6 +143,7 @@ pub fn parse(json: &[u8]) -> Result<Settings, SettingsError> {
         return Err(SettingsError::ByteOrderMark);
     }
     let settings: Settings = serde_json::from_slice(json).map_err(SettingsError::Format)?;
+    check_shape(json).map_err(SettingsError::Format)?;
     if settings.settings_version != SETTINGS_VERSION {
         return Err(SettingsError::UnsupportedVersion(settings.settings_version));
     }
@@ -151,6 +154,22 @@ pub fn parse(json: &[u8]) -> Result<Settings, SettingsError> {
         }
     }
     Ok(settings)
+}
+
+fn check_shape(json: &[u8]) -> Result<(), serde_json::Error> {
+    let value: Value = serde_json::from_slice(json)?;
+    if value.is_array() {
+        return Err(sequence("struct Settings"));
+    }
+    let fields = value.get("fields").and_then(Value::as_array);
+    if fields.is_some_and(|fields| fields.iter().any(Value::is_array)) {
+        return Err(sequence("struct Field"));
+    }
+    Ok(())
+}
+
+fn sequence(expected: &str) -> serde_json::Error {
+    serde_json::Error::invalid_type(Unexpected::Seq, &expected)
 }
 
 fn check_field<'a>(field: &'a Field, seen: &mut HashSet<&'a str>) -> Option<FieldProblem> {

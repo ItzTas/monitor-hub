@@ -147,6 +147,12 @@ fn read_answer(stdout: &[u8]) -> Result<Answer, String> {
                 .to_owned(),
         );
     }
+    let problems = value.get("problems").and_then(Value::as_array);
+    if let Some(index) = problems.and_then(|problems| problems.iter().position(Value::is_array)) {
+        return Err(format!(
+            "validate-settings answer is invalid: problem {index} is not an object"
+        ));
+    }
     serde_json::from_value(value)
         .map_err(|err| format!("validate-settings answer is invalid: {err}"))
 }

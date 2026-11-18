@@ -203,6 +203,23 @@ fn structural_errors_are_reported() {
             Box::new(|e| matches!(e, SettingsError::Format(_))),
         ),
         (
+            "array document",
+            b"[1,[]]".to_vec(),
+            Box::new(|e| {
+                matches!(e, SettingsError::Format(_))
+                    && source_text(e).starts_with("invalid type: sequence, expected struct Settings")
+            }),
+        ),
+        (
+            "positional field",
+            br#"{"settings_version":1,"fields":[["N","Label",null,"string",false,false,null,null,null,true,null]]}"#
+                .to_vec(),
+            Box::new(|e| {
+                matches!(e, SettingsError::Format(_))
+                    && source_text(e).starts_with("invalid type: sequence, expected struct Field")
+            }),
+        ),
+        (
             "version 2",
             br#"{"settings_version":2,"fields":[]}"#.to_vec(),
             Box::new(|e| matches!(e, SettingsError::UnsupportedVersion(2))),

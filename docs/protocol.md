@@ -383,7 +383,7 @@ A validator that exits with `0` but lists problems, exits with `1` but lists non
 - `problems` is required. Each problem has a non-empty `message`, and a `name` that is either a field the file declares or empty, for a problem with several fields together. `name` may be left out. Other keys are ignored.
 - List every problem at once, not only the first.
 - Finish within 5 seconds.
-- Write the answer and nothing else on stdout, at most 64 KiB (65536 bytes). Whitespace around the object is fine. Logs go to stderr.
+- Write the answer and nothing else on stdout, in UTF-8 and at most 64 KiB (65536 bytes). Whitespace around the object is fine. Logs go to stderr.
 - Do not require the magic cookie, open a database, use the network, run a program named in the settings (a password command, for example) or write to disk.
 - Never put the value of a `secret` field in a message.
 
@@ -391,7 +391,7 @@ Validation cannot prove everything. A wrong password or an unreachable database 
 
 With the Rust SDK, `monitor_hub_plugin::settings::answer` writes the answer and returns the exit code. See [`sdk-rust/README.md`](../sdk-rust/README.md).
 
-The Rust testkit and the conformance command read the answer with the same checks, but the Rust testkit is stricter. The conformance command accepts keys in any letter case, such as `"Problems"`, and a `null` `name`; the Rust testkit rejects both. Write the keys in lower case, and leave `name` out or empty instead of `null`. When the answer is not valid JSON, or a value has the wrong type, each side quotes its own decoder's message.
+The Rust testkit and the conformance command read the answer with the same checks, but the Rust testkit is stricter. The conformance command accepts keys in any letter case, such as `"Problems"`, and a `null` `name`; the Rust testkit rejects both. Write the keys in lower case, and leave `name` out or empty instead of `null`. The Rust testkit also rejects bytes that are not UTF-8 and a lone surrogate escape, such as `"\ud800"`, anywhere in the answer, while the conformance command accepts them. When the answer is not valid JSON, or a value has the wrong type, each side quotes its own decoder's message.
 
 ### Variables the file does not declare
 
