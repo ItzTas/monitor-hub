@@ -66,6 +66,7 @@ func (s *Service) Stream(ctx context.Context, c Client, send sse.Sender) error {
 		return err
 	}
 
+	ping := s.after(PingInterval)
 	for {
 		select {
 		case <-ctx.Done():
@@ -75,7 +76,8 @@ func (s *Service) Stream(ctx context.Context, c Client, send sse.Sender) error {
 		case <-replaced:
 			return send(sse.Message{Data: Replaced{}})
 		case <-wake:
-		case <-s.after(PingInterval):
+		case <-ping:
+			ping = s.after(PingInterval)
 			if err := send(sse.Message{Comment: "ping"}); err != nil {
 				return err
 			}

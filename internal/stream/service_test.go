@@ -360,3 +360,43 @@ func TestAFailedSendEndsTheStream(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestThePingBeatIsNotRestartedByEvents(t *testing.T) {
+	repo := &fakeRepo{}
+	h := newHarness(t, repo)
+	checks := 0
+	r := h.start(Client{Name: "desk", Check: func(context.Context) (bool, error) {
+		checks++
+		return true, nil
+	}})
+	r.caughtUp(t)
+	for seq := int64(1); seq <= 3; seq++ {
+		repo.add(seq)
+		h.signal.Notify()
+		if n := r.notification(t); n.Seq != seq {
+			t.Fatalf("got seq %d, want %d", n.Seq, seq)
+		}
+	}
+	h.mu.Lock()
+	armed := len(h.waits)
+	h.mu.Unlock()
+	if armed != 1 {
+		t.Fatalf("the ping timer was requested %d times before it fired, want 1", armed)
+	}
+	h.tick <- time.Now()
+	if m := r.next(t); m.Comment != "ping" {
+		t.Fatalf("got %#v", m)
+	}
+	repo.add(4)
+	h.signal.Notify()
+	r.notification(t)
+	h.signal.Close()
+	if err := r.end(t); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if checks != 1 || len(h.waits) != 2 {
+		t.Fatalf("checks = %d, timer requests = %d, want 1 and 2", checks, len(h.waits))
+	}
+}
