@@ -318,7 +318,10 @@ func TestWakeDuringAPassChainsOnePassMore(t *testing.T) {
 	second := receive(t, telegram.sent)
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run = %v, want nil", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run still running 5s after the cancel")
 	}
