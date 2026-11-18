@@ -295,10 +295,11 @@ docker ps --format '{{.Names}}' | grep -E 'sei-monitor|diario-alerr'
 
 Check: no app container is left. The sei-monitor stack's Postgres container may remain.
 
-Note the time the gazette container stopped. Step 5 compares it with the alerts the plugin records. Docker keeps it, in UTC:
+Note the time each Go container stopped. Step 5 compares them with what the plugins record. Docker keeps them, in UTC:
 
 ```bash
 docker inspect -f '{{.State.FinishedAt}}' diario-alerr
+docker inspect -f '{{.State.FinishedAt}}' "$(cd /opt/stacks/sei-monitor && docker compose ps -aq sei-monitor)"
 ```
 
 Now run the pending count of "The SEI program" once more, list the rows if it is not `0`, and go on to step 5.
@@ -350,6 +351,8 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
    docker compose logs monitor-hub | grep -E 'msg="(plugin exited|plugin failed to start)" plugin=(diario|sei)'
    ```
 
+   If you must restart the hub, use `docker compose restart monitor-hub`: the container keeps its log, with the lines from before the restart that item 4 looks for. A `docker compose up -d` that recreates the container starts a new, empty log.
+
 4. The end of both baselines, and what nobody announced:
 
    ```bash
@@ -358,11 +361,11 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
 
    Expected: one line with `plugin=diario` and one with `plugin=sei`, usually within a minute of the start, later for `sei` while SEI does not answer. It is an `info` line: with `LOG_LEVEL` at `warn` or `error` it never shows, so set it to `info` first (step 3).
 
-   For SEI, if nothing restarted before its line, there is nothing to look for. Otherwise the events its first check recorded may have gone into the baseline. Look in the hub log for the plugin's `cycle finished` lines from before the restart: an `events` count above 0 means that check recorded events. Then list the events recorded since the hub started, with the start time in UTC, and look for each of them in your channels:
+   For SEI, if nothing restarted before its line, there is nothing to look for. Otherwise the events its first check recorded may have gone into the baseline. Look in the hub log for the plugin's `cycle finished` lines from before the restart: an `events` count above 0 means that check recorded events. Then list the events recorded since the Go program stopped, with the time you noted in step 4, and look for each of them in your channels. Do not use the hub's start time: after a restart Docker reports the restart, which comes after those events.
 
    ```bash
    docker compose logs monitor-hub | grep 'msg="cycle finished" plugin=sei'
-   docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c "SELECT id, kind, payload::jsonb->>'process_number' AS process, detected_at FROM events WHERE detected_at >= '<when the hub started>' ORDER BY id;"
+   docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c "SELECT id, kind, payload::jsonb->>'process_number' AS process, detected_at FROM events WHERE detected_at >= '<when the Go program stopped>' ORDER BY id;"
    ```
 
    Also check that the plugin kept the Go program's account. This must still return `1`:
