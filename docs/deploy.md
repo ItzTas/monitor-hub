@@ -474,6 +474,15 @@ Use this if the hub misbehaves and you want the old services back. The old stack
    cd /opt/stacks/monitor-hub && docker compose down
    ```
 
+   The hub may have read SEI events after item 1 and not sent them before it stopped, and the SEI plugin may have recorded events after the hub's last read. Run the query of item 1 once more, then list the SEI events the hub never read. The first command prints the hub's stored position for `sei`; put that number in the second:
+
+   ```bash
+   docker exec <postgres-container> psql -U monitor_hub -d monitor_hub -tAc "SELECT cursor FROM plugins WHERE name = 'sei';"
+   docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c "SELECT id, kind, payload::jsonb->>'process_number' AS process, detected_at FROM events WHERE id > <that position> ORDER BY id;"
+   ```
+
+   Nobody sends these after the rollback (item 5). Pass every row on yourself.
+
    Then list the gazette alerts the hub never confirmed. The script in the next item marks them as delivered too, and they are on no other list, so after it nobody sends them:
 
    ```bash
@@ -500,6 +509,7 @@ Use this if the hub misbehaves and you want the old services back. The old stack
    - Go announces only what it detects from then on. Its first notification can take up to 30 seconds after the check that found it.
    - Notifications Go left pending at the switch to the plugin go out right after the rollback, possibly days late. Step 4 made sure there were none.
    - When the plugin deleted old events by `RETENTION_DAYS`, Go's notification rows for them went too, pending ones included. Those are never sent.
+   - Events the plugin recorded after the hub's last read are sent by nobody: item 2 lists them.
    - Go has no hold after a rejected login: if a pause reason is on record, it tries the login once at start, as it always did. Fix the password first if SEI refused it (section 8).
 
    The plugin's test `go_sends_nothing_from_the_rust_era` (`tests/go_compat.rs` in the sei-monitor repository) starts the Go `v1.0.0` program on a database the plugin wrote. It has not been run against your database.
