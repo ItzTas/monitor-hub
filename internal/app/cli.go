@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -8,10 +8,8 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"os/signal"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/ItzTas/monitor-hub/internal/core"
@@ -31,14 +29,7 @@ type usageError struct {
 
 type command func(ctx context.Context, args, environ []string, term terminal) error
 
-func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code := run(ctx, os.Args[1:], os.Environ(), os.Stdin, os.Stdout, os.Stderr)
-	stop()
-	os.Exit(code)
-}
-
-func run(ctx context.Context, args, environ []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func Run(ctx context.Context, args, environ []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	commands := map[string]command{
 		"serve":         serve,
 		"whatsapp-pair": whatsAppPair,

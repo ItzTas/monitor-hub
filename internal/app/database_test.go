@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -25,7 +25,7 @@ func runTests(m *testing.M) int {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	testpluginBinary = filepath.Join(dir, "testplugin")
-	output, err := exec.CommandContext(context.Background(), "go", "build", "-o", testpluginBinary, "./internal/testplugin").CombinedOutput()
+	output, err := exec.CommandContext(context.Background(), "go", "build", "-o", testpluginBinary, "github.com/ItzTas/monitor-hub/internal/testplugin").CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build the test plugin: %v\n%s", err, output)
 		return 1

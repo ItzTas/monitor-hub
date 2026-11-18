@@ -296,7 +296,7 @@ ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
       -trimpath \
       -ldflags "-s -w" \
-      -o /out/monitor-hub .
+      -o /out/monitor-hub ./cmd/monitor-hub
 
 `
 

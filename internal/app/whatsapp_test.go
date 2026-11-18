@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -140,7 +140,7 @@ func TestWhatsAppPairRefusesABadPhoneNumber(t *testing.T) {
 	for name, args := range tests {
 		var stdout, stderr bytes.Buffer
 
-		code := run(t.Context(), args, environ, strings.NewReader(""), &stdout, &stderr)
+		code := Run(t.Context(), args, environ, strings.NewReader(""), &stdout, &stderr)
 
 		if code != 2 || stdout.Len() != 0 || stderr.Len() == 0 {
 			t.Errorf("%s: exit code %d, stdout %q, stderr %q", name, code, stdout.String(), stderr.String())
@@ -153,7 +153,7 @@ func TestWhatsAppPairNeedsOnlyTheDatabase(t *testing.T) {
 	pairFakeDevice(t, databaseURL)
 	var stdout, stderr bytes.Buffer
 
-	code := run(t.Context(), []string{"whatsapp-pair"}, []string{"DATABASE_URL=" + databaseURL}, strings.NewReader("+55 (95) 99123-4567\n"), &stdout, &stderr)
+	code := Run(t.Context(), []string{"whatsapp-pair"}, []string{"DATABASE_URL=" + databaseURL}, strings.NewReader("+55 (95) 99123-4567\n"), &stdout, &stderr)
 
 	prompt := "Phone number of the WhatsApp account that will send the messages, with country and area code (e.g. 5595991234567): "
 	refusal := "this database already has a paired WhatsApp number. To pair another one, unlink monitor-hub under Linked devices on the paired phone, start monitor-hub once so it drops the old session, and run whatsapp-pair again"
