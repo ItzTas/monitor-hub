@@ -33,6 +33,7 @@ func TestASignalPollsThePluginAtOnce(t *testing.T) {
 	var wakes atomic.Int64
 	s.wake = func() { wakes.Add(1) }
 	r := start(t, s)
+	r.clock.waitArmed(t, PollInterval)
 
 	stream := p.nextStream(t)
 	stream.signal(t, 3)
@@ -63,6 +64,7 @@ func TestHeartbeatsDoNotPostponeTheSafetyPoll(t *testing.T) {
 	pool := coretest.Pool(t)
 	p := watched(plugin("sei", numbered(1, 3)...))
 	r := start(t, serviceOf(pool, newSwitchingClients(p)))
+	r.clock.waitArmed(t, PollInterval)
 
 	stream := p.nextStream(t)
 	stream.signal(t, 3)
