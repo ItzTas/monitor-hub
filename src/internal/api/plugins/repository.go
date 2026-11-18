@@ -22,7 +22,7 @@ func NewPostgres(pool *pgxpool.Pool) *Postgres {
 }
 
 func (r *Postgres) ListPlugins(ctx context.Context) ([]stored, error) {
-	rows, err := r.queries.ListPlugins(ctx)
+	rows, err := r.queries.ListMonitors(ctx)
 	if err != nil {
 		return nil, err
 	}

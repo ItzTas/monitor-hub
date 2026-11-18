@@ -38,7 +38,7 @@ func NewPostgres(pool *pgxpool.Pool) Repository {
 }
 
 func (r *postgres) Cursor(ctx context.Context, plugin string) (int64, bool, error) {
-	row, err := r.queries.PluginCursor(ctx, plugin)
+	row, err := r.queries.MonitorCursor(ctx, plugin)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -49,7 +49,7 @@ func (r *postgres) Cursor(ctx context.Context, plugin string) (int64, bool, erro
 }
 
 func (r *postgres) SaveDescription(ctx context.Context, description *monitorpb.DescribeResponse) error {
-	return r.queries.SavePluginDescription(ctx, db.SavePluginDescriptionParams{
+	return r.queries.SaveMonitorDescription(ctx, db.SaveMonitorDescriptionParams{
 		Name:        description.GetName(),
 		DisplayName: description.GetDisplayName(),
 		Version:     description.GetVersion(),
@@ -61,7 +61,7 @@ func (r *postgres) SaveStatus(ctx context.Context, plugin string, status *monito
 	if err != nil {
 		return err
 	}
-	return r.queries.SavePluginStatus(ctx, db.SavePluginStatusParams{
+	return r.queries.SaveMonitorStatus(ctx, db.SaveMonitorStatusParams{
 		Name:               plugin,
 		State:              state,
 		Message:            status.GetMessage(),
@@ -84,7 +84,7 @@ func (r *postgres) StoreEvents(ctx context.Context, batch Batch) (int, error) {
 		if err := q.LockEventOrder(ctx); err != nil {
 			return err
 		}
-		moved, err := q.AdvancePluginCursor(ctx, db.AdvancePluginCursorParams{
+		moved, err := q.AdvanceMonitorCursor(ctx, db.AdvanceMonitorCursorParams{
 			Name:  batch.Plugin,
 			After: batch.After,
 			Next:  batch.Events[len(batch.Events)-1].GetSeq(),
@@ -135,7 +135,7 @@ func storeEvent(ctx context.Context, q *db.Queries, batch Batch, e *monitorpb.Ev
 }
 
 func (r *postgres) CompleteBaseline(ctx context.Context, plugin string) error {
-	return r.queries.CompletePluginBaseline(ctx, plugin)
+	return r.queries.CompleteMonitorBaseline(ctx, plugin)
 }
 
 func (r *postgres) inTx(ctx context.Context, run func(*db.Queries) error) (err error) {
@@ -163,9 +163,9 @@ func insertParams(plugin string, e *monitorpb.Event, baseline bool) (db.InsertEv
 		return db.InsertEventParams{}, fmt.Errorf("event seq %d: %w", e.GetSeq(), err)
 	}
 	params := db.InsertEventParams{
-		Plugin:     plugin,
+		Monitor:    plugin,
 		EventID:    e.GetId(),
-		PluginSeq:  e.GetSeq(),
+		MonitorSeq: e.GetSeq(),
 		Kind:       e.GetKind(),
 		Severity:   severity,
 		OccurredAt: e.GetOccurredAt().AsTime(),

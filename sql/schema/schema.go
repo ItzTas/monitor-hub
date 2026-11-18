@@ -14,7 +14,7 @@ import (
 )
 
 //go:embed *.sql
-var migrations embed.FS
+var Files embed.FS
 
 func Migrate(ctx context.Context, databaseURL string) error {
 	config, err := pgx.ParseConfig(databaseURL)
@@ -30,7 +30,7 @@ func Migrate(ctx context.Context, databaseURL string) error {
 }
 
 func migrate(ctx context.Context, db *sql.DB, locker lock.SessionLocker) error {
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations,
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, Files,
 		goose.WithDisableGlobalRegistry(true),
 		goose.WithSessionLocker(locker),
 	)

@@ -27,11 +27,11 @@ func serveHealth(t *testing.T, pool *pgxpool.Pool) *httptest.ResponseRecorder {
 func TestHealthIgnoresPluginState(t *testing.T) {
 	pool := coretest.Pool(t)
 	queries := db.New(pool)
-	if err := queries.SavePluginDescription(t.Context(), db.SavePluginDescriptionParams{Name: "sei", DisplayName: "SEI", Version: "1.0.0"}); err != nil {
+	if err := queries.SaveMonitorDescription(t.Context(), db.SaveMonitorDescriptionParams{Name: "sei", DisplayName: "SEI", Version: "1.0.0"}); err != nil {
 		t.Fatal(err)
 	}
 	seen := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	if err := queries.SavePluginStatus(t.Context(), db.SavePluginStatusParams{Name: "sei", State: int16(monitorpb.State_STATE_FAILING), Message: "login refused", StatusSeenAt: &seen}); err != nil {
+	if err := queries.SaveMonitorStatus(t.Context(), db.SaveMonitorStatusParams{Name: "sei", State: int16(monitorpb.State_STATE_FAILING), Message: "login refused", StatusSeenAt: &seen}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -13,16 +13,16 @@ import (
 )
 
 const insertEvent = `-- name: InsertEvent :one
-INSERT INTO events (plugin, event_id, plugin_seq, kind, severity, occurred_at, title, body, url, payload, baseline)
+INSERT INTO events (monitor, event_id, monitor_seq, kind, severity, occurred_at, title, body, url, payload, baseline)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-ON CONFLICT (plugin, event_id) DO NOTHING
+ON CONFLICT (monitor, event_id) DO NOTHING
 RETURNING seq
 `
 
 type InsertEventParams struct {
-	Plugin     string
+	Monitor    string
 	EventID    string
-	PluginSeq  int64
+	MonitorSeq int64
 	Kind       string
 	Severity   int16
 	OccurredAt time.Time
@@ -35,9 +35,9 @@ type InsertEventParams struct {
 
 func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) (int64, error) {
 	row := q.db.QueryRow(ctx, insertEvent,
-		arg.Plugin,
+		arg.Monitor,
 		arg.EventID,
-		arg.PluginSeq,
+		arg.MonitorSeq,
 		arg.Kind,
 		arg.Severity,
 		arg.OccurredAt,
@@ -64,10 +64,10 @@ func (q *Queries) LatestEventSeq(ctx context.Context) (int64, error) {
 }
 
 const listEvents = `-- name: ListEvents :many
-SELECT e.seq, e.plugin, p.display_name, e.event_id, e.kind, e.severity, e.occurred_at, e.detected_at, e.title, e.body, e.url, e.payload
+SELECT e.seq, e.monitor, p.display_name, e.event_id, e.kind, e.severity, e.occurred_at, e.detected_at, e.title, e.body, e.url, e.payload
 FROM events e
-JOIN plugins p ON p.name = e.plugin
-WHERE ($1::text IS NULL OR e.plugin = $1::text)
+JOIN monitors p ON p.name = e.monitor
+WHERE ($1::text IS NULL OR e.monitor = $1::text)
   AND ($2::text IS NULL OR e.kind = $2::text)
   AND ($3::bigint IS NULL OR e.seq < $3::bigint)
 ORDER BY e.seq DESC
@@ -75,7 +75,7 @@ LIMIT $4::bigint
 `
 
 type ListEventsParams struct {
-	Plugin  pgtype.Text
+	Monitor pgtype.Text
 	Kind    pgtype.Text
 	Before  pgtype.Int8
 	MaxRows int64
@@ -83,7 +83,7 @@ type ListEventsParams struct {
 
 type ListEventsRow struct {
 	Seq         int64
-	Plugin      string
+	Monitor     string
 	DisplayName string
 	EventID     string
 	Kind        string
@@ -98,7 +98,7 @@ type ListEventsRow struct {
 
 func (q *Queries) ListEvents(ctx context.Context, arg ListEventsParams) ([]ListEventsRow, error) {
 	rows, err := q.db.Query(ctx, listEvents,
-		arg.Plugin,
+		arg.Monitor,
 		arg.Kind,
 		arg.Before,
 		arg.MaxRows,
@@ -112,7 +112,7 @@ func (q *Queries) ListEvents(ctx context.Context, arg ListEventsParams) ([]ListE
 		var i ListEventsRow
 		if err := rows.Scan(
 			&i.Seq,
-			&i.Plugin,
+			&i.Monitor,
 			&i.DisplayName,
 			&i.EventID,
 			&i.Kind,
@@ -144,9 +144,9 @@ func (q *Queries) LockEventOrder(ctx context.Context) error {
 }
 
 const notificationsAfter = `-- name: NotificationsAfter :many
-SELECT e.seq, e.plugin, p.display_name, e.kind, e.severity, e.occurred_at, e.detected_at, e.title, e.body, e.url
+SELECT e.seq, e.monitor, p.display_name, e.kind, e.severity, e.occurred_at, e.detected_at, e.title, e.body, e.url
 FROM events e
-JOIN plugins p ON p.name = e.plugin
+JOIN monitors p ON p.name = e.monitor
 WHERE e.seq > $1::bigint AND NOT e.baseline
 ORDER BY e.seq
 LIMIT $2::bigint
@@ -159,7 +159,7 @@ type NotificationsAfterParams struct {
 
 type NotificationsAfterRow struct {
 	Seq         int64
-	Plugin      string
+	Monitor     string
 	DisplayName string
 	Kind        string
 	Severity    int16
@@ -181,7 +181,7 @@ func (q *Queries) NotificationsAfter(ctx context.Context, arg NotificationsAfter
 		var i NotificationsAfterRow
 		if err := rows.Scan(
 			&i.Seq,
-			&i.Plugin,
+			&i.Monitor,
 			&i.DisplayName,
 			&i.Kind,
 			&i.Severity,

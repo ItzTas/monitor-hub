@@ -38,7 +38,7 @@ func TestNewEventsQueueOneDeliveryPerChannel(t *testing.T) {
 		nextAttemptAt time.Time
 	}
 	rows, err := pool.Query(t.Context(), `
-		SELECT e.plugin_seq, d.channel, d.status, d.attempts, d.next_attempt_at
+		SELECT e.monitor_seq, d.channel, d.status, d.attempts, d.next_attempt_at
 		FROM deliveries d JOIN events e ON e.seq = d.event_seq
 		ORDER BY d.channel`)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestResentEventsAreStoredOnce(t *testing.T) {
 	expectStored(t, pool, "sei", 4, 2, 5, true)
 	notified := countRows(t, pool, `
 		SELECT count(*) FROM deliveries d JOIN events e ON e.seq = d.event_seq
-		WHERE e.event_id = 'event-5' AND e.plugin_seq = 5`)
+		WHERE e.event_id = 'event-5' AND e.monitor_seq = 5`)
 	if notified != 2 {
 		t.Errorf("deliveries of event-5 = %d, want 2", notified)
 	}
@@ -127,7 +127,7 @@ func TestPagesUntilShortPage(t *testing.T) {
 	var baselinedWhenAsked []bool
 	p.respond = func(ctx context.Context, req *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		var baselined bool
-		err := pool.QueryRow(ctx, "SELECT baselined_at IS NOT NULL FROM plugins WHERE name = 'sei'").Scan(&baselined)
+		err := pool.QueryRow(ctx, "SELECT baselined_at IS NOT NULL FROM monitors WHERE name = 'sei'").Scan(&baselined)
 		if err != nil {
 			return nil, err
 		}

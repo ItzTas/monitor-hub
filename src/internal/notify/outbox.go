@@ -72,8 +72,8 @@ func dueDelivery(row db.DueDeliveriesRow) DueDelivery {
 			LastError:     row.LastError,
 		},
 		Event: Event{
-			Plugin:      row.Plugin,
-			DisplayName: cmp.Or(row.DisplayName, row.Plugin),
+			Plugin:      row.Monitor,
+			DisplayName: cmp.Or(row.DisplayName, row.Monitor),
 			Kind:        row.Kind,
 			Title:       row.Title,
 			Body:        row.Body,

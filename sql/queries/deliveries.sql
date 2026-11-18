@@ -4,10 +4,10 @@ SELECT sqlc.arg(event_seq)::bigint, unnest(sqlc.arg(channels)::text[]), 'pending
 
 -- name: DueDeliveries :many
 SELECT d.event_seq, d.channel, d.status, d.attempts, d.next_attempt_at, d.sent_at, d.last_error,
-       e.plugin, p.display_name, e.kind, e.severity, e.title, e.body, e.url, e.occurred_at
+       e.monitor, p.display_name, e.kind, e.severity, e.title, e.body, e.url, e.occurred_at
 FROM deliveries d
 JOIN events e ON e.seq = d.event_seq
-JOIN plugins p ON p.name = e.plugin
+JOIN monitors p ON p.name = e.monitor
 WHERE d.channel = sqlc.arg(channel) AND d.status = 'pending' AND d.next_attempt_at <= sqlc.arg(now)::timestamptz
 ORDER BY e.occurred_at, e.seq
 LIMIT sqlc.arg(max_rows)::bigint;

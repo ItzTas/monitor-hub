@@ -45,8 +45,8 @@ func TestEventFieldsAreStored(t *testing.T) {
 	read := func(id string) stored {
 		var s stored
 		err := pool.QueryRow(t.Context(), `
-			SELECT plugin_seq, kind, severity, occurred_at, title, body, url, payload::text
-			FROM events WHERE plugin = 'sei' AND event_id = $1`, id).
+			SELECT monitor_seq, kind, severity, occurred_at, title, body, url, payload::text
+			FROM events WHERE monitor = 'sei' AND event_id = $1`, id).
 			Scan(&s.pluginSeq, &s.kind, &s.severity, &s.occurredAt, &s.title, &s.body, &s.url, &s.payload)
 		if err != nil {
 			t.Fatalf("read event %s: %v", id, err)
@@ -91,7 +91,7 @@ func TestPluginRowRecordsDescriptionAndStatus(t *testing.T) {
 	)
 	err := pool.QueryRow(t.Context(), `
 		SELECT display_name, version, state, message, last_check_started_at, last_success_at, next_check_at, status_seen_at
-		FROM plugins WHERE name = 'sei'`).
+		FROM monitors WHERE name = 'sei'`).
 		Scan(&displayName, &version, &state, &message, &lastCheckStarted, &lastSuccess, &nextCheck, &statusSeen)
 	if err != nil {
 		t.Fatal(err)

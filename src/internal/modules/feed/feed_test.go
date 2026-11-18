@@ -20,19 +20,19 @@ import (
 var t0 = time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 
 type event struct {
-	plugin, id, title, body, url string
+	monitor, id, title, body, url string
 }
 
 func seed(t *testing.T, pool *pgxpool.Pool, events ...event) {
 	t.Helper()
 	queries := db.New(pool)
 	for i, e := range events {
-		description := db.SavePluginDescriptionParams{Name: e.plugin, DisplayName: strings.ToUpper(e.plugin), Version: "1.0.0"}
-		if err := queries.SavePluginDescription(t.Context(), description); err != nil {
+		description := db.SaveMonitorDescriptionParams{Name: e.monitor, DisplayName: strings.ToUpper(e.monitor), Version: "1.0.0"}
+		if err := queries.SaveMonitorDescription(t.Context(), description); err != nil {
 			t.Fatal(err)
 		}
 		_, err := queries.InsertEvent(t.Context(), db.InsertEventParams{
-			Plugin: e.plugin, EventID: e.id, PluginSeq: int64(i + 1), Kind: "ping", Severity: 1,
+			Monitor: e.monitor, EventID: e.id, MonitorSeq: int64(i + 1), Kind: "ping", Severity: 1,
 			OccurredAt: t0.Add(time.Duration(i) * time.Minute), Title: e.title, Body: e.body, Url: e.url,
 		})
 		if err != nil {
@@ -72,7 +72,7 @@ func guids(document RSS) []string {
 
 func TestFeedRequiresTokenWhenSet(t *testing.T) {
 	pool := coretest.Pool(t)
-	seed(t, pool, event{plugin: "sei", id: "e1", title: "ping 1"})
+	seed(t, pool, event{monitor: "sei", id: "e1", title: "ping 1"})
 	cases := map[string]struct {
 		token  string
 		target string
@@ -102,8 +102,8 @@ func TestFeedRequiresTokenWhenSet(t *testing.T) {
 func TestFeedListsTheNewestEventsFirst(t *testing.T) {
 	pool := coretest.Pool(t)
 	seed(t, pool,
-		event{plugin: "sei", id: "a", title: "first", body: "line one\nline two", url: "https://sei.example.org/p/1"},
-		event{plugin: "diario", id: "b", title: "second"},
+		event{monitor: "sei", id: "a", title: "first", body: "line one\nline two", url: "https://sei.example.org/p/1"},
+		event{monitor: "diario", id: "b", title: "second"},
 	)
 
 	document := decode(t, serveFeed(t, pool, Options{PublicURL: "https://hub.example.org"}, "/feed.xml"))
@@ -124,7 +124,7 @@ func TestFeedListsTheNewestEventsFirst(t *testing.T) {
 
 func TestFeedFiltersByPlugin(t *testing.T) {
 	pool := coretest.Pool(t)
-	seed(t, pool, event{plugin: "sei", id: "a", title: "one"}, event{plugin: "diario", id: "b", title: "two"}, event{plugin: "sei", id: "c", title: "three"})
+	seed(t, pool, event{monitor: "sei", id: "a", title: "one"}, event{monitor: "diario", id: "b", title: "two"}, event{monitor: "sei", id: "c", title: "three"})
 	cases := map[string]struct {
 		target string
 		title  string
@@ -147,7 +147,7 @@ func TestFeedKeepsTheNewest100Events(t *testing.T) {
 	pool := coretest.Pool(t)
 	events := make([]event, 0, 101)
 	for i := 1; i <= 101; i++ {
-		events = append(events, event{plugin: "sei", id: fmt.Sprintf("e%d", i), title: "ping"})
+		events = append(events, event{monitor: "sei", id: fmt.Sprintf("e%d", i), title: "ping"})
 	}
 	seed(t, pool, events...)
 
@@ -164,8 +164,8 @@ func TestFeedEscapesPluginText(t *testing.T) {
 	body := `<b>bold</b> & ]]><![CDATA[ more`
 	link := `https://example.org/?a=1&b=<2>"`
 	seed(t, pool,
-		event{plugin: "sei", id: "<id>&", title: title, body: body, url: link},
-		event{plugin: "sei", id: "js", title: "script link", url: "javascript:alert(1)"},
+		event{monitor: "sei", id: "<id>&", title: title, body: body, url: link},
+		event{monitor: "sei", id: "js", title: "script link", url: "javascript:alert(1)"},
 	)
 
 	rec := serveFeed(t, pool, Options{}, "/feed.xml")

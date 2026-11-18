@@ -29,10 +29,10 @@ func seed(t *testing.T, pool *pgxpool.Pool, events ...db.InsertEventParams) {
 	t.Helper()
 	queries := db.New(pool)
 	for i, e := range events {
-		if err := queries.SavePluginDescription(t.Context(), db.SavePluginDescriptionParams{Name: e.Plugin, DisplayName: "Plugin " + e.Plugin, Version: "1.0.0"}); err != nil {
+		if err := queries.SaveMonitorDescription(t.Context(), db.SaveMonitorDescriptionParams{Name: e.Monitor, DisplayName: "Plugin " + e.Monitor, Version: "1.0.0"}); err != nil {
 			t.Fatal(err)
 		}
-		e.PluginSeq = int64(i + 1)
+		e.MonitorSeq = int64(i + 1)
 		e.OccurredAt = t0.Add(time.Duration(i) * time.Minute)
 		if e.EventID == "" {
 			e.EventID = fmt.Sprintf("e%d", i+1)
@@ -77,7 +77,7 @@ func seqs(p page) []float64 {
 func TestEventsShowWhatThePluginSent(t *testing.T) {
 	pool := coretest.Pool(t)
 	seed(t, pool, db.InsertEventParams{
-		Plugin: "sei", EventID: "activity-50001", Kind: "activity_added", Severity: int16(monitorpb.Severity_SEVERITY_URGENT),
+		Monitor: "sei", EventID: "activity-50001", Kind: "activity_added", Severity: int16(monitorpb.Severity_SEVERITY_URGENT),
 		Title: "New activity", Body: "Processo recebido", Url: "https://sei.example.org/p/1", Payload: []byte(`{"unit":"NUPROC","count":2}`),
 	})
 
@@ -101,11 +101,11 @@ func TestEventsShowWhatThePluginSent(t *testing.T) {
 func TestEventsPageNewestFirst(t *testing.T) {
 	pool := coretest.Pool(t)
 	seed(t, pool,
-		db.InsertEventParams{Plugin: "sei"},
-		db.InsertEventParams{Plugin: "diario", Kind: "match"},
-		db.InsertEventParams{Plugin: "sei", Kind: "match"},
-		db.InsertEventParams{Plugin: "sei"},
-		db.InsertEventParams{Plugin: "diario"},
+		db.InsertEventParams{Monitor: "sei"},
+		db.InsertEventParams{Monitor: "diario", Kind: "match"},
+		db.InsertEventParams{Monitor: "sei", Kind: "match"},
+		db.InsertEventParams{Monitor: "sei"},
+		db.InsertEventParams{Monitor: "diario"},
 	)
 	cases := map[string]struct {
 		query string
@@ -137,7 +137,7 @@ func TestEventsLimit(t *testing.T) {
 	pool := coretest.Pool(t)
 	events := make([]db.InsertEventParams, 0, 205)
 	for range 205 {
-		events = append(events, db.InsertEventParams{Plugin: "sei"})
+		events = append(events, db.InsertEventParams{Monitor: "sei"})
 	}
 	seed(t, pool, events...)
 	cases := map[string]struct {

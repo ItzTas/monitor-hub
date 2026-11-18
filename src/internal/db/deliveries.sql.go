@@ -12,10 +12,10 @@ import (
 
 const dueDeliveries = `-- name: DueDeliveries :many
 SELECT d.event_seq, d.channel, d.status, d.attempts, d.next_attempt_at, d.sent_at, d.last_error,
-       e.plugin, p.display_name, e.kind, e.severity, e.title, e.body, e.url, e.occurred_at
+       e.monitor, p.display_name, e.kind, e.severity, e.title, e.body, e.url, e.occurred_at
 FROM deliveries d
 JOIN events e ON e.seq = d.event_seq
-JOIN plugins p ON p.name = e.plugin
+JOIN monitors p ON p.name = e.monitor
 WHERE d.channel = $1 AND d.status = 'pending' AND d.next_attempt_at <= $2::timestamptz
 ORDER BY e.occurred_at, e.seq
 LIMIT $3::bigint
@@ -35,7 +35,7 @@ type DueDeliveriesRow struct {
 	NextAttemptAt time.Time
 	SentAt        *time.Time
 	LastError     string
-	Plugin        string
+	Monitor       string
 	DisplayName   string
 	Kind          string
 	Severity      int16
@@ -62,7 +62,7 @@ func (q *Queries) DueDeliveries(ctx context.Context, arg DueDeliveriesParams) ([
 			&i.NextAttemptAt,
 			&i.SentAt,
 			&i.LastError,
-			&i.Plugin,
+			&i.Monitor,
 			&i.DisplayName,
 			&i.Kind,
 			&i.Severity,

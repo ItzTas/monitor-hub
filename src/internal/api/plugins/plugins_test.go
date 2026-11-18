@@ -114,17 +114,17 @@ func TestListShowsConfiguredAndStoredPlugins(t *testing.T) {
 	queries := db.New(pool)
 	seen := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	success := seen.Add(-time.Hour)
-	for _, p := range []db.SavePluginDescriptionParams{{Name: "sei", DisplayName: "SEI", Version: "2.1.0"}, {Name: "removed", DisplayName: "Removed", Version: "0.1.0"}} {
-		if err := queries.SavePluginDescription(t.Context(), p); err != nil {
+	for _, p := range []db.SaveMonitorDescriptionParams{{Name: "sei", DisplayName: "SEI", Version: "2.1.0"}, {Name: "removed", DisplayName: "Removed", Version: "0.1.0"}} {
+		if err := queries.SaveMonitorDescription(t.Context(), p); err != nil {
 			t.Fatal(err)
 		}
 	}
-	statuses := []db.SavePluginStatusParams{
+	statuses := []db.SaveMonitorStatusParams{
 		{Name: "sei", State: int16(monitorpb.State_STATE_FAILING), Message: "login refused", LastSuccessAt: &success, StatusSeenAt: &seen},
 		{Name: "removed", State: 42, StatusSeenAt: &seen},
 	}
 	for _, status := range statuses {
-		if err := queries.SavePluginStatus(t.Context(), status); err != nil {
+		if err := queries.SaveMonitorStatus(t.Context(), status); err != nil {
 			t.Fatal(err)
 		}
 	}

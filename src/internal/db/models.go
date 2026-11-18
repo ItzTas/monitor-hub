@@ -29,9 +29,9 @@ type Delivery struct {
 
 type Event struct {
 	Seq        int64
-	Plugin     string
+	Monitor    string
 	EventID    string
-	PluginSeq  int64
+	MonitorSeq int64
 	Kind       string
 	Severity   int16
 	OccurredAt time.Time
@@ -43,7 +43,7 @@ type Event struct {
 	Baseline   bool
 }
 
-type Plugin struct {
+type Monitor struct {
 	Name               string
 	DisplayName        string
 	Version            string

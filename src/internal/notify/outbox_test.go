@@ -26,7 +26,7 @@ func queue(t *testing.T, pool *pgxpool.Pool, channels []string, at time.Time, ev
 	q := db.New(pool)
 	seqs := make([]int64, 0, len(events))
 	for i, e := range events {
-		err := q.SavePluginDescription(t.Context(), db.SavePluginDescriptionParams{Name: e.Plugin, DisplayName: e.DisplayName, Version: "1.0.0"})
+		err := q.SaveMonitorDescription(t.Context(), db.SaveMonitorDescriptionParams{Name: e.Plugin, DisplayName: e.DisplayName, Version: "1.0.0"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -35,7 +35,7 @@ func queue(t *testing.T, pool *pgxpool.Pool, channels []string, at time.Time, ev
 			severity = int16(monitorpb.Severity_SEVERITY_URGENT)
 		}
 		seq, err := q.InsertEvent(t.Context(), db.InsertEventParams{
-			Plugin: e.Plugin, EventID: e.Title, PluginSeq: int64(i + 1), Kind: e.Kind, Severity: severity,
+			Monitor: e.Plugin, EventID: e.Title, MonitorSeq: int64(i + 1), Kind: e.Kind, Severity: severity,
 			OccurredAt: e.OccurredAt, Title: e.Title, Body: e.Body, Url: e.URL,
 		})
 		if err != nil {

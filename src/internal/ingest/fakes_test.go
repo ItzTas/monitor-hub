@@ -340,7 +340,7 @@ func countRows(t *testing.T, pool *pgxpool.Pool, query string, args ...any) int 
 
 func cursorOf(t *testing.T, pool *pgxpool.Pool, name string) (cursor int64, baselined bool) {
 	t.Helper()
-	err := pool.QueryRow(t.Context(), "SELECT cursor, baselined_at IS NOT NULL FROM plugins WHERE name = $1", name).
+	err := pool.QueryRow(t.Context(), "SELECT cursor, baselined_at IS NOT NULL FROM monitors WHERE name = $1", name).
 		Scan(&cursor, &baselined)
 	if err != nil {
 		t.Fatalf("read the cursor of %s: %v", name, err)
@@ -350,10 +350,10 @@ func cursorOf(t *testing.T, pool *pgxpool.Pool, name string) (cursor int64, base
 
 func expectStored(t *testing.T, pool *pgxpool.Pool, name string, events, deliveries int, cursor int64, baselined bool) {
 	t.Helper()
-	if got := countRows(t, pool, "SELECT count(*) FROM events WHERE plugin = $1", name); got != events {
+	if got := countRows(t, pool, "SELECT count(*) FROM events WHERE monitor = $1", name); got != events {
 		t.Errorf("%s events = %d, want %d", name, got, events)
 	}
-	if got := countRows(t, pool, "SELECT count(*) FROM deliveries d JOIN events e ON e.seq = d.event_seq WHERE e.plugin = $1", name); got != deliveries {
+	if got := countRows(t, pool, "SELECT count(*) FROM deliveries d JOIN events e ON e.seq = d.event_seq WHERE e.monitor = $1", name); got != deliveries {
 		t.Errorf("%s deliveries = %d, want %d", name, got, deliveries)
 	}
 	gotCursor, gotBaselined := cursorOf(t, pool, name)
