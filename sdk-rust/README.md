@@ -443,11 +443,12 @@ fn the_plugin_conforms() {
    - In every other case the binary goes to a private temporary directory, one per test process, which stays behind after the process ends: when neither variable gives an absolute path, or when the base or a directory below it fails the checks above, for example `HOME=/` in a container started with `--user`. `run` then says once on stderr why it did not use the cache. Unsetting both `XDG_CACHE_HOME` and `HOME` always selects the temporary directory; `go` itself then needs `GOCACHE` and `GOPATH` set.
 3. Otherwise `Outcome::Skipped`, or a panic when `CI` is set and not empty.
 
-`Outcome::Failed` carries one of three things:
+`Outcome::Failed` carries one of four things:
 
+- A message that starts with `Conformance.` when a field of your `Conformance` is wrong: `command` is empty, a name in `env` is empty or holds `=`, or `plugin_dir` is not a directory. The command is not run.
 - The conformance command's stderr: one line per violation, preceded by every line the plugin wrote to its stderr, each prefixed with `plugin: `. When the plugin cannot start, for example because its configuration is wrong or its database refuses the connection, its own error lines come just before the command's `plugin-conformance: ` line.
 - A message that starts with "the conformance command" and says it could not be fetched or built, followed by the Go tool's output. This happens in the `go` mode, before your plugin is started.
-- A message about an unexpected end: the command was called wrongly (a bug in the runner, not in your plugin), did not finish in time, could not be started, or was killed.
+- A message about an unexpected end: the command did not finish in time, could not be started, was killed, or rejected its arguments with exit code 2. The runner checks the arguments before it starts the command, so that last case is a bug in the runner, not in your plugin.
 
 Of the command's stderr, and of the Go tool's output, only the last 1 MiB is kept, cut at the start of a line. When anything was cut, the first line is `(earlier output dropped)`.
 

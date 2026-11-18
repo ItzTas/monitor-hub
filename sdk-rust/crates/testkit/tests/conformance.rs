@@ -156,3 +156,21 @@ fn an_env_name_that_is_empty_or_holds_an_equals_sign_is_rejected() {
         assert!(message.contains(&format!("{name:?}")), "{message}");
     }
 }
+
+#[test]
+fn a_plugin_dir_that_is_not_a_directory_is_rejected() {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("missing");
+    for dir in [Path::new(""), &file, &missing] {
+        let mut conformance = Conformance::new("unused");
+        conformance.plugin_dir = Some(dir.to_owned());
+
+        assert_eq!(
+            run(&conformance),
+            Outcome::Failed(format!(
+                "Conformance.plugin_dir {} is not a directory",
+                dir.display()
+            ))
+        );
+    }
+}

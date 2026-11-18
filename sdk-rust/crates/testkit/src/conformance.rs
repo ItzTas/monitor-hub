@@ -93,13 +93,22 @@ fn problem(conformance: &Conformance) -> Option<String> {
     if conformance.command.is_empty() {
         return Some("Conformance.command is empty: there is no plugin to run".into());
     }
-    let (name, _) = conformance
+    if let Some((name, _)) = conformance
         .env
         .iter()
-        .find(|(name, _)| name.is_empty() || name.contains('='))?;
-    Some(format!(
-        "Conformance.env has the invalid variable name {name:?}: a name must not be empty or contain '='"
-    ))
+        .find(|(name, _)| name.is_empty() || name.contains('='))
+    {
+        return Some(format!(
+            "Conformance.env has the invalid variable name {name:?}: a name must not be empty or contain '='"
+        ));
+    }
+    let dir = conformance.plugin_dir.as_deref()?;
+    (!dir.is_dir()).then(|| {
+        format!(
+            "Conformance.plugin_dir {} is not a directory",
+            dir.display()
+        )
+    })
 }
 
 fn run_from(source: Source, conformance: &Conformance) -> Outcome {
