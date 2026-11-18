@@ -188,21 +188,31 @@ func recordRun(t *testing.T, flags []string, args ...string) recorded {
 }
 
 func TestUsageErrors(t *testing.T) {
-	cases := map[string][]string{
-		"no separator":      {"-start-within", "1s"},
-		"no command":        {"-start-within", "1s", "--"},
-		"env without equal": {"-env", "SEMIGUAL", "--", "consumer"},
-		"stray argument":    {"stray", "--", "consumer"},
+	t.Parallel()
+	cases := map[string]struct {
+		args []string
+		want string
+	}{
+		"no separator":              {args: []string{"-start-within", "1s"}, want: usage},
+		"no command":                {args: []string{"-start-within", "1s", "--"}, want: usage},
+		"env without equal":         {args: []string{"-env", "SEMIGUAL", "--", "consumer"}, want: `invalid value "SEMIGUAL" for flag -env`},
+		"stray argument":            {args: []string{"stray", "--", "consumer"}, want: usage},
+		"a zero start-within":       {args: []string{"-start-within", "0s", "--", "consumer"}, want: `invalid value "0s" for flag -start-within: must be greater than zero`},
+		"a negative ack-within":     {args: []string{"-ack-within", "-1s", "--", "consumer"}, want: `invalid value "-1s" for flag -ack-within: must be greater than zero`},
+		"a zero reconnect-within":   {args: []string{"-reconnect-within", "0", "--", "consumer"}, want: `invalid value "0" for flag -reconnect-within: must be greater than zero`},
+		"a negative quiet-after":    {args: []string{"-quiet-after", "-5ms", "--", "consumer"}, want: `invalid value "-5ms" for flag -quiet-after: must be greater than zero`},
+		"a duration without a unit": {args: []string{"-ack-within", "10", "--", "consumer"}, want: `invalid value "10" for flag -ack-within`},
 	}
-	for name, args := range cases {
+	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			var stdout, stderr bytes.Buffer
-			code := run(context.Background(), args, &stdout, &stderr)
+			code := run(context.Background(), tt.args, &stdout, &stderr)
 			if code != exitUsage {
 				t.Fatalf("code = %d, want %d", code, exitUsage)
 			}
-			if !strings.Contains(stderr.String(), usage) {
-				t.Fatalf("stderr = %q, want the usage line", stderr.String())
+			if !strings.Contains(stderr.String(), tt.want) || !strings.Contains(stderr.String(), usage) {
+				t.Fatalf("stderr = %q, want %q and the usage line", stderr.String(), tt.want)
 			}
 			if stdout.Len() != 0 {
 				t.Fatalf("stdout = %q, want nothing", stdout.String())

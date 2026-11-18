@@ -29,6 +29,8 @@ const (
 
 type envFlags []string
 
+type positive time.Duration
+
 type prefixed struct {
 	out  io.Writer
 	line []byte
@@ -82,6 +84,20 @@ func (e *envFlags) Set(v string) error {
 	return nil
 }
 
+func (p *positive) String() string { return time.Duration(*p).String() }
+
+func (p *positive) Set(v string) error {
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return err
+	}
+	if d <= 0 {
+		return errors.New("must be greater than zero")
+	}
+	*p = positive(d)
+	return nil
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), stopSignals...)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
@@ -95,10 +111,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("consumer-conformance", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { _, _ = fmt.Fprintln(stderr, usage) }
-	fs.DurationVar(&opts.StartWithin, "start-within", opts.StartWithin, "how long the consumer has to open the stream")
-	fs.DurationVar(&opts.AckWithin, "ack-within", opts.AckWithin, "how long the consumer has to acknowledge")
-	fs.DurationVar(&opts.ReconnectWithin, "reconnect-within", opts.ReconnectWithin, "how long the consumer has to reconnect")
-	fs.DurationVar(&opts.QuietAfter, "quiet-after", opts.QuietAfter, "how long to watch the consumer after a 401 or replaced")
+	fs.Var((*positive)(&opts.StartWithin), "start-within", "how long the consumer has to open the stream")
+	fs.Var((*positive)(&opts.AckWithin), "ack-within", "how long the consumer has to acknowledge")
+	fs.Var((*positive)(&opts.ReconnectWithin), "reconnect-within", "how long the consumer has to reconnect")
+	fs.Var((*positive)(&opts.QuietAfter), "quiet-after", "how long to watch the consumer after a 401 or replaced")
 	fs.Var(&env, "env", "environment variable NAME=value for the consumer (repeatable)")
 
 	sep := slices.Index(args, "--")

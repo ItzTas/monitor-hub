@@ -681,7 +681,7 @@ The check runs two consumers in turn, each with a new token, and looks for these
 5. After a `401`, it makes at most one more request in the next 10 seconds.
 6. After `replaced`, it makes no request in the next 10 seconds.
 
-The deadlines are options: `-start-within` (30 s, to open the stream), `-ack-within` (10 s), `-reconnect-within` (30 s) and `-quiet-after` (10 s, the watch after a `401` or `replaced`). The 1 second minimum before reconnecting is part of the contract and has no option. A consumer that exits at once still takes the whole `-start-within` to be reported, so pass a short one while you test.
+The deadlines are options: `-start-within` (30 s, to open the stream), `-ack-within` (10 s), `-reconnect-within` (30 s) and `-quiet-after` (10 s, the watch after a `401` or `replaced`). Each must be greater than zero. The 1 second minimum before reconnecting is part of the contract and has no option. A consumer that exits at once still takes the whole `-start-within` to be reported, so pass a short one while you test.
 
 Output follows [the plugin check](#output). Exit `0` means the consumer passed, and `consumer conformance passed` goes to stdout. Exit `1` means it broke a rule or could not be started, with one line per problem on stderr. Exit `2` means the command was called wrongly, and the usage line goes to stderr. Everything the consumer writes to stdout or stderr comes out on the command's stderr, line by line, with `consumer: ` in front. The command's own lines come after the consumer has stopped, so when a consumer dies at start-up its last words sit just above the report.
 
