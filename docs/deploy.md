@@ -57,10 +57,12 @@ The Go images to pin:
 3. Restart each stack and check the image:
 
    ```bash
-   cd /opt/stacks/sei-monitor && docker compose pull && docker compose up -d
+   cd /opt/stacks/sei-monitor && docker compose pull sei-monitor && docker compose up -d sei-monitor
    cd /opt/stacks/diario-alerr && docker compose pull && docker compose up -d
    docker ps --format '{{.Names}}\t{{.Image}}' | grep -E 'sei-monitor|diario-alerr'
    ```
+
+   Pull and start only the `sei-monitor` service: if the stack still bundles its database, a plain `pull` and `up -d` would also pull a newer `postgres:18-alpine` and could recreate the database container.
 
    Check: the SEI app container shows `ghcr.io/itztas/sei-monitor:1.0.0` and the gazette one `ghcr.io/itztas/diario-alerr:sha-764b330`. Also note the image digest of each, in case a tag is ever overwritten:
 
@@ -72,7 +74,7 @@ The Go images to pin:
 4. Only now merge the two pull requests. Once their CI runs have finished, pull again on the board:
 
    ```bash
-   cd /opt/stacks/sei-monitor && docker compose pull && docker compose up -d
+   cd /opt/stacks/sei-monitor && docker compose pull sei-monitor && docker compose up -d sei-monitor
    cd /opt/stacks/diario-alerr && docker compose pull && docker compose up -d
    docker ps --format '{{.Names}}\t{{.Image}}' | grep -E 'sei-monitor|diario-alerr'
    ```
