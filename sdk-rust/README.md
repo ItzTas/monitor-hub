@@ -2,7 +2,7 @@
 
 Two crates for writing monitor-hub plugins in Rust. The plugin protocol itself is described in [`docs/protocol.md`](../docs/protocol.md).
 
-- `monitor-hub-plugin` runs the plugin side of the protocol: the magic cookie check, the Unix socket, the handshake line, the gRPC health service and shutdown. It also writes logs in the format the hub reads, answers `validate-settings` for plugins that declare their settings, and, behind the `postgres` feature, applies goose-format migrations.
+- `monitor-hub-plugin` runs the plugin side of the protocol: the magic cookie check, the Unix socket, the handshake line, the gRPC health service and shutdown. It also writes logs in the format the hub reads, and answers `validate-settings` for plugins that declare their settings.
 - `monitor-hub-plugin-testkit` is for your tests: a throwaway Postgres database, a runner for the hub's conformance suite, and checks for `settings.json` and `validate-settings`.
 
 ## Setup
@@ -21,7 +21,7 @@ tracing = "0.1.44"
 monitor-hub-plugin-testkit = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.3.0" }
 ```
 
-Your crate implements the `Plugin` trait the SDK generates with tonic and builds messages with prost, so it needs its own `tonic` and `prost-types` dependencies, in the same 0.14 series as the SDK. This workspace uses `tonic` 0.14.8 and `prost-types` 0.14.4. `tracing` is what you log with. If you use migrations, also add `tokio-postgres = "0.7.18"`.
+Your crate implements the `Plugin` trait the SDK generates with tonic and builds messages with prost, so it needs its own `tonic` and `prost-types` dependencies, in the same 0.14 series as the SDK. This workspace uses `tonic` 0.14.8 and `prost-types` 0.14.4. `tracing` is what you log with.
 
 Both crates build on Unix systems only.
 
@@ -149,21 +149,17 @@ The hub waits 60 seconds for the handshake line, which `serve` prints. When the 
 
 ### Prepare, then serve
 
-This is the simple default. `main` connects and migrates before `serve`, with a limit on each connect and one on the whole sequence, and exits on failure:
+This is the simple default. `main` calls a `prepare` function before `serve`, with a limit on the whole call, and exits on failure. `prepare` is your own function: it connects to the database and applies your migrations with the library you chose.
 
 ```rust
 use std::error::Error;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use monitor_hub_plugin::migrate::{Migration, up};
 use monitor_hub_plugin::{NOT_LAUNCHED_BY_HUB, ServeError, launched_by_hub, logging, serve};
 use tokio::time::timeout;
-use tokio_postgres::{Client, NoTls};
 
-const CONNECT_LIMIT: Duration = Duration::from_secs(10);
 const PREPARE_LIMIT: Duration = Duration::from_secs(45);
-const MIGRATIONS: &[Migration] = &[];
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -198,22 +194,15 @@ async fn main() -> ExitCode {
 }
 
 async fn prepare(url: &str) -> Result<Client, Box<dyn Error + Send + Sync>> {
-    let (mut client, connection) =
-        timeout(CONNECT_LIMIT, tokio_postgres::connect(url, NoTls)).await??;
-    tokio::spawn(async move {
-        if let Err(err) = connection.await {
-            tracing::error!(error = &err as &dyn Error, "database connection failed");
-        }
-    });
-    up(&mut client, MIGRATIONS).await?;
-    Ok(client)
+    // Connect and apply your migrations here.
+    todo!()
 }
 ```
 
-`Items` stands for your type that implements `Plugin`. The limits matter because nothing else bounds these steps:
+`Items` stands for your type that implements `Plugin`, and `Client` for the database client it holds. Nothing else bounds these steps, so:
 
-- `tokio_postgres::connect` has no time limit by default. Against a server that does not answer, it waits until the hub kills the plugin.
-- `migrate::up` waits up to about 5 minutes for another runner's lock before it returns `MigrateError::LockTimeout`. Under the hub that error never arrives in this shape: the 45-second limit fires first, or else the hub's 60 seconds. When the limit fires, the process exits, which closes the connection and releases the lock.
+- Give each connection its own time limit, because many drivers have none by default. Against a server that does not answer, such a connect waits until the hub kills the plugin.
+- A migration lock taken by a preparation that the limit cut stays held while its connection is open. Exiting the process closes the connection and releases it.
 
 ### Serve, then prepare
 
@@ -320,14 +309,14 @@ monitor_hub_plugin::logging::init("info")?;
 Log an error as a field cast to `&dyn std::error::Error`:
 
 ```rust
-tracing::error!(error = &err as &dyn std::error::Error, "migration failed");
+tracing::error!(error = &err as &dyn std::error::Error, "serve failed");
 ```
 
-The field then holds the error's whole `source()` chain, joined with `": "`, for example `migration 00002_items.sql failed: db error: ERROR: relation "items" already exists`. A cause whose text the line already ends with is written once. Logging the error with `%err` or `"{err}"` writes only the first link of that chain. For `ServeError`, `MigrateError` and `tokio_postgres::Error` the first link leaves out the reason: `"{err}"` on a `ServeError::Socket` prints only `cannot create the plugin socket`.
+The field then holds the error's whole `source()` chain, joined with `": "`, for example `cannot create the plugin socket: <cause>`. A cause whose text the line already ends with is written once. Logging the error with `%err` or `"{err}"` writes only the first link of that chain. For `ServeError` the first link leaves out the reason: `"{err}"` on a `ServeError::Socket` prints only `cannot create the plugin socket`.
 
 `init` returns `LoggingError::UnknownLevel` for any other level and `LoggingError::AlreadyInitialized` when a global subscriber already exists. When it fails nothing is installed, so a `tracing::error!` at that point goes nowhere. A plugin that reads its level from configuration should print the error to stderr itself and exit, as the example above does.
 
-Only `tracing` events are captured. Crates that log through the `log` crate, such as `tokio-postgres`, write nothing unless your plugin bridges them to `tracing` itself.
+Only `tracing` events are captured. Crates that log through the `log` crate write nothing unless your plugin bridges them to `tracing` itself.
 
 ## Settings
 
@@ -393,74 +382,6 @@ async fn main() -> ExitCode {
 `is_reserved(name)` says whether the hub reserves a name. A plugin does not need `parse` at run time, because the file is for the hub. The testkit uses it.
 
 `Settings`, `Field`, `FieldType`, `SettingsError`, `FieldProblem`, `Problem` and `Answer` are `#[non_exhaustive]`. A `match` on `FieldType`, `SettingsError` or `FieldProblem` needs a wildcard arm, a pattern on `SettingsError::Field` needs `..`, and other crates build a `Problem` with `Problem::new`.
-
-## Migrations
-
-Enable the feature:
-
-```toml
-monitor-hub-plugin = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.3.0", features = ["postgres"] }
-```
-
-`monitor_hub_plugin::migrate` applies goose migration files and records them in the same `goose_db_version` table goose uses, so a database can move between this runner and goose. Embed the files in the binary:
-
-```rust
-use std::error::Error;
-use std::time::Duration;
-
-use monitor_hub_plugin::migrate::{Migration, up};
-use tokio::time::timeout;
-
-const CONNECT_LIMIT: Duration = Duration::from_secs(10);
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "00001_create_items.sql",
-    sql: include_str!("../migrations/00001_create_items.sql"),
-}];
-
-async fn migrate(url: &str) -> Result<Vec<i64>, Box<dyn Error + Send + Sync>> {
-    let (mut client, connection) =
-        timeout(CONNECT_LIMIT, tokio_postgres::connect(url, tokio_postgres::NoTls)).await??;
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    Ok(up(&mut client, MIGRATIONS).await?)
-}
-```
-
-The connect runs under a time limit because `tokio_postgres::connect` has none by default (see [Start-up time](#start-up-time)).
-
-`up` returns the versions it applied, in ascending order. `version` is the number in the file name. It must be at least 1 and unique.
-
-### File format
-
-A file starts with `-- +goose Up` and may have a `-- +goose Down` section. A statement ends with a semicolon at the end of a line. Wrap a statement that contains semicolons, such as a function body, between `-- +goose StatementBegin` and `-- +goose StatementEnd`. Annotations are matched case-insensitively and must start at the first column. The `Down` section is never run, but it is parsed and must be valid.
-
-`-- +goose NO TRANSACTION`, `-- +goose ENVSUB ON`, `-- +goose ENVSUB OFF` and any other annotation are rejected with `MigrateError::Unsupported`.
-
-### Behavior
-
-- Each migration runs in its own transaction together with its row in `goose_db_version`. The table is created, with its version 0 row, when it does not exist.
-- A version counts as applied when it has any row in `goose_db_version`, as in goose's provider.
-- An unapplied migration with a lower version than an applied one fails with `OutOfOrder`. An applied version that has no file in your list is fine.
-- Every migration in the list is parsed before anything touches the database, including the ones already applied. A file that uses a rejected annotation makes `up` fail even if goose applied it long ago. Leaving that file out of the list is safe.
-- Runners take the same session-level advisory lock as goose (id 4097083626). A second runner retries every 5 seconds for about 5 minutes, then fails with `LockTimeout`. Before `serve`, the hub's 60-second start-up budget runs out long before that (see [Start-up time](#start-up-time)).
-- The lock is held for the whole run and released at the end of `up`. If the `up` future is dropped or cancelled after the lock is taken, for example by a timeout or a shutdown, the lock stays held for as long as that connection stays open, and every other runner, goose included, waits and then fails. Give `up` a connection of its own, and when you time it out or cancel it, drop that client instead of reusing it.
-- When a migration fails, the error does not say which earlier versions of the same call were committed. They stay committed, and calling `up` again continues from the right place.
-
-### Errors
-
-| Variant | Meaning |
-|---|---|
-| `Unsupported { migration, annotation }` | The file uses an annotation the runner does not support. |
-| `Invalid { migration, reason }` | The file is malformed, or its version is below 1 or used twice. |
-| `OutOfOrder { missing, current }` | An unapplied version is lower than the database's current version. |
-| `MissingZeroVersion` | `goose_db_version` exists but has no rows. |
-| `LockTimeout` | Another process held the lock for more than 5 minutes. |
-| `Failed { migration, source }` | A statement in that migration failed. Its transaction was rolled back. |
-| `Database` | The runner's own queries failed. |
-
-`MigrateError` is `#[non_exhaustive]`: a `match` on it needs a wildcard arm. So does one on `logging::LoggingError`.
 
 ## Testing with the testkit
 

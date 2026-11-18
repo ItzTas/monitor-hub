@@ -600,7 +600,6 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
- "tokio-postgres",
  "tokio-stream",
  "tonic",
  "tonic-health",

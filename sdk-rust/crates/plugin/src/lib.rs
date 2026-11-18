@@ -10,8 +10,6 @@ mod controller;
 
 mod handshake;
 pub mod logging;
-#[cfg(feature = "postgres")]
-pub mod migrate;
 mod serve;
 pub mod settings;
 mod watch;

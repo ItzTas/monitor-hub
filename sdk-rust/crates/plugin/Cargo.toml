@@ -4,9 +4,6 @@ version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 
-[features]
-postgres = ["dep:tokio-postgres"]
-
 [dependencies]
 chrono = { workspace = true, features = ["now"] }
 prost.workspace = true
@@ -15,7 +12,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "signal", "sync", "time"] }
-tokio-postgres = { workspace = true, optional = true }
 tokio-stream = { workspace = true, features = ["net"] }
 tonic = { workspace = true, features = ["codegen", "router", "server"] }
 tonic-health.workspace = true
@@ -28,11 +24,3 @@ monitor-hub-plugin-testkit = { path = "../testkit" }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 tonic = { workspace = true, features = ["channel"] }
-
-[[example]]
-name = "migrate_fixture"
-required-features = ["postgres"]
-
-[[test]]
-name = "migrate"
-required-features = ["postgres"]
