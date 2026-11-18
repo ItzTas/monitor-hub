@@ -4,11 +4,13 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -30,6 +32,7 @@ type stubborn struct {
 func init() {
 	fakes["tool"] = main
 	fakes["stubborn"] = fakeStubborn
+	fakes["crash"] = fakeCrash
 	fakes["asleep"] = func() { time.Sleep(time.Hour) }
 }
 
@@ -51,6 +54,30 @@ func fakeStubborn() {
 	for range pokes {
 		fmt.Println("still here")
 	}
+}
+
+// fakeCrash reads the stream a byte at a time and exits on the unknown event
+// with the rest of the frame unread, so the connection is reset, as when a
+// consumer crashes.
+func fakeCrash() {
+	hub := strings.TrimPrefix(argument("--hub="), "http://")
+	token, err := os.ReadFile(argument("--token-file="))
+	if err != nil {
+		os.Exit(4)
+	}
+	conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", hub)
+	if err != nil {
+		os.Exit(4)
+	}
+	_, _ = fmt.Fprintf(conn, "GET /consumer/v1/stream HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\n\r\n", hub, strings.TrimSpace(string(token)))
+	seen := ""
+	for b := make([]byte, 1); !strings.HasSuffix(seen, "event: future_thing\n"); seen += string(b) {
+		if _, err := conn.Read(b); err != nil {
+			os.Exit(4)
+		}
+	}
+	_, _ = fmt.Fprintln(os.Stderr, "crashing on an unknown event")
+	os.Exit(3)
 }
 
 func signalTool(sig syscall.Signal) func(*exec.Cmd, stubborn, io.ReadCloser) {
@@ -143,4 +170,27 @@ func awaitReady(t *testing.T, lines *bufio.Scanner) stubborn {
 	}
 	t.Fatalf("the consumer never got ready:\n%s", strings.Join(seen, "\n"))
 	return stubborn{}
+}
+
+func TestAConsumerThatCrashesMidStreamKeepsItsViolations(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	tool := exec.CommandContext(ctx, os.Args[0], "-ack-within", "500ms", "-reconnect-within", "1s", "-quiet-after", "100ms", "-env", modeEnv+"=crash", "--", os.Args[0], "--hub={url}", "--token-file={token_file}")
+	tool.Env = append(os.Environ(), modeEnv+"=tool")
+	var stdout, stderr bytes.Buffer
+	tool.Stdout, tool.Stderr = &stdout, &stderr
+	var exit *exec.ExitError
+	if err := tool.Run(); !errors.As(err, &exit) || exit.ExitCode() != exitViolations {
+		t.Fatalf("tool: %v, want exit status %d\n%s", err, exitViolations, stderr.String())
+	}
+	want := strings.Join([]string{
+		"consumer: crashing on an unknown event",
+		"no ack reached seq 3 within 500ms of caught_up",
+		"no ack reached seq 4 within 500ms after an unknown event type",
+		"the consumer did not reconnect within 1s after the stream ended",
+	}, "\n") + "\n"
+	if stderr.String() != want || stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, stderr:\n%s\nwant no stdout and stderr:\n%s", stdout.String(), stderr.String(), want)
+	}
 }

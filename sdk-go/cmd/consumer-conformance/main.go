@@ -74,6 +74,22 @@ func nextLine(pending []byte) ([]byte, []byte, bool) {
 	return nil, pending, false
 }
 
+// stopOnBrokenPipe ends the run when its reader has gone, as with
+// `consumer-conformance ... 2>&1 | head -1`, so the consumer is stopped and
+// the token file removed.
+type stopOnBrokenPipe struct {
+	out    io.Writer
+	cancel context.CancelFunc
+}
+
+func (s stopOnBrokenPipe) Write(b []byte) (int, error) {
+	n, err := s.out.Write(b)
+	if brokenPipe(err) {
+		s.cancel()
+	}
+	return n, err
+}
+
 func (e *envFlags) String() string { return strings.Join(*e, ",") }
 
 func (e *envFlags) Set(v string) error {
@@ -99,8 +115,11 @@ func (p *positive) Set(v string) error {
 }
 
 func main() {
+	catchBrokenPipes()
 	ctx, stop := signal.NotifyContext(context.Background(), stopSignals...)
-	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	ctx, cancel := context.WithCancel(ctx)
+	code := run(ctx, os.Args[1:], stopOnBrokenPipe{os.Stdout, cancel}, stopOnBrokenPipe{os.Stderr, cancel})
+	cancel()
 	stop()
 	os.Exit(code)
 }
