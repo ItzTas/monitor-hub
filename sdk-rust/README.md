@@ -452,7 +452,7 @@ fn the_plugin_conforms() {
 - A message that starts with "the conformance command" and says it could not be fetched or built, followed by the Go tool's output. This happens in the `go` mode, before your plugin is started.
 - A message about an unexpected end: the command did not finish in time, could not be started, was killed, or rejected its arguments with exit code 2. The runner checks the arguments before it starts the command, so that last case is a bug in the runner, not in your plugin.
 
-Of the command's stderr, and of the Go tool's output, only the last 1 MiB is kept, cut at the start of a line. When anything was cut, the first line is `(earlier output dropped)`.
+Of the command's stderr, and of the Go tool's output, only the last 1 MiB is kept. It starts at the beginning of a line whenever that last part holds a line break. When anything was cut, the first line is `(earlier output dropped)`.
 
 ### Settings
 

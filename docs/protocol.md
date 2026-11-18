@@ -395,7 +395,7 @@ Validation cannot prove everything. A wrong password or an unreachable database 
 
 With the Rust SDK, `monitor_hub_plugin::settings::answer` writes the answer and returns the exit code. See [`sdk-rust/README.md`](../sdk-rust/README.md).
 
-The Rust testkit and the conformance command read the answer with the same checks, but the Rust testkit is stricter. The conformance command accepts keys in any letter case, such as `"Problems"`, and a `null` `name`; the Rust testkit rejects both. Write the keys in lower case, and leave `name` out or empty instead of `null`. The Rust testkit also rejects bytes that are not UTF-8 and a lone surrogate escape, such as `"\ud800"`, anywhere in the answer, while the conformance command accepts them. When the answer is not valid JSON, or a value has the wrong type, each side quotes its own decoder's message.
+The Rust testkit and the conformance command read the answer with the same checks, and they differ in a few cases. The conformance command accepts keys in any letter case, such as `"Problems"`, and a `null` `name`; the Rust testkit rejects both. Inside a problem, the conformance command also reads `Name` or `NAME` as `name` and checks it against the declared names, while the Rust testkit ignores such a key. Write the keys in lower case, and leave `name` out or empty instead of `null`. The Rust testkit also rejects bytes that are not UTF-8 and a lone surrogate escape, such as `"\ud800"`, anywhere in the answer, while the conformance command accepts them. When the answer is not valid JSON, or a value has the wrong type, each side quotes its own decoder's message or names the problem that is not an object.
 
 ### Variables the file does not declare
 
