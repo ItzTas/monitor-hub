@@ -160,7 +160,6 @@ func TestRequestsDuringAPollCollapseIntoOneDelayedFollowUp(t *testing.T) {
 		t.Fatalf("follow-up poll = %+v, want latestSeq 10 only", got)
 	}
 	r.clock.waitArmed(t, PollInterval)
-	r.clock.waitArmed(t, PollInterval)
 	r.expectNoPoll(t)
 	if calls := p.describeCalls.Load(); calls != 2 {
 		t.Fatalf("Describe calls after the follow-up = %d, want 2", calls)
@@ -188,7 +187,6 @@ func TestAHintAtOrBelowTheCursorSkipsEvents(t *testing.T) {
 	statusBefore, eventsBefore := p.statusCalls.Load(), p.eventsCalls.Load()
 	s.schedules["sei"].request(pollRequest{latestSeq: 3})
 	r.nextPoll(t)
-	r.clock.waitArmed(t, PollInterval)
 	if calls := p.statusCalls.Load(); calls != statusBefore+1 {
 		t.Errorf("Status calls = %d, want %d", calls, statusBefore+1)
 	}
@@ -216,7 +214,6 @@ func TestASignalAheadOfEventsStoresNothingAndALaterOneCatchesUp(t *testing.T) {
 	eventsBefore := p.eventsCalls.Load()
 	s.schedules["sei"].request(pollRequest{latestSeq: 4})
 	r.nextPoll(t)
-	r.clock.waitArmed(t, PollInterval)
 	if calls := p.eventsCalls.Load(); calls != eventsBefore+1 {
 		t.Errorf("Events calls = %d, want %d", calls, eventsBefore+1)
 	}
@@ -290,5 +287,61 @@ func TestWhenAPollReadsEvents(t *testing.T) {
 				t.Errorf("%+v.readsEvents(%d, %v) = %v, want %v", c.req, c.cursor, c.known, got, c.want)
 			}
 		})
+	}
+}
+
+func TestHintPollsKeepTheSafetyPollPending(t *testing.T) {
+	pool := coretest.Pool(t)
+	p := plugin("sei", numbered(1, 3)...)
+	s := newService(pool, p)
+	s.schedules["sei"].setWatching(true)
+	r := start(t, s)
+	if got := r.nextPoll(t); got.req != (pollRequest{full: true}) {
+		t.Fatalf("baseline poll = %+v, want a full request", got)
+	}
+
+	statusBefore, eventsBefore := p.statusCalls.Load(), p.eventsCalls.Load()
+	for _, seq := range []int64{3, 2, 3} {
+		s.schedules["sei"].request(pollRequest{latestSeq: seq})
+		if got := r.nextPoll(t); got.req != (pollRequest{latestSeq: seq}) {
+			t.Fatalf("hint poll = %+v, want latestSeq %d", got, seq)
+		}
+	}
+	if calls := p.statusCalls.Load(); calls != statusBefore+3 {
+		t.Errorf("Status calls after the hints = %d, want %d", calls, statusBefore+3)
+	}
+	if calls := p.eventsCalls.Load(); calls != eventsBefore {
+		t.Errorf("Events calls after the hints = %d, want %d", calls, eventsBefore)
+	}
+	if armed := r.clock.armedCount(SafetyInterval); armed != 2 {
+		t.Errorf("after(%s) calls = %d, want 2", SafetyInterval, armed)
+	}
+
+	p.add(event(4, "event-4"))
+	r.clock.fire(t, SafetyInterval)
+	if got := r.nextPoll(t); got.req != (pollRequest{full: true}) {
+		t.Fatalf("safety poll = %+v, want a full request", got)
+	}
+	if calls := p.eventsCalls.Load(); calls != eventsBefore+1 {
+		t.Errorf("Events calls after the safety poll = %d, want %d", calls, eventsBefore+1)
+	}
+	expectStored(t, pool, "sei", 4, 2, 4, true)
+}
+
+func TestEachTimedPollArmsTheIntervalAgain(t *testing.T) {
+	pool := coretest.Pool(t)
+	p := plugin("sei", numbered(1, 3)...)
+	r := start(t, newService(pool, p))
+	r.nextPoll(t)
+	r.clock.waitArmed(t, PollInterval)
+
+	for range 3 {
+		r.clock.fire(t, PollInterval)
+		if got := r.nextPoll(t); got.req != (pollRequest{full: true}) {
+			t.Fatalf("timed poll = %+v, want a full request", got)
+		}
+	}
+	if calls := p.eventsCalls.Load(); calls != 4 {
+		t.Errorf("Events calls = %d, want 4", calls)
 	}
 }

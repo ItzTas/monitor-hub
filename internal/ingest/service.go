@@ -69,13 +69,25 @@ func (s *Service) Run(ctx context.Context) error {
 }
 
 func (s *Service) loop(ctx context.Context, name string, sch *schedule) {
-	for s.wait(ctx, sch) {
+	var timer <-chan time.Time
+	for {
+		if timer == nil {
+			timer = s.after(sch.interval())
+		}
+		if !s.wait(ctx, sch, timer) {
+			return
+		}
 		req, ok := sch.take()
 		if !ok {
 			continue
 		}
 		s.pollPlugin(ctx, name, req)
-		if !sch.pending() {
+		if req.full {
+			timer = nil
+		}
+		followUp := sch.pending()
+		s.polled(name, req)
+		if !followUp {
 			continue
 		}
 		select {
@@ -86,12 +98,12 @@ func (s *Service) loop(ctx context.Context, name string, sch *schedule) {
 	}
 }
 
-func (s *Service) wait(ctx context.Context, sch *schedule) bool {
+func (s *Service) wait(ctx context.Context, sch *schedule, timer <-chan time.Time) bool {
 	select {
 	case <-ctx.Done():
 		return false
 	case <-sch.kick:
-	case <-s.after(sch.interval()):
+	case <-timer:
 		sch.request(pollRequest{full: true})
 	}
 	return ctx.Err() == nil
@@ -106,7 +118,6 @@ func (s *Service) PollOnce(ctx context.Context) {
 }
 
 func (s *Service) pollPlugin(ctx context.Context, name string, req pollRequest) {
-	defer s.polled(name, req)
 	client, ok := s.clients.Client(name)
 	if !ok {
 		return

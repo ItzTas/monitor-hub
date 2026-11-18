@@ -251,3 +251,15 @@ func (c *fakeClock) consume(d time.Duration) bool {
 	}
 	return false
 }
+
+func (c *fakeClock) armedCount(d time.Duration) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	count := 0
+	for _, timer := range c.timers {
+		if timer.d == d {
+			count++
+		}
+	}
+	return count
+}
