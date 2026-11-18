@@ -2,8 +2,8 @@
 
 !go.mod
 !go.sum
-!cmd/monitor-hub
-!internal
+!src/cmd/monitor-hub
+!src/internal
 !sdk-go
 !sql
 

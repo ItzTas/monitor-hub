@@ -16,7 +16,7 @@ Every `Check` records one `ping` event (`title "ping <n>"`) in SQLite. The first
 ## Running it under the conformance suite
 
 ```
-go test -race ./internal/examples/ -run Python
+go test -race ./src/internal/examples/ -run Python
 ```
 
 The test starts `main.py` with only the environment it needs, runs `plugintest.Check` with `MinEvents: 1`, and then checks that no Python process and no socket file is left behind. It skips when the interpreter cannot import `grpc` and `google.protobuf`, and fails instead when `CI` is set.

@@ -35,7 +35,7 @@ generate-python:
 	uvx --from grpcio-tools==1.78.0 python -m grpc_tools.protoc -Iproto/monitorhub/plugin/v1 --python_out=examples/python-plugin/gen --pyi_out=examples/python-plugin/gen --grpc_python_out=examples/python-plugin/gen proto/monitorhub/plugin/v1/plugin.proto
 
 dockerfile:
-	go run ./cmd/imagegen
+	go run ./src/cmd/imagegen
 
 dockerfile-check:
-	go run ./cmd/imagegen -check
+	go run ./src/cmd/imagegen -check

@@ -6,7 +6,7 @@ sql:
     gen:
       go:
         package: db
-        out: internal/db
+        out: src/internal/db
         sql_package: pgx/v5
         overrides:
           - db_type: timestamptz

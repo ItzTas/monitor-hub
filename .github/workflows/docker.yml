@@ -122,7 +122,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check the generated Dockerfile
-        run: go run ./cmd/imagegen -check
+        run: go run ./src/cmd/imagegen -check
 
   image:
     name: Build and publish the image
