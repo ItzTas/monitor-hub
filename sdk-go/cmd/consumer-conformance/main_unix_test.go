@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -33,6 +34,10 @@ func init() {
 	fakes["tool"] = main
 	fakes["stubborn"] = fakeStubborn
 	fakes["crash"] = fakeCrash
+	fakes["announced"] = func() {
+		fmt.Println("ready")
+		fakeGood()
+	}
 	fakes["asleep"] = func() { time.Sleep(time.Hour) }
 }
 
@@ -99,15 +104,21 @@ func breakPipe(_ *exec.Cmd, consumer stubborn, output io.ReadCloser) {
 
 func TestAStoppedRunLeavesNoConsumerAndNoTokenFile(t *testing.T) {
 	t.Parallel()
-	stops := map[string]func(*exec.Cmd, stubborn, io.ReadCloser){
-		"hangup":      signalTool(syscall.SIGHUP),
-		"interrupt":   signalTool(syscall.SIGINT),
-		"termination": signalTool(syscall.SIGTERM),
-		"broken pipe": breakPipe,
+	stops := map[string]struct {
+		signal syscall.Signal
+		stop   func(*exec.Cmd, stubborn, io.ReadCloser)
+	}{
+		"hangup":      {syscall.SIGHUP, signalTool(syscall.SIGHUP)},
+		"interrupt":   {syscall.SIGINT, signalTool(syscall.SIGINT)},
+		"termination": {syscall.SIGTERM, signalTool(syscall.SIGTERM)},
+		"broken pipe": {stop: breakPipe},
 	}
-	for name, stop := range stops {
+	for name, tt := range stops {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			if tt.signal != 0 && signal.Ignored(tt.signal) {
+				t.Skipf("the tests run with %v ignored, which the tool inherits and keeps", tt.signal)
+			}
 			alivePath := filepath.Join(t.TempDir(), "alive")
 			if err := syscall.Mkfifo(alivePath, 0o600); err != nil {
 				t.Fatal(err)
@@ -134,7 +145,7 @@ func TestAStoppedRunLeavesNoConsumerAndNoTokenFile(t *testing.T) {
 				_ = syscall.Kill(-consumer.pid, syscall.SIGKILL)
 				_ = os.RemoveAll(filepath.Dir(consumer.tokenFile))
 			})
-			stop(tool, consumer, output)
+			tt.stop(tool, consumer, output)
 			_ = tool.Wait()
 			if ctx.Err() != nil {
 				t.Fatal("the tool did not stop within 30s")
@@ -192,5 +203,43 @@ func TestAConsumerThatCrashesMidStreamKeepsItsViolations(t *testing.T) {
 	}, "\n") + "\n"
 	if stderr.String() != want || stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, stderr:\n%s\nwant no stdout and stderr:\n%s", stdout.String(), stderr.String(), want)
+	}
+}
+
+func TestASignalIgnoredAtStartStaysIgnored(t *testing.T) {
+	t.Parallel()
+	for name, sig := range map[string]syscall.Signal{"HUP": syscall.SIGHUP, "INT": syscall.SIGINT} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			ignoring := "trap '' " + name + `; exec "$0" "$@"`
+			args := slices.Concat([]string{"-c", ignoring, os.Args[0]}, quickFlags(), []string{"-env", modeEnv + "=announced", "--", os.Args[0], "--hub={url}", "--token-file={token_file}"})
+			tool := exec.CommandContext(ctx, "sh", args...)
+			tool.Env = append(os.Environ(), modeEnv+"=tool")
+			var stdout bytes.Buffer
+			tool.Stdout = &stdout
+			output, err := tool.StderrPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tool.Start(); err != nil {
+				t.Fatal(err)
+			}
+			lines := bufio.NewScanner(output)
+			for lines.Scan() {
+				if lines.Text() == consumerPrefix+"ready" {
+					break
+				}
+			}
+			_ = tool.Process.Signal(sig)
+			var after []string
+			for lines.Scan() {
+				after = append(after, lines.Text())
+			}
+			if err := tool.Wait(); err != nil || stdout.String() != "consumer conformance passed\n" {
+				t.Fatalf("tool: %v, stdout %q, stderr after the signal:\n%s\nwant the run to pass", err, stdout.String(), strings.Join(after, "\n"))
+			}
+		})
 	}
 }

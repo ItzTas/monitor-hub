@@ -116,7 +116,8 @@ func (p *positive) Set(v string) error {
 
 func main() {
 	catchBrokenPipes()
-	ctx, stop := signal.NotifyContext(context.Background(), stopSignals...)
+	// Notify would undo a parent's choice to ignore a signal, as nohup does with SIGHUP.
+	ctx, stop := signal.NotifyContext(context.Background(), slices.DeleteFunc(slices.Clone(stopSignals), signal.Ignored)...)
 	ctx, cancel := context.WithCancel(ctx)
 	code := run(ctx, os.Args[1:], stopOnBrokenPipe{os.Stdout, cancel}, stopOnBrokenPipe{os.Stderr, cancel})
 	cancel()
