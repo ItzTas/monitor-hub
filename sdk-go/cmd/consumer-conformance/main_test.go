@@ -199,8 +199,8 @@ func TestPlaceholdersAreReplacedInsideArguments(t *testing.T) {
 	if rec.TokenFile == "" || strings.ContainsAny(rec.TokenFile, "{}") {
 		t.Fatalf("token file = %q, want a path", rec.TokenFile)
 	}
-	if want := "--token=" + rec.Content; rec.Args[2] != want {
-		t.Fatalf("args[2] = %q, want %q", rec.Args[2], want)
+	if want := strings.TrimPrefix(rec.Args[2], "--token=") + "\n"; rec.Content != want {
+		t.Fatalf("token file content = %q, want %q, the token of args[2] and a newline", rec.Content, want)
 	}
 	if !strings.HasPrefix(rec.Content, "mhc_") {
 		t.Fatalf("token file content = %q, want a token", rec.Content)

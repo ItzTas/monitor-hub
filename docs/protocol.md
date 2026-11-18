@@ -662,7 +662,7 @@ Give it, after `--`, the command that starts your consumer. Three markers in any
 | Marker | Becomes |
 |---|---|
 | `{url}` | The address of the fake hub, for example `http://127.0.0.1:41873`. |
-| `{token_file}` | The path of a temporary file, mode `0600`, that holds the token. |
+| `{token_file}` | The path of a temporary file, mode `0600`, that holds the token followed by a newline. |
 | `{token}` | The token itself, for consumers that get it some other way. |
 
 ```

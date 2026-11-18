@@ -106,7 +106,7 @@ func (s *script) execute(body func(*run) bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(s.tokenFile, []byte(token), 0o600); err != nil {
+	if err := os.WriteFile(s.tokenFile, []byte(token+"\n"), 0o600); err != nil {
 		return false, fmt.Errorf("write the token file: %w", err)
 	}
 	current := s.hub.begin(token)

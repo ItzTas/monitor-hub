@@ -108,7 +108,7 @@ func (l *launcher) launch(url, tokenFile, token string) (func() error, error) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		l.consumer.run(ctx, url, string(content), l)
+		l.consumer.run(ctx, url, strings.TrimSuffix(string(content), "\n"), l)
 	}()
 	return func() error {
 		cancel()
@@ -403,7 +403,7 @@ func TestEachRunGetsAFreshTokenInAPrivateFile(t *testing.T) {
 		if !pattern.MatchString(token) {
 			t.Errorf("token %q does not match %s", token, pattern)
 		}
-		if want := "-rw------- " + token; l.files[i] != want {
+		if want := "-rw------- " + token + "\n"; l.files[i] != want {
 			t.Errorf("token file of run %d = %q, want %q", i+1, l.files[i], want)
 		}
 	}
