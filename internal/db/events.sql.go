@@ -13,8 +13,8 @@ import (
 )
 
 const insertEvent = `-- name: InsertEvent :one
-INSERT INTO events (plugin, event_id, plugin_seq, kind, severity, occurred_at, title, body, url, payload)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO events (plugin, event_id, plugin_seq, kind, severity, occurred_at, title, body, url, payload, baseline)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (plugin, event_id) DO NOTHING
 RETURNING seq
 `
@@ -30,6 +30,7 @@ type InsertEventParams struct {
 	Body       string
 	Url        string
 	Payload    []byte
+	Baseline   bool
 }
 
 func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) (int64, error) {
@@ -44,6 +45,7 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) (int64
 		arg.Body,
 		arg.Url,
 		arg.Payload,
+		arg.Baseline,
 	)
 	var seq int64
 	err := row.Scan(&seq)
@@ -119,4 +121,13 @@ func (q *Queries) ListEvents(ctx context.Context, arg ListEventsParams) ([]ListE
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockEventOrder = `-- name: LockEventOrder :exec
+SELECT pg_advisory_xact_lock(1836019304)
+`
+
+func (q *Queries) LockEventOrder(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockEventOrder)
+	return err
 }

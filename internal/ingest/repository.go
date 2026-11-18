@@ -16,6 +16,8 @@ import (
 	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 )
 
+const eventOrderLock = 1836019304
+
 var errCursorMoved = errors.New("ingest: the stored cursor no longer matches the page's after")
 
 type Repository interface {
@@ -79,6 +81,9 @@ func (r *postgres) StoreEvents(ctx context.Context, batch Batch) (int, error) {
 	}
 	inserted := 0
 	err := r.inTx(ctx, func(q *db.Queries) error {
+		if err := q.LockEventOrder(ctx); err != nil {
+			return err
+		}
 		moved, err := q.AdvancePluginCursor(ctx, db.AdvancePluginCursorParams{
 			Name:  batch.Plugin,
 			After: batch.After,
@@ -108,7 +113,7 @@ func (r *postgres) StoreEvents(ctx context.Context, batch Batch) (int, error) {
 }
 
 func storeEvent(ctx context.Context, q *db.Queries, batch Batch, e *pluginpb.Event) (bool, error) {
-	params, err := insertParams(batch.Plugin, e)
+	params, err := insertParams(batch.Plugin, e, batch.Baseline)
 	if err != nil {
 		return false, err
 	}
@@ -152,7 +157,7 @@ func (r *postgres) inTx(ctx context.Context, run func(*db.Queries) error) (err e
 	return nil
 }
 
-func insertParams(plugin string, e *pluginpb.Event) (db.InsertEventParams, error) {
+func insertParams(plugin string, e *pluginpb.Event, baseline bool) (db.InsertEventParams, error) {
 	severity, err := smallint("severity", e.GetSeverity())
 	if err != nil {
 		return db.InsertEventParams{}, fmt.Errorf("event seq %d: %w", e.GetSeq(), err)
@@ -167,6 +172,7 @@ func insertParams(plugin string, e *pluginpb.Event) (db.InsertEventParams, error
 		Title:      e.GetTitle(),
 		Body:       e.GetBody(),
 		Url:        e.GetUrl(),
+		Baseline:   baseline,
 	}
 	if e.GetPayload() == nil {
 		return params, nil

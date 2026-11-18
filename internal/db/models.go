@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+type Consumer struct {
+	Name      string
+	TokenHash string
+	Position  int64
+	CreatedAt time.Time
+	AckedAt   *time.Time
+	SeenAt    *time.Time
+}
+
 type Delivery struct {
 	EventSeq      int64
 	Channel       string
@@ -31,6 +40,7 @@ type Event struct {
 	Body       string
 	Url        string
 	Payload    []byte
+	Baseline   bool
 }
 
 type Plugin struct {

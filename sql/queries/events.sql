@@ -1,6 +1,6 @@
 -- name: InsertEvent :one
-INSERT INTO events (plugin, event_id, plugin_seq, kind, severity, occurred_at, title, body, url, payload)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO events (plugin, event_id, plugin_seq, kind, severity, occurred_at, title, body, url, payload, baseline)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (plugin, event_id) DO NOTHING
 RETURNING seq;
 
@@ -13,3 +13,6 @@ WHERE (sqlc.narg(plugin)::text IS NULL OR e.plugin = sqlc.narg(plugin)::text)
   AND (sqlc.narg(before)::bigint IS NULL OR e.seq < sqlc.narg(before)::bigint)
 ORDER BY e.seq DESC
 LIMIT sqlc.arg(max_rows)::bigint;
+
+-- name: LockEventOrder :exec
+SELECT pg_advisory_xact_lock(1836019304);

@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -106,5 +107,99 @@ func TestPluginRowRecordsDescriptionAndStatus(t *testing.T) {
 	}
 	if !statusSeen.Equal(fixedNow) {
 		t.Errorf("status seen at %v, want %v", statusSeen, fixedNow)
+	}
+}
+
+func storeBatch(t *testing.T, repo Repository, batch Batch) error {
+	t.Helper()
+	if err := repo.SaveDescription(t.Context(), &pluginpb.DescribeResponse{Name: batch.Plugin, DisplayName: batch.Plugin, Version: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := repo.StoreEvents(t.Context(), batch)
+	return err
+}
+
+func TestBaselineEventsAreMarked(t *testing.T) {
+	pool := coretest.Pool(t)
+	repo := NewPostgres(pool)
+	if err := storeBatch(t, repo, Batch{Plugin: "sei", Baseline: true, Events: []*pluginpb.Event{event(1, "a"), event(2, "b")}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.StoreEvents(t.Context(), Batch{Plugin: "sei", After: 2, Events: []*pluginpb.Event{event(3, "c")}}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pool.Query(t.Context(), `SELECT baseline FROM events ORDER BY seq`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []bool
+	for rows.Next() {
+		var b bool
+		if err := rows.Scan(&b); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, b)
+	}
+	if want := []bool{true, true, false}; !reflect.DeepEqual(got, want) {
+		t.Errorf("baseline flags by seq = %v, want %v", got, want)
+	}
+}
+
+func TestStoreEventsWaitsForTheEventOrderLock(t *testing.T) {
+	pool := coretest.Pool(t)
+	repo := NewPostgres(pool)
+	if err := repo.SaveDescription(t.Context(), &pluginpb.DescribeResponse{Name: "sei", DisplayName: "sei", Version: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
+	if _, err := tx.Exec(t.Context(), `SELECT pg_advisory_xact_lock($1)`, eventOrderLock); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := repo.StoreEvents(t.Context(), Batch{Plugin: "sei", Events: []*pluginpb.Event{event(1, "a")}})
+		done <- err
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting int
+		if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = $1 AND NOT granted`, eventOrderLock).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("StoreEvents never waited for the event order lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("StoreEvents returned (%v) while the lock was held", err)
+	default:
+	}
+
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("StoreEvents = %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("StoreEvents did not finish after the lock was released")
+	}
+	var count int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM events`).Scan(&count); err != nil || count != 1 {
+		t.Errorf("stored events = %d (err %v), want 1", count, err)
 	}
 }
