@@ -2,7 +2,13 @@
 
 package main
 
-import "os/exec"
+import (
+	"os"
+	"os/exec"
+	"syscall"
+)
+
+var stopSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
 
 func configure(*exec.Cmd) {}
 

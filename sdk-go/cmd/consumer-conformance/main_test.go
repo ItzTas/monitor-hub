@@ -29,12 +29,13 @@ type recorded struct {
 	Content   string   `json:"content"`
 }
 
+var fakes = map[string]func(){
+	"record": fakeRecord,
+	"boom":   fakeBoom,
+	"good":   fakeGood,
+}
+
 func TestMain(m *testing.M) {
-	fakes := map[string]func(){
-		"record": fakeRecord,
-		"boom":   fakeBoom,
-		"good":   fakeGood,
-	}
 	fake, ok := fakes[os.Getenv(modeEnv)]
 	if !ok {
 		os.Exit(m.Run())

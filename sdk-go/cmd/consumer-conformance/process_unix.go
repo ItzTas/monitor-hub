@@ -3,12 +3,15 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
 )
 
 const termGrace = 2 * time.Second
+
+var stopSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGPIPE}
 
 func configure(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
