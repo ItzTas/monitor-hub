@@ -480,34 +480,54 @@ Use this if the hub misbehaves and you want the old services back. The old stack
    docker exec <postgres-container> psql -U diario_alerr -d diario_alerr -c 'SELECT seq, id, title, link, published_at FROM alerts WHERE seq > (SELECT acked_seq FROM monitor_state) ORDER BY seq;'
    ```
 
-   These are alerts the plugin recorded after the hub's last read, and, while the hub was ahead of this database (section 8), every alert the plugin recorded since it was reset. The plugin learns what the hub stored only on the hub's next poll, so the list also holds the alerts of the last read, which may appear in step 1 too. Pass every row on yourself. A rollback usually follows a hub that misbehaved, and that is when this list can be long.
+   These are alerts the plugin recorded after the hub's last read, and, while the hub was ahead of this database (section 8), every alert the plugin recorded since it was reset. The plugin learns what the hub stored only on the hub's next poll, so the list also holds the alerts of the last read, which may appear in item 1 too. Pass every row on yourself. A rollback usually follows a hub that misbehaved, and that is when this list can be long.
 
-3. Gazette database. The old Go program announces every stored alert that has no row in `alert_deliveries` for one of its channels, `telegram` and `ntfy`. The plugin never writes that table, so every alert it stored would be announced again. Before you start the old gazette stack, run the plugin's rollback script, `sql/rollback/mark-alerts-delivered.sql` in the diario-alerr repository at tag `v2.0.0`:
+3. Gazette database. The old Go program announces every stored alert that has no row in `alert_deliveries` for one of its channels, `telegram` and `ntfy`. The plugin never writes that table, so every alert it stored would be announced again. Before you start the old gazette stack, run the plugin's rollback script, `sql/rollback/mark-alerts-delivered.sql` in the diario-alerr repository at tag `v2.0.1`:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/ItzTas/diario-alerr/v2.0.0/sql/rollback/mark-alerts-delivered.sql -o ~/mark-alerts-delivered.sql
+   curl -fsSL https://raw.githubusercontent.com/ItzTas/diario-alerr/v2.0.1/sql/rollback/mark-alerts-delivered.sql -o ~/mark-alerts-delivered.sql
    cat ~/mark-alerts-delivered.sql
    docker exec -i <postgres-container> psql -U diario_alerr -d diario_alerr < ~/mark-alerts-delivered.sql
    ```
 
    Check: `cat` shows a single `INSERT INTO alert_deliveries` statement, and `psql` answers `INSERT 0` followed by a count. Use the role and database names of your stack.
 
-   What it costs: the script marks every stored alert as delivered on both channels, including any alert the hub had stored and not delivered yet (step 1 lists those). After the rollback nobody sends them. Rows for a channel the old stack never enabled are ignored by the old program, and the script is safe to run twice. The plugin's test `go_sends_nothing_from_the_rust_era_after_rollback` (`tests/go_compat.rs`) runs it and then the Go `v1.0.0` program on the same database. It has not been run against your database.
+   What it costs: the script marks every stored alert as delivered on both channels, including any alert the hub had stored and not delivered yet (item 1 lists those). After the rollback nobody sends them. Rows for a channel the old stack never enabled are ignored by the old program, and the script is safe to run twice. The plugin's test `go_sends_nothing_from_the_rust_era_after_rollback` (`tests/go_compat.rs`) runs it and then the Go `v1.0.0` program on the same database. The image pinned in step 1 has the same database code as `v1.0.0`. The script has not been run against your database.
 
-4. Schema. The gazette plugin added one column, `monitor_state.acked_seq`, with default `0`. The old program ignores it: the plugin's `tests/go_compat.rs` starts the `v1.0.0` program on a migrated database. The hub's database is not touched by the old services and can stay.
+4. Gazette schema. The plugin added one column, `monitor_state.acked_seq`, with default `0`. The old program ignores it: the plugin's `tests/go_compat.rs` starts the `v1.0.0` program on a migrated database.
 
-5. SEI database. The plugin adds no table or column. In the design, the plugin keeps its acknowledged position in memory only and writes no delivery rows, and the old program creates its delivery rows when it saves an event (`internal/monitor/repository.go` at `v1.0.0`). So events stored while the hub ran are not announced by the old program. Two things follow. Deliveries the old program still had pending when you stopped it in step 4 are sent after the rollback. And the plugin prunes old events by `RETENTION_DAYS`, as the old program did, so what it deleted stays deleted. This has not been tested end to end: after the rollback, watch for a burst of old notifications in the first minutes. If you see one, stop the sei stack again before it sends more.
+5. SEI database. Nothing to run. The plugin adds no table or column and uses the Go program's schema, and Go starts on the same database with no SQL step. Go writes a notification row only for the events it records itself, so it never announces an event the plugin stored, even when it detects the same change again. What to expect once it runs:
+   - Go announces only what it detects from then on. Its first notification can take up to 30 seconds after the check that found it.
+   - Notifications Go left pending at the switch to the plugin go out right after the rollback, possibly days late. Step 4 made sure there were none.
+   - When the plugin deleted old events by `RETENTION_DAYS`, Go's notification rows for them went too, pending ones included. Those are never sent.
+   - Go has no hold after a rejected login: if a pause reason is on record, it tries the login once at start, as it always did. Fix the password first if SEI refused it (section 8).
 
-6. Start the old stacks:
+   The plugin's test `go_sends_nothing_from_the_rust_era` (`tests/go_compat.rs` in the sei-monitor repository) starts the Go `v1.0.0` program on a database the plugin wrote. It has not been run against your database.
+
+6. Start the old stacks, with the same `.env` files as before the switch. For SEI that means the same `SEI_URL`, `SEI_USERNAME` and `SEI_ORG` on the same database:
 
    ```bash
    cd /opt/stacks/sei-monitor && docker compose up -d
    cd /opt/stacks/diario-alerr && docker compose up -d
+   docker ps --format '{{.Names}}\t{{.Image}}' | grep -E 'sei-monitor|diario-alerr'
    ```
 
-   Check each with its old `/healthz` and its logs.
+   Check: the images are the Go ones pinned in step 1, and each service answers on its old `/healthz` and logs no error. The hub's database is not touched by the old services and can stay.
 
-Coming forward again after a rollback is a new take-over. Before the hub starts, reset its stored position for each plugin you move back, as the next section describes. Otherwise the hub resumes from a position that no longer matches the plugin's database. For the gazette, every alert the Go program stored in the meantime has a higher `seq` than the hub's old position, so the hub would announce all of them again, though Go already sent them. After the reset, follow steps 4 and 5 again, including the query in step 5. In that query, `sent_by_go` shows `ntfy,telegram` for every alert that existed at the rollback, because the rollback script wrote those rows, even where Go never sent it. The column only tells you something about alerts recorded after the rollback.
+### Coming forward again
+
+Moving back to the hub after a rollback is a new take-over. With the hub still stopped, reset its stored position for both plugins. Otherwise the hub resumes from a position that no longer matches what the Go programs added in between, and announces again everything they stored and already sent: for the gazette every alert with a `seq` above the hub's old position, for SEI every event with a higher id. Back up the hub's database first, then:
+
+```bash
+docker exec -i <postgres-container> psql -U monitor_hub -d monitor_hub <<'SQL'
+DELETE FROM events WHERE plugin IN ('diario', 'sei');
+UPDATE plugins SET cursor = 0, baselined_at = NULL WHERE name IN ('diario', 'sei');
+SQL
+```
+
+`psql` answers `DELETE` with a count, then `UPDATE 2`. This is the reset of section 8 for both plugins, and it also deletes the hub's stored events of both and the deliveries still waiting for them, so do it after item 1 of the rollback has listed those.
+
+Then follow steps 4 and 5 again: for SEI, the pending count and the pause check of step 4; for the gazette, the log check of step 4 and the query of step 5. In that query, `sent_by_go` shows `ntfy,telegram` for every alert that existed at the rollback, because the rollback script wrote those rows, even where Go never sent it. The column only tells you something about alerts recorded after the rollback.
 
 ## 8. Operating rules
 
