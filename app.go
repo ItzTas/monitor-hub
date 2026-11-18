@@ -53,13 +53,14 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 	health.Configure(mux, pool, logger)
 	feed.Configure(mux, pool, feed.Options{Token: cfg.FeedToken, PublicURL: cfg.PublicURL}, logger)
 	api.Register(mux, api.Deps{Pool: pool, Plugins: plugins, Token: cfg.APIToken, Log: logger})
+	dispatcher := notify.NewDispatcher(notify.NewOutbox(pool), channels, logger, notify.WithClock(now, time.After))
 	return &application{
 		address:    cfg.HTTPAddress,
 		log:        logger,
 		pool:       pool,
 		supervisor: plugins,
-		ingest:     ingest.NewService(ingest.NewPostgres(pool), plugins, names, logger, now),
-		dispatcher: notify.NewDispatcher(notify.NewOutbox(pool), channels, logger, notify.WithClock(now, time.After)),
+		ingest:     ingest.NewService(ingest.NewPostgres(pool), plugins, names, logger, now, ingest.WithWake(dispatcher.Wake)),
+		dispatcher: dispatcher,
 		channels:   names,
 		closers:    closers(channels),
 		handler:    withMiddleware(mux, logger),

@@ -238,6 +238,114 @@ func TestRunDeliversEveryPollIntervalUntilTheContextEnds(t *testing.T) {
 	}
 }
 
+func receive(t *testing.T, sent <-chan Message) Message {
+	t.Helper()
+	select {
+	case msg := <-sent:
+		return msg
+	case <-time.After(5 * time.Second):
+		t.Fatal("no message within 5s")
+		return Message{}
+	}
+}
+
+func TestWakeRunsAPassAtOnce(t *testing.T) {
+	pool := coretest.Pool(t)
+	queue(t, pool, []string{"telegram"}, t0, seiEvent("Process 1 moved", t0))
+	telegram := &fakeChannel{name: "telegram", sent: make(chan Message, 4)}
+	ticks := make(chan time.Time)
+	var mu sync.Mutex
+	var waits []time.Duration
+	after := func(d time.Duration) <-chan time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		waits = append(waits, d)
+		return ticks
+	}
+	dispatcher := NewDispatcher(NewOutbox(pool), []Channel{telegram}, slog.New(slog.DiscardHandler), WithClock(func() time.Time { return t0 }, after))
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+
+	go func() { done <- dispatcher.Run(ctx) }()
+	first := receive(t, telegram.sent)
+	queue(t, pool, []string{"telegram"}, t0, diarioEvent("Edition 12 names you", t0))
+	dispatcher.Wake()
+	second := receive(t, telegram.sent)
+	cancel()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run still running 5s after the cancel")
+	}
+
+	if err != nil || first.Subject != "1 update from SEI" || second.Subject != "1 update from ALE/RR Official Gazette" {
+		t.Errorf("Run = %v, first %q, second %q", err, first.Subject, second.Subject)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(waits, []time.Duration{pollInterval, pollInterval}) {
+		t.Errorf("waits = %v", waits)
+	}
+}
+
+func TestWakeDuringAPassChainsOnePassMore(t *testing.T) {
+	pool := coretest.Pool(t)
+	queue(t, pool, []string{"telegram"}, t0, seiEvent("Process 1 moved", t0))
+	release := make(chan struct{})
+	var once sync.Once
+	telegram := &fakeChannel{name: "telegram", sent: make(chan Message, 4)}
+	telegram.send = func(ctx context.Context) error {
+		once.Do(func() {
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+		})
+		return nil
+	}
+	after := func(time.Duration) <-chan time.Time { return make(chan time.Time) }
+	dispatcher := NewDispatcher(NewOutbox(pool), []Channel{telegram}, slog.New(slog.DiscardHandler), WithClock(func() time.Time { return t0 }, after))
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+
+	go func() { done <- dispatcher.Run(ctx) }()
+	receive(t, telegram.sent)
+	queue(t, pool, []string{"telegram"}, t0, diarioEvent("Edition 12 names you", t0))
+	dispatcher.Wake()
+	dispatcher.Wake()
+	close(release)
+	second := receive(t, telegram.sent)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run still running 5s after the cancel")
+	}
+
+	if second.Subject != "1 update from ALE/RR Official Gazette" {
+		t.Errorf("second message = %q", second.Subject)
+	}
+}
+
+func TestWakeNeverBlocks(t *testing.T) {
+	dispatcher := NewDispatcher(nil, nil, slog.New(slog.DiscardHandler))
+	finished := make(chan struct{})
+
+	go func() {
+		dispatcher.Wake()
+		dispatcher.Wake()
+		dispatcher.Wake()
+		close(finished)
+	}()
+
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wake blocked")
+	}
+}
+
 type gatedChannel struct {
 	fakeChannel
 	ready bool

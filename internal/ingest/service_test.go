@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"log/slog"
 	"reflect"
 	"slices"
 	"testing"
@@ -161,4 +162,41 @@ func TestBaselineSurvivesFailedFirstRead(t *testing.T) {
 	p.events = append(p.events, event(4, "event-4"))
 	s.PollOnce(t.Context())
 	expectStored(t, pool, "sei", 4, 2, 4, true)
+}
+
+func TestQueuedDeliveriesWakeTheDispatcher(t *testing.T) {
+	pool := coretest.Pool(t)
+	p := plugin("sei", numbered(1, 3)...)
+	s := newService(pool, p)
+	wakes := 0
+	s.wake = func() { wakes++ }
+
+	s.PollOnce(t.Context())
+	if wakes != 0 {
+		t.Fatalf("wakes after the baseline = %d, want 0", wakes)
+	}
+
+	p.events = append(p.events, event(4, "event-4"))
+	s.PollOnce(t.Context())
+	if wakes != 1 {
+		t.Fatalf("wakes after a new event = %d, want 1", wakes)
+	}
+
+	p.events = []*pluginpb.Event{event(5, "event-4")}
+	s.PollOnce(t.Context())
+	if wakes != 1 {
+		t.Errorf("wakes after a resent event = %d, want 1", wakes)
+	}
+
+	quiet := plugin("quiet", numbered(1, 1)...)
+	silent := NewService(NewPostgres(pool), fakeClients{"quiet": quiet}, nil,
+		slog.New(slog.DiscardHandler), func() time.Time { return fixedNow })
+	silentWakes := 0
+	silent.wake = func() { silentWakes++ }
+	silent.PollOnce(t.Context())
+	quiet.events = numbered(1, 2)
+	silent.PollOnce(t.Context())
+	if silentWakes != 0 {
+		t.Errorf("wakes without channels = %d, want 0", silentWakes)
+	}
 }

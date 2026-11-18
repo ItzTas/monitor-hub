@@ -34,6 +34,7 @@ type Dispatcher struct {
 	after      func(time.Duration) <-chan time.Time
 	mu         sync.Mutex
 	unrecorded map[string][]Delivery
+	wake       chan struct{}
 }
 
 type Option func(*Dispatcher)
@@ -45,11 +46,18 @@ func WithClock(now func() time.Time, after func(time.Duration) <-chan time.Time)
 }
 
 func NewDispatcher(outbox Outbox, channels []Channel, log *slog.Logger, options ...Option) *Dispatcher {
-	d := &Dispatcher{outbox: outbox, channels: channels, log: log, now: time.Now, after: time.After, unrecorded: map[string][]Delivery{}}
+	d := &Dispatcher{outbox: outbox, channels: channels, log: log, now: time.Now, after: time.After, unrecorded: map[string][]Delivery{}, wake: make(chan struct{}, 1)}
 	for _, option := range options {
 		option(d)
 	}
 	return d
+}
+
+func (d *Dispatcher) Wake() {
+	select {
+	case d.wake <- struct{}{}:
+	default:
+	}
 }
 
 func (d *Dispatcher) Run(ctx context.Context) error {
@@ -61,6 +69,7 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-d.wake:
 		case <-d.after(pollInterval):
 		}
 	}
