@@ -215,7 +215,7 @@ func (h *hub) ack(w http.ResponseWriter, r *http.Request, current *run) {
 		return
 	}
 	if contentType := r.Header.Get("Content-Type"); !isJSON(contentType) {
-		h.report.add("an ack was sent with Content-Type %s, want application/json", contentType)
+		h.report.add("an ack was sent with Content-Type %q, want application/json", contentType)
 		problem(w, http.StatusUnsupportedMediaType, "the body must be application/json")
 		return
 	}

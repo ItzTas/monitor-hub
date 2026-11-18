@@ -486,7 +486,7 @@ func TestAnAckTheHubRejectsIsReported(t *testing.T) {
 		},
 		"a form content type": {
 			change: func(c *consumer) { c.ackType = "application/x-www-form-urlencoded" },
-			want:   "an ack was sent with Content-Type application/x-www-form-urlencoded, want application/json",
+			want:   `an ack was sent with Content-Type "application/x-www-form-urlencoded", want application/json`,
 			reply:  "ack 3: 415",
 		},
 		"a seq that is not an integer": {
