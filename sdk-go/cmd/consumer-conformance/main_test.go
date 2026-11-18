@@ -23,10 +23,12 @@ const (
 )
 
 type recorded struct {
-	Args      []string `json:"args"`
-	TokenFile string   `json:"token_file"`
-	Mode      uint32   `json:"mode"`
-	Content   string   `json:"content"`
+	Args         []string `json:"args"`
+	TokenFile    string   `json:"token_file"`
+	Mode         uint32   `json:"mode"`
+	Content      string   `json:"content"`
+	NoProxy      string   `json:"no_proxy_upper"`
+	LowerNoProxy string   `json:"no_proxy_lower"`
 }
 
 var fakes = map[string]func(){
@@ -59,7 +61,12 @@ func fakeBoom() {
 }
 
 func fakeRecord() {
-	rec := recorded{Args: os.Args[1:], TokenFile: argument("--token-file=")}
+	rec := recorded{
+		Args:         os.Args[1:],
+		TokenFile:    argument("--token-file="),
+		NoProxy:      os.Getenv("NO_PROXY"),
+		LowerNoProxy: os.Getenv("no_proxy"),
+	}
 	info, err := os.Stat(rec.TokenFile)
 	if err != nil {
 		os.Exit(4)
@@ -235,6 +242,17 @@ func TestTheTokenFileIsPrivateAndRemoved(t *testing.T) {
 	}
 	if _, err := os.Stat(rec.TokenFile); !os.IsNotExist(err) {
 		t.Fatalf("token file after the run: err = %v, want it removed", err)
+	}
+}
+
+func TestTheConsumerReachesTheFakeHubWithoutAProxy(t *testing.T) {
+	t.Parallel()
+	rec := recordRun(t, []string{"-env", "NO_PROXY=corp.example", "-env", "no_proxy="}, "--hub={url}", "--token-file={token_file}")
+	if want := "corp.example,127.0.0.1,localhost"; rec.NoProxy != want {
+		t.Errorf("NO_PROXY = %q, want %q", rec.NoProxy, want)
+	}
+	if want := "127.0.0.1,localhost"; rec.LowerNoProxy != want {
+		t.Errorf("no_proxy = %q, want %q", rec.LowerNoProxy, want)
 	}
 }
 

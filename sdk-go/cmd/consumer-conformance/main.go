@@ -141,7 +141,7 @@ func launcher(ctx context.Context, command, env []string, output *prefixed) cons
 		for i := 1; i < len(cmd.Args); i++ {
 			cmd.Args[i] = replacer.Replace(cmd.Args[i])
 		}
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = bypassProxies(append(os.Environ(), env...))
 		cmd.Stdout, cmd.Stderr = output, output
 		cmd.WaitDelay = waitDelay
 		configure(cmd)
@@ -158,6 +158,27 @@ func launcher(ctx context.Context, command, env []string, output *prefixed) cons
 			return output.flush()
 		}, nil
 	}
+}
+
+func bypassProxies(env []string) []string {
+	for _, name := range []string{"NO_PROXY", "no_proxy"} {
+		value := "127.0.0.1,localhost"
+		if existing := lookup(env, name); existing != "" {
+			value = existing + "," + value
+		}
+		env = append(env, name+"="+value)
+	}
+	return env
+}
+
+func lookup(env []string, name string) string {
+	value := ""
+	for _, entry := range env {
+		if rest, ok := strings.CutPrefix(entry, name+"="); ok {
+			value = rest
+		}
+	}
+	return value
 }
 
 func oneLine(err error) string {

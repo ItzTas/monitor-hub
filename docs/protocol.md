@@ -670,7 +670,7 @@ consumer-conformance -- my-consumer --hub {url} --token-file {token_file}
 consumer-conformance -- ./scripts/run-under-conformance.sh {url} {token_file}
 ```
 
-The second form suits a consumer that keeps its token in a keyring or its own configuration file: a small script of yours receives the address and the file and sets the consumer up your way. The token is made up for each run and the file is deleted at the end, so nothing real is exposed. The consumer inherits the command's environment, plus each `-env NAME=value`.
+The second form suits a consumer that keeps its token in a keyring or its own configuration file: a small script of yours receives the address and the file and sets the consumer up your way. The token is made up for each run and the file is deleted at the end, so nothing real is exposed. The consumer inherits the command's environment, plus each `-env NAME=value`. The command adds `127.0.0.1,localhost` to the end of `NO_PROXY` and `no_proxy`, so a proxy setting does not catch the requests to the fake hub.
 
 The check runs two consumers in turn, each with a new token, and looks for these:
 
