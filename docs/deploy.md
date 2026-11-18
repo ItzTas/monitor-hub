@@ -156,33 +156,35 @@ Both point at the existing databases, so nothing they already saw is announced a
 
 - `SEI__DATABASE_URL`: the old sei-monitor compose file builds it from `POSTGRES_PASSWORD`. Its shape is
   `postgres://sei_monitor:<password>@<host>:5432/sei_monitor?sslmode=disable`, with user and database `sei_monitor` and host `postgres` in the `v1.0.0` file.
-- `DIARIO__DATABASE_URL`: diario-alerr keeps `DATABASE_URL` in its `.env`. The `v1.0.0` example is
+- `DIARIO__DATABASE_URL`: diario-alerr keeps `DATABASE_URL` in its `.env`. The example in its repository is
   `postgres://diario_alerr:<password>@postgres:5432/diario_alerr?sslmode=disable`.
 
 Take the real user, password, host and database from the running stack's own compose file and `.env` on the host. A password with special characters must be percent-encoded in the URL. The host is `postgres` on the shared network and the container name for a bundled database (see step 1).
 
-The gazette plugin is stricter about its database than the Go program was. A URL and a role that worked for Go can fail here:
+Both plugins are stricter about their database than the Go programs were. A URL and a role that worked for Go can fail here:
 
-- The role in `DIARIO__DATABASE_URL` must own the tables and the sequence `alerts_seq_seq`. On its first start the plugin applies a migration that alters a table, and every `Events` call reads that sequence. This matters if the database was ever moved by dump and restore under another role.
-- Connect straight to Postgres. A pooler in transaction mode breaks the session lock the plugin holds and refuses the `options` start-up parameter it sends.
-- The plugin connects without TLS. Use `sslmode=disable` or `sslmode=prefer` and no other TLS parameter. `sslmode=verify-full`, or a pgx pool parameter such as `pool_max_conns`, makes it exit with `DATABASE_URL is not a valid Postgres address`.
-- The role must have no `idle_session_timeout`. The plugin keeps one connection idle for as long as it runs, to hold its lock. If the server closes it, the plugin exits and the hub restarts it, over and over.
+- The role must own the tables and the sequence the plugin reads: `alerts_seq_seq` for the gazette, `events_id_seq` for SEI. On its first start the gazette plugin applies a migration that alters a table, and every `Events` call of either plugin reads its sequence. This matters if a database was ever moved by dump and restore under another role.
+- Connect straight to Postgres. A pooler in transaction mode breaks the session lock each plugin holds, and both send an `options` start-up parameter that such a pooler refuses.
+- The plugins connect without TLS. Use `sslmode=disable` or `sslmode=prefer` and no other TLS parameter. `sslmode=verify-full`, or a parameter only pgx understands such as `pool_max_conns`, makes a plugin exit with `DATABASE_URL is not a valid Postgres address`.
+- The role must have no `idle_session_timeout`. Each plugin keeps one connection idle for as long as it runs, to hold its lock. If the server closes it, the plugin exits and the hub restarts it, over and over. For SEI every new start logs in to SEI once, up to 12 times an hour.
 
-Check the role:
+Check each role:
 
 ```bash
 docker exec <postgres-container> psql -U diario_alerr -d diario_alerr -c '\dt' -c '\ds' -c 'SHOW idle_session_timeout'
+docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c '\dt' -c '\ds' -c 'SHOW idle_session_timeout'
 ```
 
-Check: the `Owner` of every table and of `alerts_seq_seq` is the role in your URL, and `idle_session_timeout` is `0`. Use your own role and database names.
+Check: the `Owner` of every table and of `alerts_seq_seq` or `events_id_seq` is the role in that URL, and `idle_session_timeout` is `0`. Use your own role and database names.
 
 ### From the old sei-monitor `.env`
 
 | Old name | New name |
 |---|---|
 | `DATABASE_URL` (or built from `POSTGRES_PASSWORD`) | `SEI__DATABASE_URL`, as above |
-| `SEI_URL`, `SEI_API_URL`, `SEI_USERNAME`, `SEI_ORG`, `SEI_UNITS`, `SEI_TIMEZONE`, `SEI_CONCURRENCY` | the same name with `SEI__` in front |
-| `SEI_PASSWORD`, `SEI_PASSWORD_FILE`, `SEI_PASSWORD_CMD` | `SEI__SEI_PASSWORD` and the same for the other two. Set one only. |
+| `SEI_URL`, `SEI_USERNAME`, `SEI_ORG` | the same name with `SEI__` in front, and the same values, character for character. Together they identify the account in the database. A change starts a new account, whose first check only takes note of what is there and reports nothing. |
+| `SEI_API_URL`, `SEI_UNITS`, `SEI_TIMEZONE`, `SEI_CONCURRENCY` | the same name with `SEI__` in front |
+| `SEI_PASSWORD`, `SEI_PASSWORD_FILE`, `SEI_PASSWORD_CMD` | `SEI__SEI_PASSWORD` and the same for the other two. Set one only. A password with `$` or quotes can reach the plugin changed by the way `.env` is read, which costs one rejected login and a pause: use `SEI__SEI_PASSWORD_FILE` for it. A file or a command needs more than a variable (section 8, "Secrets from files"). |
 | `POLL_INTERVAL`, `NOTIFICATION_DETAIL`, `RETURN_WARNING_DAYS`, `RETENTION_DAYS` | the same name with `SEI__` in front |
 | `LOG_LEVEL` | `LOG_LEVEL` for the hub and `SEI__LOG_LEVEL` for the plugin. Keep the hub's at `info` or `debug` for the take-over: step 5 waits for `info` lines, which `warn` or `error` hide. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TO`, `SMTP_TLS` | unchanged |
@@ -238,7 +240,37 @@ The second command prints `postgres`. Run `docker network inspect` for the sei-m
 
 ## 4. Stop the old stacks
 
-Running old and new at once doubles every notification. Stop the apps but keep the databases and volumes. Both must be stopped before the hub starts in step 5. The gazette plugin takes a lock in its database that keeps out a second copy of the plugin, but the Go program never takes that lock: with both running, every gazette alert is announced twice.
+Running old and new at once doubles every notification. Stop the apps but keep the databases and volumes. Both must be stopped before the hub starts in step 5. Each plugin takes a lock in its database that keeps out a second copy of the plugin, but the Go programs never take that lock: with the gazette running twice every alert is announced twice, and with SEI two monitors fight over the same account.
+
+### The SEI program
+
+The SEI plugin continues the database as Go left it: the same account, no new baseline, no repeated events. Check these first.
+
+1. Let the Go program send everything it has. It sends pending notifications every 30 seconds and retries a failed one after 1 minute, 5 minutes, 30 minutes, 2 hours and 6 hours. This must return `0`:
+
+   ```bash
+   docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c "SELECT count(*) FROM deliveries WHERE status = 'pending';"
+   ```
+
+   A notification still pending at the switch is never sent while the plugin runs: the hub's first read takes its event as history, and the plugin never reads the Go program's `deliveries` table. If a channel never delivers (an unpaired WhatsApp number, for example), its rows stay pending: pair it, or accept that they go out only after a rollback.
+
+2. Check that the account is not paused by a rejected login:
+
+   ```bash
+   docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c 'SELECT paused_reason FROM accounts;'
+   ```
+
+   Check: one row, with an empty `paused_reason`. With a reason there, the plugin starts held and watches nothing until you request a check (section 8, "When SEI refuses the login"). It says so once, in an event the hub announces on its second read. Fix the password now, and after step 5 request a check as that section describes.
+
+3. Make sure `.env` has the same `SEI_URL`, `SEI_USERNAME` and `SEI_ORG` as the old `.env`, with the `SEI__` prefix, and that `SEI__DATABASE_URL` points at this database (step 3).
+
+The Go program keeps checking SEI until it stops. An event it records after item 1 may still be pending when it stops, and nobody sends it. So once item 1 returns `0`, do the rest of this step without a pause: the gazette check, the stop, the query of item 1 once more on the stopped program's database, then step 5. If that second count is not `0`, list what nobody will send and pass it on yourself:
+
+```bash
+docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c "SELECT e.id, e.kind, e.payload::jsonb->>'process_number' AS process, e.detected_at, d.channel FROM deliveries d JOIN events e ON e.id = d.event_id WHERE d.status = 'pending' ORDER BY e.id;"
+```
+
+### The gazette program
 
 First make sure the old gazette program has nothing left to send. The hub never announces an alert that Go stored and did not deliver (step 5 explains why). Look at its log for the last check interval plus a few minutes. The command below uses 35 minutes, for the default interval of 30: if you set `CHECK_INTERVAL_MINUTES`, use that value plus 5 instead.
 
@@ -248,26 +280,25 @@ docker logs --since 35m diario-alerr 2>&1 | grep 'delivery failed'
 
 Check: no output. A `delivery failed, retrying next cycle` line means an alert is still waiting for that channel. Fix the channel and wait for the next cycle, or note the alert and pass it on yourself. Use the container name from `docker ps` if yours differs.
 
-If an old stack has its own Postgres service, `docker compose down` would stop that database too and the hub needs it. In that case stop only the app service:
+### Stop both
+
+Stop only the app services. If the sei-monitor stack still has its own Postgres service, `docker compose down` would stop that database too, and the hub needs it. For the gazette, `stop` keeps the container, so Docker still knows when it stopped (below). Never use `down -v`.
 
 ```bash
 cd /opt/stacks/sei-monitor && docker compose stop sei-monitor
 cd /opt/stacks/diario-alerr && docker compose stop diario-alerr
-```
-
-If the databases live on the shared Postgres, `docker compose down` in each folder is fine. Never add `-v`.
-
-```bash
 docker ps --format '{{.Names}}' | grep -E 'sei-monitor|diario-alerr'
 ```
 
-Check: no app container is left. A Postgres container may remain.
+Check: no app container is left. The sei-monitor stack's Postgres container may remain.
 
 Note the time the gazette container stopped. Step 5 compares it with the alerts the plugin records. Docker keeps it, in UTC:
 
 ```bash
 docker inspect -f '{{.State.FinishedAt}}' diario-alerr
 ```
+
+Now run the pending count of "The SEI program" once more, list the rows if it is not `0`, and go on to step 5.
 
 ## 5. Start the hub and check it
 
@@ -301,27 +332,45 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
    curl -s -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/plugins
    ```
 
-   Expected: `{"items":[...]}` with `diario` first and `sei` second, each with `"running":true` and `"state"` set to `idle` or `checking`. The `sei` plugin may show another state until its first login finishes. A 401 means the token is wrong.
+   Expected: `{"items":[...]}` with `diario` first and `sei` second, each with `"running":true`. `diario` shows `idle` or `checking`. `sei` shows `failing` with `sei-monitor has not reached SEI yet` until it has reached SEI, then `checking` during its first check and `idle` after it. `sei` as `paused` means SEI refused the login (section 8, "When SEI refuses the login"). A 401 means the token is wrong.
 
-3. The first read of each plugin is a baseline: the hub stores what the plugin already holds and announces none of it. That read comes on the hub's first poll after the plugin is up, usually within about 15 seconds, later while the other plugin's poll is slow. Watch your channels for a few minutes.
-   - The gazette plugin holds back the alerts its own first cycle records until that read has ended. They reach the hub on the next poll and are announced as usual. So a notification in the first minute is normal when an edition the Go program had not scanned yet matches.
-   - Alerts the Go program had stored and not delivered are part of the baseline, and nobody announces them. Step 4 looked for them before the stop, and item 4 below looks again.
+3. The first read of each plugin is a baseline: the hub stores what the plugin already holds and announces none of it. Watch your channels for a few minutes.
+   - The gazette's first read comes on the hub's first poll after the plugin is up, usually within about 15 seconds, later while the other plugin's poll is slow.
+   - The SEI plugin answers the hub's reads only once it has reached SEI: it loads the login page and finds its account, without logging in. Until then the hub logs a `poll a plugin` warning for `plugin=sei` on every poll. Its first read comes on the hub's first poll after that. While SEI does not answer, the plugin keeps trying, and the baseline waits.
+   - Both plugins hold back what their own first check records until that read has ended. Those events reach the hub on the next poll and are announced as usual. So a notification in the first minutes is normal: a gazette edition the Go program had not scanned yet that matches, or a SEI change since the Go program's last check.
+   - Gazette alerts the Go program had stored and not delivered are part of the baseline, and nobody announces them. Step 4 looked for them before the stop, and item 4 below looks again. For SEI, step 4 made sure there were none.
    - On a new gazette database, not this take-over, the welcome and the first cycle's alerts are announced on the hub's second read. The take-over sends no welcome, because the database already has its state.
-   - The `sei` baseline waits for the plugin's first completed cycle (up to `POLL_INTERVAL`).
 
-   Do not restart the hub or the stack until the hub has logged the end of the gazette baseline (next item). A restart before that line can make the baseline take in the first cycle's alerts too. The same happens when the hub itself restarts the plugin after it crashed. The hub logs that as `plugin exited` or `plugin failed to start`:
-
-   ```bash
-   docker compose logs monitor-hub | grep -E 'msg="(plugin exited|plugin failed to start)" plugin=diario'
-   ```
-
-4. The end of the gazette baseline, and what nobody announced:
+   Do not restart the hub or the stack until the hub has logged `baseline complete` for both plugins (next item). A restart before that line can make the baseline take in what the plugin's first check recorded, and then nobody announces it. The same happens when the hub itself restarts a plugin after it crashed. The hub logs that as `plugin exited` or `plugin failed to start`:
 
    ```bash
-   docker compose logs monitor-hub | grep 'msg="baseline complete" plugin=diario'
+   docker compose logs monitor-hub | grep -E 'msg="(plugin exited|plugin failed to start)" plugin=(diario|sei)'
    ```
 
-   Expected: one line, usually within a minute of the start. It is an `info` line: with `LOG_LEVEL` at `warn` or `error` it never shows, so set it to `info` first (step 3). Wait one more minute after it, then look in the plugin's database for alerts that nobody was told about:
+4. The end of both baselines, and what nobody announced:
+
+   ```bash
+   docker compose logs monitor-hub | grep 'msg="baseline complete"'
+   ```
+
+   Expected: one line with `plugin=diario` and one with `plugin=sei`, usually within a minute of the start, later for `sei` while SEI does not answer. It is an `info` line: with `LOG_LEVEL` at `warn` or `error` it never shows, so set it to `info` first (step 3).
+
+   For SEI, if nothing restarted before its line, there is nothing to look for. Otherwise the events its first check recorded may have gone into the baseline. Look in the hub log for the plugin's `cycle finished` lines from before the restart: an `events` count above 0 means that check recorded events. Then list the events recorded since the hub started, with the start time in UTC, and look for each of them in your channels:
+
+   ```bash
+   docker compose logs monitor-hub | grep 'msg="cycle finished" plugin=sei'
+   docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c "SELECT id, kind, payload::jsonb->>'process_number' AS process, detected_at FROM events WHERE detected_at >= '<when the hub started>' ORDER BY id;"
+   ```
+
+   Also check that the plugin kept the Go program's account. This must still return `1`:
+
+   ```bash
+   docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c 'SELECT count(*) FROM accounts;'
+   ```
+
+   A `2` means `SEI__SEI_URL`, `SEI__SEI_USERNAME` or `SEI__SEI_ORG` differs from the old `.env`: the plugin started a new account, and its first check only took note of what is there. Stop the hub and compare the three values with the old `.env` before you go on.
+
+   For the gazette, wait one more minute after its line, then look in the plugin's database for alerts that nobody was told about:
 
    ```bash
    docker exec -i <postgres-container> psql -U diario_alerr -d diario_alerr <<'SQL'
@@ -367,6 +416,8 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
 
    Expected for `diario`: `"state":"idle"` and a `last_success_at` later than the moment you asked (the API gives times in UTC). `checking` means the cycle is still running, so repeat. `failing` gives the reason in `message`.
 
+   Do not ask `sei` for a check now. Its first check starts on its own as soon as it has reached SEI, and it refuses a check within 5 minutes of the last one. The same list proves the SEI side: `sei` as `idle` with a `last_success_at` later than the start means the arm64 build reached SEI over TLS, logged in, read your units and wrote to its database.
+
 7. The stored events and the feed:
 
    ```bash
@@ -380,7 +431,7 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
    docker compose logs --since 10m monitor-hub | grep -iE 'error|warn'
    ```
 
-   Expected: no output, or only lines you can explain. Leave `LOG_LEVEL=debug` off unless you are chasing something.
+   Expected: no output, or only lines you can explain, such as the `poll a plugin` warnings for `sei` before it reached SEI (item 3). Leave `LOG_LEVEL=debug` off unless you are chasing something.
 
 Finally open `http://hub.lan` if the proxy is set up.
 
