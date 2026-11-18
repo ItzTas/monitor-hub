@@ -152,6 +152,20 @@ func TestStoreEventsWaitsForTheEventOrderLock(t *testing.T) {
 	if err := repo.SaveDescription(t.Context(), &pluginpb.DescribeResponse{Name: "sei", DisplayName: "sei", Version: "1"}); err != nil {
 		t.Fatal(err)
 	}
+	allocated := func() (seq *int64) {
+		t.Helper()
+		if err := pool.QueryRow(t.Context(), `SELECT pg_sequence_last_value(pg_get_serial_sequence('events', 'seq')::regclass)`).Scan(&seq); err != nil {
+			t.Fatal(err)
+		}
+		return seq
+	}
+	stored := func() (count int) {
+		t.Helper()
+		if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM events`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
 	tx, err := pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +177,7 @@ func TestStoreEventsWaitsForTheEventOrderLock(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := repo.StoreEvents(t.Context(), Batch{Plugin: "sei", Events: []*pluginpb.Event{event(1, "a")}})
+		_, err := repo.StoreEvents(t.Context(), Batch{Plugin: "sei", Events: []*pluginpb.Event{event(1, "a"), event(2, "b")}})
 		done <- err
 	}()
 
@@ -186,6 +200,12 @@ func TestStoreEventsWaitsForTheEventOrderLock(t *testing.T) {
 		t.Fatalf("StoreEvents returned (%v) while the lock was held", err)
 	default:
 	}
+	if seq := allocated(); seq != nil {
+		t.Errorf("seq %d was allocated while StoreEvents waited for the lock, want none", *seq)
+	}
+	if count := stored(); count != 0 {
+		t.Errorf("%d events are stored while StoreEvents waits for the lock, want none", count)
+	}
 
 	if err := tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
@@ -198,8 +218,10 @@ func TestStoreEventsWaitsForTheEventOrderLock(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("StoreEvents did not finish after the lock was released")
 	}
-	var count int
-	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM events`).Scan(&count); err != nil || count != 1 {
-		t.Errorf("stored events = %d (err %v), want 1", count, err)
+	if count := stored(); count != 2 {
+		t.Errorf("stored events = %d, want 2", count)
+	}
+	if seq := allocated(); seq == nil || *seq != 2 {
+		t.Errorf("last allocated seq = %v, want 2", seq)
 	}
 }
