@@ -53,3 +53,14 @@ func TestPrefixedFlushWritesTheLastLine(t *testing.T) {
 		t.Fatalf("output = %q, want %q", out.String(), want)
 	}
 }
+
+func TestEmptyPluginDirIsAUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(t.Context(), []string{"-plugin-dir", "", "--", "/nonexistent/plugin"}, &stdout, &stderr)
+	if code != exitUsage || stdout.Len() != 0 {
+		t.Fatalf("exit code = %d, stdout = %q, want %d and empty", code, stdout.String(), exitUsage)
+	}
+	if want := "plugin-conformance: -plugin-dir:  is not a directory\n"; stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+}

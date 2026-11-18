@@ -94,13 +94,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var (
 		env       envFlags
 		opts      plugintest.Options
-		pluginDir string
+		pluginDir *string
 	)
 	fs := flag.NewFlagSet("plugin-conformance", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.IntVar(&opts.MinEvents, "min-events", 0, "minimum number of events the plugin must return")
 	fs.DurationVar(&opts.ReadyTimeout, "ready-timeout", 0, "how long to wait while Events answers UNAVAILABLE")
-	fs.StringVar(&pluginDir, "plugin-dir", "", "plugin directory: check its settings.json and run <command> validate-settings in it")
+	fs.Func("plugin-dir", "plugin directory: check its settings.json and run <command> validate-settings in it", func(dir string) error {
+		pluginDir = &dir
+		return nil
+	})
 	fs.Var(&env, "env", "environment variable NAME=value for the plugin (repeatable)")
 
 	sep := slices.Index(args, "--")
@@ -145,14 +148,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
-func settingsDir(dir string) (string, error) {
-	if dir == "" {
+func settingsDir(dir *string) (string, error) {
+	if dir == nil {
 		return "", nil
 	}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", dir)
+	if info, err := os.Stat(*dir); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", *dir)
 	}
-	return filepath.Abs(dir)
+	return filepath.Abs(*dir)
 }
 
 func checkSettings(ctx context.Context, dir, program string, stderr io.Writer) []string {
