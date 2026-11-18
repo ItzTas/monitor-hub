@@ -607,7 +607,7 @@ Three messages carry data.
 
 `icon` is the icon of the event's kind and `plugin_icon` the plugin's. `image` is a path from the hub's root, such as `/icons/<hash>.png`. It is never empty: at the least it is the default icon's path. Resolve it against the address you use to reach the hub. `/icons/` needs no token and serves `image/png` with `Cache-Control: public, max-age=31536000, immutable` and `Content-Security-Policy: default-src 'none'; sandbox`. The default emoji is `🔔`.
 
-`event: caught_up` is sent once per connection, right after the backlog, with `id: <seq>` and `{"seq": 1530, "backlog": 9}`. `seq` is the larger of the newest `seq` the hub had when the connection opened and the last event sent. `backlog` is how many events the catch-up sent. It is how a consumer tells what it missed from what arrives live.
+`event: caught_up` is sent once per connection, right after the backlog, unless the connection ends while the backlog is still being sent, with `id: <seq>` and `{"seq": 1530, "backlog": 9}`. `seq` is the larger of the newest `seq` the hub had when the connection opened and the last event sent. `backlog` is how many events the catch-up sent. It is how a consumer tells what it missed from what arrives live.
 
 `event: replaced` carries `{}`. It means a newer connection of the same consumer took this one's place. The hub closes the connection right after.
 
@@ -620,7 +620,8 @@ Also:
 - **A token that is missing or unknown** gets `401` with `WWW-Authenticate: Bearer`. A consumer revoked or rotated while connected has its stream ended at the next ping, and its next acknowledgement gets `401`.
 - **At most 16 streams are open at once**, across all consumers. The 17th request gets `503` with `Retry-After: 30`, before the stream starts.
 - **Any other `5xx`**, for example a database error while the hub checks the token, is temporary. Try again after the same wait as for a dropped connection.
-- **A position ahead of the hub** (for example after a partial restore of the hub's database) makes the stream start from the newest event.
+- **Any method other than `GET`** on the stream gets `405` with `Allow: GET`.
+- **A position ahead of the hub** (for example after a partial restore of the hub's database) is lowered to the newest `seq` the first time the consumer connects, and the stream starts from the newest event. This is the one case where the hub moves a position backward.
 
 ### Acknowledging
 
@@ -632,7 +633,7 @@ Content-Type: application/json
 {"seq": 1530}
 ```
 
-`seq` must be between 0 and the newest `seq` in the hub; anything else gets `422`. The position only moves forward: it becomes the larger of its current value and `seq`, so acknowledging an older `seq` changes nothing. The answer is `200` with `{"position": 1530}`. An unknown token gets `401`.
+`seq` must be between 0 and the newest `seq` in the hub; anything else gets `422`. An acknowledgement only moves the position forward: it becomes the larger of its current value and `seq`, so acknowledging an older `seq` changes nothing. The only way a position goes down is the hub lowering one that is ahead of its newest `seq`, described under [The stream](#the-stream). The answer is `200` with `{"position": 1530}`. An unknown token gets `401`.
 
 A consumer acknowledges after it has handled the events, not when they arrive. An event it chose not to show counts as handled. It also acknowledges the `seq` of `caught_up`, so its position moves past events the hub never sent (baseline events).
 
@@ -647,6 +648,42 @@ The guarantee is at least once: an event that was sent and not acknowledged come
 5. After `replaced`, wait at least 5 minutes before reconnecting, and tell whoever uses the consumer that another program has the same token.
 
 The contract does not say where a consumer keeps the hub's address and its token. A file, the system keyring, an environment variable: each consumer chooses what suits it.
+
+### Conformance for consumers
+
+`consumer-conformance` checks a consumer against this contract. It plays a hub with a fixed script on `127.0.0.1`, starts your consumer as a child process and reports every rule the consumer broke. Install it with:
+
+```
+go install github.com/ItzTas/monitor-hub/sdk-go/cmd/consumer-conformance@v0.5.0
+```
+
+Give it, after `--`, the command that starts your consumer. Three markers in any argument are replaced before the command runs, even in the middle of an argument such as `--hub={url}`:
+
+| Marker | Becomes |
+|---|---|
+| `{url}` | The address of the fake hub, for example `http://127.0.0.1:41873`. |
+| `{token_file}` | The path of a temporary file, mode `0600`, that holds the token. |
+| `{token}` | The token itself, for consumers that get it some other way. |
+
+```
+consumer-conformance -- my-consumer --hub {url} --token-file {token_file}
+consumer-conformance -- ./scripts/run-under-conformance.sh {url} {token_file}
+```
+
+The second form suits a consumer that keeps its token in a keyring or its own configuration file: a small script of yours receives the address and the file and sets the consumer up your way. The token is made up for each run and the file is deleted at the end, so nothing real is exposed. The consumer inherits the command's environment, plus each `-env NAME=value`.
+
+The check runs two consumers in turn, each with a new token, and looks for these:
+
+1. The consumer opens `GET /consumer/v1/stream` with `Authorization: Bearer <token>`.
+2. After events 1 to 3 and `caught_up` 3, it acknowledges 3 within 10 seconds. It never acknowledges past the last `seq` sent or below an earlier acknowledgement, and it sends the token and a valid body.
+3. An event of an unknown type does not drop the connection: the next event is acknowledged on the same connection.
+4. When the hub closes the stream, the consumer reconnects, and not sooner than 1 second later.
+5. After a `401`, it makes at most one more request in the next 10 seconds.
+6. After `replaced`, it makes no request in the next 10 seconds.
+
+The deadlines are options: `-start-within` (30 s, to open the stream), `-ack-within` (10 s), `-reconnect-within` (30 s) and `-quiet-after` (10 s, the watch after a `401` or `replaced`). The 1 second minimum before reconnecting is part of the contract and has no option. A consumer that exits at once still takes the whole `-start-within` to be reported, so pass a short one while you test.
+
+Output follows [the plugin check](#output). Exit `0` means the consumer passed, and `consumer conformance passed` goes to stdout. Exit `1` means it broke a rule or could not be started, with one line per problem on stderr. Exit `2` means the command was called wrongly, and the usage line goes to stderr. Everything the consumer writes to stdout or stderr comes out on the command's stderr, line by line, with `consumer: ` in front. The command's own lines come after the consumer has stopped, so when a consumer dies at start-up its last words sit just above the report.
 
 ## Writing a plugin without an SDK
 
