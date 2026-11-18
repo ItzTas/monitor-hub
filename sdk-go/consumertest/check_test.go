@@ -40,6 +40,7 @@ type consumer struct {
 	ackMethod               string
 	ackType                 string
 	ackBody                 func(seq int64) string
+	probes                  []string
 	acks                    func(seq int64) []int64
 	dropOnUnknown           bool
 	reconnectDelay          time.Duration
@@ -185,7 +186,26 @@ func (c consumer) connect(ctx context.Context, url, token string, l *launcher) e
 		return streamRejected
 	}
 	l.note(fmt.Sprintf("stream: %d %s", resp.StatusCode, resp.Header.Get("Content-Type")))
+	if resp.StatusCode == http.StatusOK {
+		c.probe(ctx, url, token, l)
+	}
 	return c.read(ctx, url, token, resp.Body, l)
+}
+
+func (c consumer) probe(ctx context.Context, url, token string, l *launcher) {
+	for _, path := range c.probes {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+strings.ReplaceAll(path, "{token}", token), nil)
+		if err != nil {
+			return
+		}
+		setAuth(req, bearerHeader(token))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return
+		}
+		_ = resp.Body.Close()
+		l.note(fmt.Sprintf("probe %s: %d", path, resp.StatusCode))
+	}
 }
 
 func (c consumer) read(ctx context.Context, url, token string, body io.Reader, l *launcher) ending {
@@ -505,23 +525,54 @@ func TestAnAckTheHubAcceptsPasses(t *testing.T) {
 	}
 }
 
+func TestRequestsBesideTheStreamAndTheAck(t *testing.T) {
+	t.Parallel()
+	c := wellBehaved()
+	c.probes = []string{
+		"/healthz",
+		"/icons/" + strings.Repeat("0", 64) + ".png",
+		"/consumer/v1/status",
+		"/consumer/v1/{token}%0A",
+	}
+	got, l := runCheck(t, c, quick())
+	expect(t, "violations", got,
+		`a request went to GET "/consumer/v1/status", which the hub does not serve`,
+		`a request went to GET "/consumer/v1/<token>\n", which the hub does not serve`,
+	)
+	probes := slices.DeleteFunc(slices.Clone(l.transcript), func(entry string) bool { return !strings.HasPrefix(entry, "probe ") })
+	expect(t, "first probes", probes[:min(len(probes), 4)],
+		"probe /healthz: 200",
+		"probe /icons/"+strings.Repeat("0", 64)+".png: 404",
+		"probe /consumer/v1/status: 404",
+		"probe /consumer/v1/{token}%0A: 404",
+	)
+	expect(t, "acks", l.acks(), `ack 3: 200 {"position":3}`, `ack 4: 200 {"position":4}`, `ack 4: 200 {"position":4}`)
+}
+
 func TestAWrongPathOrMissingTokenIsReported(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
 		change func(*consumer)
-		want   string
+		want   []string
 	}{
-		"a wrong method and path": {
-			change: func(c *consumer) { c.method, c.path = http.MethodPost, "/stream" },
-			want:   "the stream request was POST /stream, want GET /consumer/v1/stream",
+		"a wrong method": {
+			change: func(c *consumer) { c.method = http.MethodPost },
+			want:   []string{"the stream request was sent with POST, want GET"},
+		},
+		"a wrong path": {
+			change: func(c *consumer) { c.path = "/stream" },
+			want: []string{
+				`a request went to GET "/stream", which the hub does not serve`,
+				"the consumer did not open the stream within 1s",
+			},
 		},
 		"no token": {
 			change: func(c *consumer) { c.streamAuth = noHeader },
-			want:   "the stream request did not send the consumer token as a bearer token",
+			want:   []string{"the stream request did not send the consumer token as a bearer token"},
 		},
 		"the token under another scheme": {
 			change: func(c *consumer) { c.streamAuth = func(token string) string { return "Token " + token } },
-			want:   "the stream request did not send the consumer token as a bearer token",
+			want:   []string{"the stream request did not send the consumer token as a bearer token"},
 		},
 	}
 	for name, tt := range tests {
@@ -530,7 +581,7 @@ func TestAWrongPathOrMissingTokenIsReported(t *testing.T) {
 			c := wellBehaved()
 			tt.change(&c)
 			got, _ := runCheck(t, c, quick())
-			expect(t, "violations", got, tt.want)
+			expect(t, "violations", got, tt.want...)
 		})
 	}
 }

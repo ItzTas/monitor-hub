@@ -17,6 +17,7 @@ import (
 const (
 	streamPath   = "/consumer/v1/stream"
 	ackPath      = "/consumer/v1/ack"
+	healthPath   = "/healthz"
 	iconsPrefix  = "/icons/"
 	invalidToken = "missing or invalid consumer token"
 )
@@ -146,15 +147,34 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.handlers.Done()
-	if r.URL.Path == ackPath {
-		h.ack(w, r, current)
-		return
-	}
 	if strings.HasPrefix(r.URL.Path, iconsPrefix) {
 		http.NotFound(w, r)
 		return
 	}
-	h.stream(w, r, current)
+	routes := map[string]func(http.ResponseWriter, *http.Request, *run){
+		streamPath: h.stream,
+		ackPath:    h.ack,
+		healthPath: h.health,
+	}
+	route, ok := routes[r.URL.Path]
+	if !ok {
+		route = h.stray
+	}
+	route(w, r, current)
+}
+
+func (h *hub) stray(w http.ResponseWriter, r *http.Request, current *run) {
+	h.report.add("a request went to %s %q, which the hub does not serve", r.Method, masked(r.URL.Path, current.token))
+	http.NotFound(w, r)
+}
+
+func (h *hub) health(w http.ResponseWriter, r *http.Request, current *run) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		h.stray(w, r, current)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = io.WriteString(w, "{\"ok\":true}\n")
 }
 
 func (h *hub) ack(w http.ResponseWriter, r *http.Request, current *run) {
@@ -192,8 +212,8 @@ func (h *hub) ack(w http.ResponseWriter, r *http.Request, current *run) {
 }
 
 func (h *hub) stream(w http.ResponseWriter, r *http.Request, current *run) {
-	if r.Method != http.MethodGet || r.URL.Path != streamPath {
-		h.report.add("the stream request was %s %s, want GET %s", r.Method, r.URL.Path, streamPath)
+	if r.Method != http.MethodGet {
+		h.report.add("the stream request was sent with %s, want GET", r.Method)
 	}
 	if !hasToken(r, current.token) {
 		h.report.add("the stream request did not send the consumer token as a bearer token")
@@ -293,6 +313,13 @@ func readSeq(body io.Reader) (int64, bool) {
 		return 0, false
 	}
 	return *ack.Seq, true
+}
+
+func masked(path, token string) string {
+	if token == "" {
+		return path
+	}
+	return strings.ReplaceAll(path, token, "<token>")
 }
 
 func unauthorized(w http.ResponseWriter) {
