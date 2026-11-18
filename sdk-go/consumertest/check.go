@@ -195,7 +195,7 @@ func (s *script) reconnect(current *run, conn *request) bool {
 		return out != canceled
 	}
 	if gap := max(req.at.Sub(ended), 0); gap < s.opts.MinReconnectGap {
-		s.hub.report.add("the consumer reconnected after %s, sooner than %s", gap.Round(time.Millisecond), s.opts.MinReconnectGap)
+		s.hub.report.add("the consumer reconnected after %s, sooner than %s", gap.Truncate(time.Millisecond), s.opts.MinReconnectGap)
 	}
 	reject(req)
 	n, ok := s.count(current, reject)
