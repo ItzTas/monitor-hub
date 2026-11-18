@@ -196,15 +196,27 @@ func launcher(ctx context.Context, command, env []string, output *prefixed) cons
 	}
 }
 
+// bypassProxies writes one list to both spellings, since clients differ in
+// which one they read. A lone `*` already bypasses every proxy, and many
+// clients treat it as a wildcard only when it stands alone.
 func bypassProxies(env []string) []string {
-	for _, name := range []string{"NO_PROXY", "no_proxy"} {
-		value := "127.0.0.1,localhost"
-		if existing := lookup(env, name); existing != "" {
-			value = existing + "," + value
-		}
-		env = append(env, name+"="+value)
+	var hosts []string
+	for host := range strings.SplitSeq(lookup(env, "NO_PROXY")+","+lookup(env, "no_proxy"), ",") {
+		hosts = addHost(hosts, host)
 	}
-	return env
+	if !slices.Equal(hosts, []string{"*"}) {
+		hosts = addHost(addHost(hosts, "127.0.0.1"), "localhost")
+	}
+	value := strings.Join(hosts, ",")
+	return append(env, "NO_PROXY="+value, "no_proxy="+value)
+}
+
+func addHost(hosts []string, host string) []string {
+	host = strings.TrimSpace(host)
+	if host == "" || slices.Contains(hosts, host) {
+		return hosts
+	}
+	return append(hosts, host)
 }
 
 func lookup(env []string, name string) string {

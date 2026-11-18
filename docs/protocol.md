@@ -670,7 +670,7 @@ consumer-conformance -- my-consumer --hub {url} --token-file {token_file}
 consumer-conformance -- ./scripts/run-under-conformance.sh {url} {token_file}
 ```
 
-The second form suits a consumer that keeps its token in a keyring or its own configuration file: a small script of yours receives the address and the file and sets the consumer up your way. The token is made up for each run and the file is deleted at the end, so nothing real is exposed. The consumer inherits the command's environment, plus each `-env NAME=value`. The command adds `127.0.0.1,localhost` to the end of `NO_PROXY` and `no_proxy`, so a proxy setting does not catch the requests to the fake hub. `-env` puts the value in the command's argument list, where other users of the same machine can read it with `ps`.
+The second form suits a consumer that keeps its token in a keyring or its own configuration file: a small script of yours receives the address and the file and sets the consumer up your way. The token is made up for each run and the file is deleted at the end, so nothing real is exposed. The consumer inherits the command's environment, plus each `-env NAME=value`. The command joins `NO_PROXY` and `no_proxy` into one list and sets both variables to it, so a proxy setting does not catch the requests to the fake hub. It adds `127.0.0.1` and `localhost` to the list, unless the list is just `*`, which already matches every host. `-env` puts the value in the command's argument list, where other users of the same machine can read it with `ps`.
 
 The fake hub never sends the `: ping` comment. The check starts your consumer twice, each time with a new token, and looks for these:
 

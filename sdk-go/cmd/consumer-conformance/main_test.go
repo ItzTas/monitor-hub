@@ -257,12 +257,39 @@ func TestTheTokenFileIsPrivateAndRemoved(t *testing.T) {
 
 func TestTheConsumerReachesTheFakeHubWithoutAProxy(t *testing.T) {
 	t.Parallel()
-	rec := recordRun(t, []string{"-env", "NO_PROXY=corp.example", "-env", "no_proxy="}, "--hub={url}", "--token-file={token_file}")
-	if want := "corp.example,127.0.0.1,localhost"; rec.NoProxy != want {
-		t.Errorf("NO_PROXY = %q, want %q", rec.NoProxy, want)
+	rec := recordRun(t, []string{"-env", "NO_PROXY=corp.example", "-env", "no_proxy=intra.example"}, "--hub={url}", "--token-file={token_file}")
+	want := "corp.example,intra.example,127.0.0.1,localhost"
+	if rec.NoProxy != want || rec.LowerNoProxy != want {
+		t.Errorf("NO_PROXY = %q and no_proxy = %q, want %q in both", rec.NoProxy, rec.LowerNoProxy, want)
 	}
-	if want := "127.0.0.1,localhost"; rec.LowerNoProxy != want {
-		t.Errorf("no_proxy = %q, want %q", rec.LowerNoProxy, want)
+}
+
+func TestBothNoProxySpellingsGetOneMergedList(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		env  []string
+		want string
+	}{
+		"neither set":   {want: "127.0.0.1,localhost"},
+		"only NO_PROXY": {env: []string{"NO_PROXY=corp.example"}, want: "corp.example,127.0.0.1,localhost"},
+		"only no_proxy": {env: []string{"no_proxy=corp.example"}, want: "corp.example,127.0.0.1,localhost"},
+		"both, with spaces and repeats": {
+			env:  []string{"NO_PROXY=corp.example, intra.example", "no_proxy=intra.example,,localhost"},
+			want: "corp.example,intra.example,localhost,127.0.0.1",
+		},
+		"the last value of a name": {env: []string{"NO_PROXY=old.example", "NO_PROXY=new.example"}, want: "new.example,127.0.0.1,localhost"},
+		"a wildcard in NO_PROXY":   {env: []string{"NO_PROXY=*"}, want: "*"},
+		"a wildcard in no_proxy":   {env: []string{"NO_PROXY=", "no_proxy= * "}, want: "*"},
+		"a wildcard among hosts":   {env: []string{"NO_PROXY=*", "no_proxy=corp.example"}, want: "*,corp.example,127.0.0.1,localhost"},
+	}
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := bypassProxies(tt.env)
+			if upper, lower := lookup(env, "NO_PROXY"), lookup(env, "no_proxy"); upper != tt.want || lower != tt.want {
+				t.Errorf("NO_PROXY = %q and no_proxy = %q, want %q in both", upper, lower, tt.want)
+			}
+		})
 	}
 }
 
