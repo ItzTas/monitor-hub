@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "monitor-hub-plugin"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "monitor-hub-plugin-testkit",
@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "monitor-hub-plugin-testkit"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "monitor-hub-plugin",
  "serde_json",

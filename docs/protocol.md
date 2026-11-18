@@ -468,7 +468,7 @@ The hub image build copies that directory to `/opt/monitor-hub/plugins/<name>/`.
 The `plugin-conformance` command starts your plugin through go-plugin, as the hub does, calls it over gRPC, and reports every rule it breaks. The start is not identical to the hub's: [What the plugin receives](#what-the-plugin-receives) lists the differences. Build the command from this repository, or run it at a released version:
 
 ```
-go run github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.3.0 \
+go run github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.4.0 \
   -min-events 2 -ready-timeout 10s -plugin-dir . -env EVENTS=2 -- ./my-plugin
 ```
 

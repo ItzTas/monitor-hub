@@ -11,14 +11,14 @@ Both crates are versioned together and published as git tags of this repository.
 
 ```toml
 [dependencies]
-monitor-hub-plugin = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.2.0" }
+monitor-hub-plugin = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.3.0" }
 prost-types = "0.14.4"
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
 tonic = { version = "0.14.8", default-features = false, features = ["codegen"] }
 tracing = "0.1.44"
 
 [dev-dependencies]
-monitor-hub-plugin-testkit = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.2.0" }
+monitor-hub-plugin-testkit = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.3.0" }
 ```
 
 Your crate implements the `Plugin` trait the SDK generates with tonic and builds messages with prost, so it needs its own `tonic` and `prost-types` dependencies, in the same 0.14 series as the SDK. This workspace uses `tonic` 0.14.8 and `prost-types` 0.14.4. `tracing` is what you log with. If you use migrations, also add `tokio-postgres = "0.7.18"`.
@@ -399,7 +399,7 @@ async fn main() -> ExitCode {
 Enable the feature:
 
 ```toml
-monitor-hub-plugin = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.2.0", features = ["postgres"] }
+monitor-hub-plugin = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.3.0", features = ["postgres"] }
 ```
 
 `monitor_hub_plugin::migrate` applies goose migration files and records them in the same `goose_db_version` table goose uses, so a database can move between this runner and goose. Embed the files in the binary:
@@ -520,7 +520,7 @@ fn the_plugin_conforms() {
 `run` finds the command in this order:
 
 1. The `PLUGIN_CONFORMANCE` environment variable: the path of an already built `plugin-conformance` binary.
-2. `go install github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.3.0`, when `go` is on `PATH`. The Go tag is `sdk/v0.3.0`, and the constant `SDK_GO_VERSION` holds it. The binary goes to `monitor-hub/plugin-conformance/v0.3.0/` under a cache base: `$XDG_CACHE_HOME` when it is an absolute path, otherwise `$HOME/.cache` when `HOME` is absolute.
+2. `go install github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.4.0`, when `go` is on `PATH`. The Go tag is `sdk/v0.4.0`, and the constant `SDK_GO_VERSION` holds it. The binary goes to `monitor-hub/plugin-conformance/v0.4.0/` under a cache base: `$XDG_CACHE_HOME` when it is an absolute path, otherwise `$HOME/.cache` when `HOME` is absolute.
    - `run` uses the base only when it exists or can be created, is a real directory and not a symbolic link, belongs to you, and is not writable by group or others. It creates a missing base with mode 0700. Each directory below the base must belong to you too, and `run` sets it to mode 0700. `run` checks the base itself but not its parents: a base inside a directory that other users can rename is your responsibility.
    - The binary is installed once per version. Later test runs reuse it while it is a regular file that you own and can execute; otherwise `run` installs it again. `go install` writes to a staging directory next to the binary, which is then renamed into place, so test processes that install at the same time do not corrupt each other. `go install` is stopped after ten minutes, and the next install removes staging directories older than that, such as those left by a killed run.
    - In every other case the binary goes to a private temporary directory, one per test process, which stays behind after the process ends: when neither variable gives an absolute path, or when the base or a directory below it fails the checks above, for example `HOME=/` in a container started with `--user`. `run` then says once on stderr why it did not use the cache. Unsetting both `XDG_CACHE_HOME` and `HOME` always selects the temporary directory; `go` itself then needs `GOCACHE` and `GOPATH` set.
