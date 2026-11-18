@@ -603,9 +603,11 @@ Three messages carry data.
 }
 ```
 
-`icon` is the icon of the event's kind and `plugin_icon` the plugin's. `image` is a path on the hub, such as `https://<hub>/icons/<hash>.png`. `/icons/` needs no token and serves `image/png` with `Cache-Control: public, max-age=31536000, immutable` and `Content-Security-Policy: default-src 'none'; sandbox`. The default emoji is `🔔`.
+`occurred_at` and `detected_at` are RFC 3339 timestamps in UTC and may carry fractional seconds, such as `2026-11-17T12:00:14.25Z`.
 
-`event: caught_up` is sent once per connection, right after the backlog: `{"seq": 1530, "backlog": 9}`. `seq` is the larger of the newest `seq` the hub had when the connection opened and the last event sent. `backlog` is how many events the catch-up sent. It is how a consumer tells what it missed from what arrives live.
+`icon` is the icon of the event's kind and `plugin_icon` the plugin's. `image` is a path from the hub's root, such as `/icons/<hash>.png`. It is never empty: at the least it is the default icon's path. Resolve it against the address you use to reach the hub. `/icons/` needs no token and serves `image/png` with `Cache-Control: public, max-age=31536000, immutable` and `Content-Security-Policy: default-src 'none'; sandbox`. The default emoji is `🔔`.
+
+`event: caught_up` is sent once per connection, right after the backlog, with `id: <seq>` and `{"seq": 1530, "backlog": 9}`. `seq` is the larger of the newest `seq` the hub had when the connection opened and the last event sent. `backlog` is how many events the catch-up sent. It is how a consumer tells what it missed from what arrives live.
 
 `event: replaced` carries `{}`. It means a newer connection of the same consumer took this one's place. The hub closes the connection right after.
 
@@ -617,6 +619,7 @@ Also:
 - **One token, one connection.** A new connection of a consumer ends its older ones, so a notebook that wakes up is not blocked by a connection the hub still thinks is open. Two programs with the same token would keep knocking each other off, so each program, even two on one machine, should be its own consumer.
 - **A token that is missing or unknown** gets `401` with `WWW-Authenticate: Bearer`. A consumer revoked or rotated while connected has its stream ended at the next ping, and its next acknowledgement gets `401`.
 - **At most 16 streams are open at once**, across all consumers. The 17th request gets `503` with `Retry-After: 30`, before the stream starts.
+- **Any other `5xx`**, for example a database error while the hub checks the token, is temporary. Try again after the same wait as for a dropped connection.
 - **A position ahead of the hub** (for example after a partial restore of the hub's database) makes the stream start from the newest event.
 
 ### Acknowledging
@@ -639,7 +642,7 @@ The guarantee is at least once: an event that was sent and not acknowledged come
 
 1. Ignore JSON fields and event types you do not know.
 2. Acknowledge after handling, never a `seq` higher than the last one you received, and acknowledge the `caught_up` `seq`.
-3. Wait at least 1 second before reconnecting, and treat a connection that has delivered no byte for 60 seconds as dead.
+3. Wait at least 1 second before reconnecting, and treat a connection that has delivered no byte for 60 seconds as dead. Close a dead connection before you open a new one: if it stays open, the hub sends `replaced` on it when the new one starts.
 4. After a `401`, try again no more than once a minute.
 5. After `replaced`, wait at least 5 minutes before reconnecting, and tell whoever uses the consumer that another program has the same token.
 
