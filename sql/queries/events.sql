@@ -16,3 +16,6 @@ LIMIT sqlc.arg(max_rows)::bigint;
 
 -- name: LockEventOrder :exec
 SELECT pg_advisory_xact_lock(1836019304);
+
+-- name: LatestEventSeq :one
+SELECT COALESCE(MAX(seq), 0)::bigint FROM events;

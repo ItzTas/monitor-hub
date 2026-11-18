@@ -52,6 +52,17 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) (int64
 	return seq, err
 }
 
+const latestEventSeq = `-- name: LatestEventSeq :one
+SELECT COALESCE(MAX(seq), 0)::bigint FROM events
+`
+
+func (q *Queries) LatestEventSeq(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, latestEventSeq)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listEvents = `-- name: ListEvents :many
 SELECT e.seq, e.plugin, p.display_name, e.event_id, e.kind, e.severity, e.occurred_at, e.detected_at, e.title, e.body, e.url, e.payload
 FROM events e
