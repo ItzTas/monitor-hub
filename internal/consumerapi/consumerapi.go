@@ -68,7 +68,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 		Description: "Sends every event after the consumer's position, then caught_up, then each new event as the hub stores it, with a ping comment every 25 seconds. Last-Event-ID is ignored. A newer stream of the same consumer replaces this one.",
 		Tags:        []string{"consumers"},
 		Errors:      []int{http.StatusUnauthorized, http.StatusServiceUnavailable},
-		Middlewares: huma.Middlewares{limit(protocol, make(chan struct{}, maxStreams))},
+		Middlewares: huma.Middlewares{onlyGet(protocol), limit(protocol, make(chan struct{}, maxStreams))},
 	}, map[string]any{
 		"notification": stream.Notification{},
 		"caught_up":    stream.CaughtUp{},
@@ -108,6 +108,17 @@ func authenticate(protocol huma.API, service *consumers.Service) func(huma.Conte
 func unauthorized(protocol huma.API, ctx huma.Context) {
 	ctx.SetHeader("WWW-Authenticate", "Bearer")
 	_ = huma.WriteErr(protocol, ctx, http.StatusUnauthorized, invalidToken)
+}
+
+func onlyGet(protocol huma.API) func(huma.Context, func(huma.Context)) {
+	return func(ctx huma.Context, next func(huma.Context)) {
+		if ctx.Method() == http.MethodGet {
+			next(ctx)
+			return
+		}
+		ctx.SetHeader("Allow", http.MethodGet)
+		_ = huma.WriteErr(protocol, ctx, http.StatusMethodNotAllowed, "the stream is read with GET")
+	}
 }
 
 func limit(protocol huma.API, slots chan struct{}) func(huma.Context, func(huma.Context)) {

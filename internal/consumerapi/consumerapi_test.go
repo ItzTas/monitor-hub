@@ -403,3 +403,21 @@ func TestASeventeenthStreamIsRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestTheStreamRefusesAnyMethodButGet(t *testing.T) {
+	h := newHub(t)
+	token := h.add(t, "desk")
+	s := h.open(t, token, "")
+	s.untilCaughtUp(t)
+
+	got := h.call(t, http.MethodHead, streamPath, "", map[string]string{"Authorization": "Bearer " + token})
+	if got.status != http.StatusMethodNotAllowed || got.header.Get("Allow") != http.MethodGet {
+		t.Errorf("HEAD = %d (Allow %q), want 405 with Allow: GET", got.status, got.header.Get("Allow"))
+	}
+
+	h.store(t, 1, 1)
+	h.signal.Notify()
+	if got := s.next(t); got.id != "1" || got.event != "notification" {
+		t.Fatalf("the open stream got %+v after the HEAD request, want notification 1", got)
+	}
+}
