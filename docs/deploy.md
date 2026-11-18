@@ -4,9 +4,9 @@ This runbook moves two services onto the hub: sei-monitor (the government proces
 
 Placeholders are written in angle brackets and are yours to fill in:
 
-- `<postgres-container>`: the name of the Postgres container that holds the database a command names, from `docker ps`. On the shared Postgres that is one container for all three databases. With bundled databases it is a different one per database (see step 1).
+- `<postgres-container>`: the name of the Postgres container that holds the database a command names, from `docker ps`. On the shared Postgres that is one container for all three databases. If the SEI database still lives in the sei-monitor stack's own Postgres, commands on `sei_monitor` use that container instead (see step 1).
 - `<hub-db-password>`: the password you choose for the hub's database role.
-- `<old-stack-network>`: the Docker network of an old stack, only when its database is still bundled in that stack (see step 1).
+- `<old-stack-network>`: the Docker network of the sei-monitor stack, only when its database is still bundled in that stack (see step 1).
 - `<plugin>`: `sei` or `diario`.
 - `<FEED_TOKEN>`: the value in your `.env`.
 
@@ -94,16 +94,16 @@ Check: the list shows both `diario` and `sei`. If `sei` is missing, the image is
 
 ### Where the databases are
 
-These steps assume the shared Postgres on the external Docker network `postgres`. Check that it holds:
+The gazette's stack already uses the shared Postgres: its compose file joins the external Docker network `postgres` and reaches the server as `postgres:5432`, with the role and database `diario_alerr`, and it bundles no database of its own. The hub joins the same network and keeps its own database there (step 2). Check that the network holds:
 
 ```bash
 docker network ls --filter name=^postgres$
 docker network inspect postgres --format '{{range .Containers}}{{.Name}}{{"\n"}}{{end}}'
 ```
 
-Check: the first command lists a network named `postgres`, and the second lists the shared Postgres container (that name is your `<postgres-container>`) and, if both old databases are on it, nothing else you did not expect. `docker compose config` does not catch a missing external network: the hub would fail at `up` with "network postgres not found".
+Check: the first command lists a network named `postgres`, and the second lists the shared Postgres container (that name is your `<postgres-container>`), `diario-alerr`, and nothing else you did not expect. `docker compose config` does not catch a missing external network: the hub would fail at `up` with "network postgres not found".
 
-If a database still lives in an old stack's own bundled Postgres (the `v1.0.0` compose files of both repositories bundle one), the hub must join that stack's network too:
+The SEI database is either on the shared Postgres too, or still in the sei-monitor stack's own Postgres (the `v1.0.0` compose file bundles one). In the second case the hub must join that stack's network as well:
 
 1. Find the network. It is named after the stack's folder, for example `sei-monitor_default`:
 
@@ -111,15 +111,9 @@ If a database still lives in an old stack's own bundled Postgres (the `v1.0.0` c
    docker network ls
    ```
 
-2. In `compose.yaml`, uncomment the two `<old-stack-network>` lines and put that network's name in both. Add one such pair per stack that needs it.
-3. Both old stacks name their database service `postgres`, so the alias `postgres` is ambiguous. In the database URL use the container name of that stack's Postgres, from `docker ps`.
+2. In `compose.yaml`, uncomment the two `<old-stack-network>` lines and put that network's name in both.
+3. That stack names its database service `postgres`, which is also the name of the shared server on the `postgres` network, so the host name `postgres` is ambiguous. In `SEI__DATABASE_URL` use the container name of the stack's Postgres, from `docker ps`, and use that container as `<postgres-container>` for every command on `sei_monitor`.
 4. Do not use `docker compose down` on that stack in step 4: stop only its app service.
-
-If both databases stay bundled and there is no shared Postgres at all, three more things change:
-
-5. The hub's own database (step 2) still needs a Postgres. Create it in one of the bundled ones, which then serves the hub too and must keep running. That container has no `postgres` admin user: its admin is the role its compose file sets as `POSTGRES_USER` (`diario_alerr` or `sei_monitor` in the `v1.0.0` files). Use that role with `-U` in step 2, and the container name as the host in the hub's `DATABASE_URL`.
-6. `<postgres-container>` names a different container for each database. In every command of this runbook, use the container that holds the database the command names: `sei_monitor`, `diario_alerr` or `monitor_hub`.
-7. Without a network named `postgres`, delete the `- postgres` line under the service's `networks` in `compose.yaml`, and the `postgres:` block with its `external: true` line under the top-level `networks`. Otherwise the hub fails at `up` with "network postgres not found".
 
 ### Back up both databases
 
@@ -133,7 +127,7 @@ Use the role and database names of your stacks. Check: both files are larger tha
 
 ## 2. Create the hub's database
 
-Run this in the shared Postgres as its admin user (`postgres` by default), or in the bundled Postgres you picked in step 1, as its admin role. Use a real password and keep it for step 3.
+Run this in the shared Postgres as its admin user (`postgres` by default). Use a real password and keep it for step 3.
 
 ```bash
 docker exec -i <postgres-container> psql -U postgres <<'SQL'
@@ -240,7 +234,7 @@ docker compose config --quiet && echo ok
 docker network inspect postgres --format '{{.Name}}'
 ```
 
-The second command prints `postgres` (skip it if you removed that network in step 1). Run `docker network inspect` for every extra network you added as well.
+The second command prints `postgres`. Run `docker network inspect` for the sei-monitor stack's network as well if you added it in step 1.
 
 ## 4. Stop the old stacks
 
