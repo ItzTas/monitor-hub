@@ -358,12 +358,12 @@ func watchViolations(ctx context.Context, results <-chan watchResult, limits wat
 	defer first.Stop()
 	select {
 	case <-ctx.Done():
-		return nil
+		return watchOpenFailure(ctx.Err())
 	case <-first.C:
 		return []string{fmt.Sprintf("Watch sent no signal within %s", limits.firstSignal)}
 	case r := <-results:
 		if r.err != nil {
-			return watchFirstFailure(r.err)
+			return watchFirstFailure(cutShort(ctx, r.err))
 		}
 		if violation := checkSignal(r.signal); violation != "" {
 			return []string{violation}
@@ -374,12 +374,12 @@ func watchViolations(ctx context.Context, results <-chan watchResult, limits wat
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return watchLaterFailure(ctx.Err())
 		case <-open.C:
 			return nil
 		case r := <-results:
 			if r.err != nil {
-				return watchLaterFailure(r.err)
+				return watchLaterFailure(cutShort(ctx, r.err))
 			}
 			if violation := checkSignal(r.signal); violation != "" {
 				return []string{violation}
@@ -407,4 +407,11 @@ func checkSignal(signal *pluginpb.WatchResponse) string {
 		return fmt.Sprintf("Watch signal latest_seq is %d, want 0 or more", signal.GetLatestSeq())
 	}
 	return ""
+}
+
+func cutShort(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }

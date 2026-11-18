@@ -187,10 +187,14 @@ type scriptedStream struct {
 	grpc.ClientStream
 	ctx   context.Context
 	steps []watchStep
+	onEnd func()
 }
 
 func (s *scriptedStream) Recv() (*pluginpb.WatchResponse, error) {
 	if len(s.steps) == 0 {
+		if s.onEnd != nil {
+			s.onEnd()
+		}
 		<-s.ctx.Done()
 		return nil, status.FromContextError(s.ctx.Err()).Err()
 	}
@@ -238,6 +242,34 @@ func TestCheckWatch(t *testing.T) {
 			got := checkWatch(t.Context(), c, watchLimits{50 * time.Millisecond, 50 * time.Millisecond})
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("violations = %q, want %q", got, tt.want)
+			}
+			if opened.Err() == nil {
+				t.Fatal("the context given to Watch is still live after checkWatch returned")
+			}
+		})
+	}
+}
+
+func TestCheckWatchCutShort(t *testing.T) {
+	tests := map[string]struct {
+		steps []watchStep
+		want  string
+	}{
+		"before the first signal": {want: "Watch failed: context canceled"},
+		"after the first signal":  {steps: []watchStep{signal(1)}, want: "Watch failed after its first signal: context canceled"},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			parent, cancelParent := context.WithCancel(t.Context())
+			defer cancelParent()
+			var opened context.Context
+			c := &fakeClient{watch: func(ctx context.Context) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+				opened = ctx
+				return &scriptedStream{ctx: ctx, steps: tt.steps, onEnd: cancelParent}, nil
+			}}
+			got := checkWatch(parent, c, watchLimits{time.Minute, time.Minute})
+			if !slices.Equal(got, []string{tt.want}) {
+				t.Fatalf("violations = %q, want %q", got, []string{tt.want})
 			}
 			if opened.Err() == nil {
 				t.Fatal("the context given to Watch is still live after checkWatch returned")
