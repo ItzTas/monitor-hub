@@ -418,6 +418,7 @@ fn field_rules_are_enforced() {
             SettingsError::Field {
                 index,
                 problem: got,
+                ..
             } => {
                 assert_eq!(*index, 1, "{case}");
                 assert_eq!(got, &problem, "{case}");

@@ -70,6 +70,7 @@ pub enum SettingsError {
     #[error("settings.json: settings_version is {0}, want 1")]
     UnsupportedVersion(u64),
     #[error("settings.json: fields[{index}]: {problem}")]
+    #[non_exhaustive]
     Field { index: usize, problem: FieldProblem },
 }
 

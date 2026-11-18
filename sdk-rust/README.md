@@ -309,7 +309,7 @@ async fn main() -> ExitCode {
 
 `is_reserved(name)` says whether the hub reserves a name. A plugin does not need `parse` at run time, because the file is for the hub. The testkit uses it.
 
-`Settings`, `Field`, `FieldType`, `SettingsError`, `FieldProblem`, `Problem` and `Answer` are `#[non_exhaustive]`. A `match` on `FieldType`, `SettingsError` or `FieldProblem` needs a wildcard arm, and other crates build a `Problem` with `Problem::new`.
+`Settings`, `Field`, `FieldType`, `SettingsError`, `FieldProblem`, `Problem` and `Answer` are `#[non_exhaustive]`. A `match` on `FieldType`, `SettingsError` or `FieldProblem` needs a wildcard arm, a pattern on `SettingsError::Field` needs `..`, and other crates build a `Problem` with `Problem::new`.
 
 ## Migrations
 
