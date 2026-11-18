@@ -100,7 +100,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	fs.IntVar(&opts.MinEvents, "min-events", 0, "minimum number of events the plugin must return")
 	fs.DurationVar(&opts.ReadyTimeout, "ready-timeout", 0, "how long to wait while Events answers UNAVAILABLE")
-	fs.Func("plugin-dir", "plugin directory: check its settings.json and run <command> validate-settings in it", func(dir string) error {
+	fs.Func("plugin-dir", "plugin directory `DIR`: check its settings.json and run <command> validate-settings in it", func(dir string) error {
 		pluginDir = &dir
 		return nil
 	})

@@ -64,3 +64,11 @@ func TestEmptyPluginDirIsAUsageError(t *testing.T) {
 		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
 	}
 }
+
+func TestHelpNamesThePluginDirArgument(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	run(t.Context(), []string{"-h", "--", "/nonexistent/plugin"}, &stdout, &stderr)
+	if want := "  -plugin-dir DIR\n"; !strings.Contains(stderr.String(), want) {
+		t.Fatalf("help = %q, want it to hold %q", stderr.String(), want)
+	}
+}
