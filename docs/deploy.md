@@ -71,7 +71,7 @@ The Go images to pin:
    docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/itztas/diario-alerr:sha-764b330
    ```
 
-   To pin the content itself and not only the tag, add the digest after the tag: `image: ghcr.io/itztas/sei-monitor:1.0.0@sha256:<digest>` and `DIARIO_ALERR_TAG=sha-764b330@sha256:<digest>`, with the `sha256:` part each command printed. Docker then refuses an image that a rebuild has put under the same tag.
+   To pin the content itself and not only the tag, add the digest after the tag: `image: ghcr.io/itztas/sei-monitor:1.0.0@sha256:<digest>` and `DIARIO_ALERR_TAG=sha-764b330@sha256:<digest>`, with the `sha256:` part each command printed. Docker then pulls and runs that exact image, even if a rebuild later puts another one under the same tag.
 
 4. Only now merge the two pull requests. Once their CI runs have finished, pull again on the board:
 
