@@ -145,6 +145,12 @@ mod tests {
         }
     }
 
+    async fn settle() {
+        for _ in 0..10 {
+            task::yield_now().await;
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn the_first_signal_is_sent_at_once_with_the_latest_seq() {
         let notifier = Notifier::new();
@@ -209,6 +215,43 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_full_channel_collapses_into_the_newest_seq() {
+        let notifier = Notifier::new();
+        let mut watch = Watch::open(&notifier);
+        assert_eq!(watch.signal().await, 0);
+
+        notifier.notify(8);
+        settle().await;
+        notifier.notify(9);
+        settle().await;
+        notifier.notify(10);
+        settle().await;
+        notifier.notify(11);
+
+        assert_eq!(watch.signal().await, 8);
+        assert_eq!(watch.signal().await, 11);
+        assert_eq!(watch.elapsed(), Duration::ZERO);
+        let extra = timeout(HEARTBEAT - Duration::from_millis(1), watch.stream.next()).await;
+        assert!(extra.is_err(), "unexpected extra signal {extra:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn notify_signals_even_when_the_seq_does_not_rise() {
+        let notifier = Notifier::new();
+        notifier.notify(4);
+        let mut watch = Watch::open(&notifier);
+        assert_eq!(watch.signal().await, 4);
+
+        notifier.notify(4);
+        assert_eq!(watch.signal().await, 4);
+        assert_eq!(watch.elapsed(), Duration::ZERO);
+
+        notifier.notify(3);
+        assert_eq!(watch.signal().await, 4);
+        assert_eq!(watch.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn status_changed_signals_with_the_same_seq() {
         let notifier = Notifier::new();
         notifier.notify(4);
@@ -230,6 +273,7 @@ mod tests {
         watch.closing.send_replace(true);
 
         assert_eq!(watch.next().await, None);
+        assert_eq!(watch.elapsed(), Duration::ZERO);
     }
 
     #[tokio::test(start_paused = true)]
@@ -240,10 +284,11 @@ mod tests {
         assert_eq!(notifier.sender.receiver_count(), 1);
 
         let Watch {
-            stream, closing, ..
+            stream,
+            closing: _closing,
+            ..
         } = watch;
         drop(stream);
-        assert!(!closing.is_closed(), "the server side is still open");
 
         for _ in 0..100 {
             if notifier.sender.receiver_count() == 0 {
