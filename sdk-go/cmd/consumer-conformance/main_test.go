@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,27 +30,35 @@ type recorded struct {
 }
 
 func TestMain(m *testing.M) {
-	switch os.Getenv(modeEnv) {
-	case "":
-		os.Exit(m.Run())
-	case "record":
-		fakeRecord()
-	case "boom":
-		_, _ = fmt.Fprintln(os.Stderr, "boom")
-		os.Exit(3)
-	case "good":
-		fakeGood()
+	fakes := map[string]func(){
+		"record": fakeRecord,
+		"boom":   fakeBoom,
+		"good":   fakeGood,
 	}
+	fake, ok := fakes[os.Getenv(modeEnv)]
+	if !ok {
+		os.Exit(m.Run())
+	}
+	fake()
 	os.Exit(0)
 }
 
-func fakeRecord() {
-	rec := recorded{Args: os.Args[1:]}
-	for _, arg := range rec.Args {
-		if file, ok := strings.CutPrefix(arg, "--token-file="); ok {
-			rec.TokenFile = file
+func argument(prefix string) string {
+	for _, arg := range os.Args[1:] {
+		if value, ok := strings.CutPrefix(arg, prefix); ok {
+			return value
 		}
 	}
+	return ""
+}
+
+func fakeBoom() {
+	_, _ = fmt.Fprintln(os.Stderr, "boom")
+	os.Exit(3)
+}
+
+func fakeRecord() {
+	rec := recorded{Args: os.Args[1:], TokenFile: argument("--token-file=")}
 	info, err := os.Stat(rec.TokenFile)
 	if err != nil {
 		os.Exit(4)
@@ -62,12 +72,12 @@ func fakeRecord() {
 	if err := os.WriteFile(os.Getenv(outEnv), data, 0o600); err != nil {
 		os.Exit(4)
 	}
-	select {}
+	fakeGood()
 }
 
 func fakeGood() {
-	hub, tokenFile := strings.TrimPrefix(os.Args[1], "--hub="), os.Args[2]
-	raw, err := os.ReadFile(tokenFile)
+	hub := argument("--hub=")
+	raw, err := os.ReadFile(argument("--token-file="))
 	if err != nil {
 		os.Exit(4)
 	}
@@ -133,8 +143,7 @@ func fakeAck(hub, token, id string) {
 
 func runConsumer(t *testing.T, mode string, flags []string, args ...string) (int, string, string) {
 	t.Helper()
-	out := t.TempDir() + "/recorded.json"
-	command := append([]string{"-env", modeEnv + "=" + mode, "-env", outEnv + "=" + out}, flags...)
+	command := append([]string{"-env", modeEnv + "=" + mode}, flags...)
 	command = append(command, "--", os.Args[0])
 	command = append(command, args...)
 	var stdout, stderr bytes.Buffer
@@ -155,13 +164,19 @@ func readRecorded(t *testing.T, stderrOut string, path string) recorded {
 	return rec
 }
 
-func recordRun(t *testing.T, args ...string) recorded {
+func quickFlags() []string {
+	return []string{"-ack-within", "2s", "-reconnect-within", "5s", "-quiet-after", "500ms"}
+}
+
+func recordRun(t *testing.T, flags []string, args ...string) recorded {
 	t.Helper()
-	out := t.TempDir() + "/recorded.json"
-	command := []string{"-start-within", "300ms", "-env", modeEnv + "=record", "-env", outEnv + "=" + out, "--", os.Args[0]}
-	var stdout, stderr bytes.Buffer
-	run(context.Background(), append(command, args...), &stdout, &stderr)
-	return readRecorded(t, stderr.String(), out)
+	out := filepath.Join(t.TempDir(), "recorded.json")
+	flags = slices.Concat(quickFlags(), []string{"-env", outEnv + "=" + out}, flags)
+	code, _, stderr := runConsumer(t, "record", flags, args...)
+	if code != exitOK {
+		t.Fatalf("code = %d, want %d\n%s", code, exitOK, stderr)
+	}
+	return readRecorded(t, stderr, out)
 }
 
 func TestUsageErrors(t *testing.T) {
@@ -189,7 +204,8 @@ func TestUsageErrors(t *testing.T) {
 }
 
 func TestPlaceholdersAreReplacedInsideArguments(t *testing.T) {
-	rec := recordRun(t, "--hub={url}", "--token-file={token_file}", "--token={token}", "plain")
+	t.Parallel()
+	rec := recordRun(t, nil, "--hub={url}", "--token-file={token_file}", "--token={token}", "plain")
 	if len(rec.Args) != 4 {
 		t.Fatalf("args = %q, want 4 arguments", rec.Args)
 	}
@@ -211,7 +227,8 @@ func TestPlaceholdersAreReplacedInsideArguments(t *testing.T) {
 }
 
 func TestTheTokenFileIsPrivateAndRemoved(t *testing.T) {
-	rec := recordRun(t, "--token-file={token_file}")
+	t.Parallel()
+	rec := recordRun(t, nil, "--hub={url}", "--token-file={token_file}")
 	if rec.Mode != 0o600 {
 		t.Fatalf("token file mode = %o, want 600", rec.Mode)
 	}
@@ -221,6 +238,7 @@ func TestTheTokenFileIsPrivateAndRemoved(t *testing.T) {
 }
 
 func TestAConsumerThatExitsAtOnceIsReported(t *testing.T) {
+	t.Parallel()
 	code, stdout, stderr := runConsumer(t, "boom", []string{"-start-within", "300ms"})
 	if code != exitViolations {
 		t.Fatalf("code = %d, want %d\n%s", code, exitViolations, stderr)
@@ -236,8 +254,8 @@ func TestAConsumerThatExitsAtOnceIsReported(t *testing.T) {
 }
 
 func TestAWellBehavedConsumerPassesEndToEnd(t *testing.T) {
-	flags := []string{"-ack-within", "2s", "-reconnect-within", "5s", "-quiet-after", "500ms"}
-	code, stdout, stderr := runConsumer(t, "good", flags, "--hub={url}", "{token_file}")
+	t.Parallel()
+	code, stdout, stderr := runConsumer(t, "good", quickFlags(), "--hub={url}", "--token-file={token_file}")
 	if code != exitOK {
 		t.Fatalf("code = %d, want %d\n%s", code, exitOK, stderr)
 	}
