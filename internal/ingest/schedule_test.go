@@ -255,3 +255,40 @@ func TestAWatchedScheduleWaitsTheSafetyInterval(t *testing.T) {
 		t.Errorf("interval after watching stops = %s, want %s", got, PollInterval)
 	}
 }
+
+func TestRequestsMergeIntoOnePendingPoll(t *testing.T) {
+	sch := newSchedule()
+	sch.request(pollRequest{full: true})
+	sch.request(pollRequest{latestSeq: 7})
+	sch.request(pollRequest{latestSeq: 3})
+
+	if req, ok := sch.take(); !ok || req != (pollRequest{full: true, latestSeq: 7}) {
+		t.Errorf("take = %+v, %v; want {full: true, latestSeq: 7}, true", req, ok)
+	}
+	if req, ok := sch.take(); ok {
+		t.Errorf("second take = %+v, %v; want nothing pending", req, ok)
+	}
+}
+
+func TestWhenAPollReadsEvents(t *testing.T) {
+	cases := []struct {
+		name   string
+		req    pollRequest
+		cursor int64
+		known  bool
+		want   bool
+	}{
+		{name: "full", req: pollRequest{full: true}, cursor: 5, known: true, want: true},
+		{name: "unknown plugin", req: pollRequest{latestSeq: 0}, cursor: 5, known: false, want: true},
+		{name: "hint above the cursor", req: pollRequest{latestSeq: 6}, cursor: 5, known: true, want: true},
+		{name: "hint at the cursor", req: pollRequest{latestSeq: 5}, cursor: 5, known: true, want: false},
+		{name: "hint below the cursor", req: pollRequest{latestSeq: 4}, cursor: 5, known: true, want: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.req.readsEvents(c.cursor, c.known); got != c.want {
+				t.Errorf("%+v.readsEvents(%d, %v) = %v, want %v", c.req, c.cursor, c.known, got, c.want)
+			}
+		})
+	}
+}
