@@ -32,6 +32,10 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8090}:8080"
     volumes:
       - data:/data
+      # The SEI password as a file, for SEI__SEI_PASSWORD_FILE=/run/secrets/sei_password. The hub
+      # runs as user 65532, which must be able to read the file on the host (docs/deploy.md,
+      # "Secrets from files"). Mount any other _FILE secret the same way.
+      # - ./secrets/sei_password:/run/secrets/sei_password:ro
     networks:
       - postgres
       # The SEI database, if it still lives in the sei-monitor stack's own Postgres: join that
