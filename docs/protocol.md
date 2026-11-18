@@ -143,7 +143,7 @@ The hub polls each plugin on its own, one poll at a time, so a slow plugin does 
 
 The hub polls a plugin:
 
-- Right after the plugin's process starts: when the first [`Watch`](#watch) signal arrives, or when `Watch` answers `UNIMPLEMENTED` or fails.
+- Right after the plugin's process starts: when the first [`Watch`](#watch) signal arrives, or when `Watch` answers `UNIMPLEMENTED` or fails. When the `Watch` call is open but has not sent a signal yet, the first poll comes 15 seconds after the hub starts, or 15 seconds after its last full poll of the plugin, and the hub keeps polling every 15 seconds until the first signal.
 - On every `Watch` signal. It calls `Status` every time. It reads `Events` only on the first signal of a `Watch` call, while the plugin's baseline is not complete (see [The first read is the baseline](#the-first-read-is-the-baseline)), or when the signal's `latest_seq` is greater than the highest `seq` the hub has stored for the plugin.
 - 15 seconds after the previous poll ends, when the plugin does not implement `Watch` or its `Watch` call is down.
 - Every 5 minutes while `Watch` is up, counted from the end of the last full poll. A full poll reads `Events` whatever `latest_seq` says: the poll after the first signal of a call is one, and so is this 5-minute poll. The polls that follow later signals, heartbeats included, follow the rule of the previous item and do not postpone the 5-minute poll.
@@ -206,7 +206,7 @@ What the hub does with the call:
 - On the first signal of a call, the hub logs `watching a plugin` and polls.
 - When 90 seconds pass without a signal, the hub cancels the call, polls at once, goes back to polling every 15 seconds, and opens `Watch` again after a delay.
 - Any other error, and the end of the call, are handled the same way. For these and for the 90 seconds of silence, the hub logs a warning, `the plugin's Watch stopped; polling it every 15s`, with the error and the delay.
-- The delay before the hub opens `Watch` again grows: 1 second, 5 seconds, 30 seconds, then 2 minutes for every further attempt. It goes back to 1 second after a call that sent at least two signals, or when the plugin's process changes.
+- The delay before the hub opens `Watch` again grows: 1 second, 5 seconds, 30 seconds, then 2 minutes for every further attempt. It goes back to 1 second after a call that stayed open at least 30 seconds and sent at least two signals, or when the plugin's process changes.
 - When the plugin's process restarts, the hub cancels the old call and opens `Watch` on the new process.
 - A signal that comes early, twice or never changes only when the hub polls, never what it stores. When a signal announces a `seq` that `Events` does not return yet, the hub reads `Events`, stores nothing and keeps its position. The next signal, or the 5-minute poll, reads again.
 
@@ -525,7 +525,7 @@ The suite checks that:
 - `Events` after the last `seq` is empty, and `Events` after the first `seq` equals the first list without its first event.
 - When the first list holds at least two events, `Events(after = 0, limit = 1)` returns exactly the first event, and `Events(after = 0, limit = 0)` returns at most 100 events.
 - `Check` succeeds.
-- When the plugin implements `Watch`, the first signal arrives within 5 seconds, no signal has a negative `latest_seq`, and the call is still open 1 second after the first signal. A plugin that answers `UNIMPLEMENTED` passes without this check.
+- When the plugin implements `Watch`, the first signal arrives within 5 seconds, no signal has a negative `latest_seq`, and the call is still open 1 second after the first signal. A plugin that answers `UNIMPLEMENTED` passes without this check. The suite does not check the 30-second heartbeat, the signal after each write, or a call that ends more than 1 second after its first signal. Without the heartbeat, or when the call ends, the hub falls back to polling every 15 seconds. Without the signal after a write, the hub reads the event when a later signal announces its `seq`, or at the 5-minute poll.
 
 With `-plugin-dir`, when `DIR` holds `settings.json`, the suite also checks that:
 
