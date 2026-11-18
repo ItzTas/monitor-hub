@@ -26,7 +26,8 @@ RUN apk add --no-cache ca-certificates poppler-utils \
     && chown 65532:65532 /data
 
 COPY --from=build /out/monitor-hub /usr/local/bin/monitor-hub
-COPY --from=ghcr.io/itztas/diario-alerr:2.0.0 /plugin/ /opt/monitor-hub/plugins/diario/
+COPY --from=ghcr.io/itztas/diario-alerr:2.0.1 /plugin/ /opt/monitor-hub/plugins/diario/
+COPY --from=ghcr.io/itztas/sei-monitor:2.0.0 /plugin/ /opt/monitor-hub/plugins/sei/
 RUN chmod -R a+rX /opt/monitor-hub/plugins
 
 USER 65532:65532
