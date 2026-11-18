@@ -54,7 +54,10 @@ func TestAfterSkipsBaselineEventsAndPages(t *testing.T) {
 			t.Fatalf("After(%d, 2) = %v, %v; want %v", c.after, seqs(got), err, c.want)
 		}
 	}
-	got, _ := r.After(t.Context(), 4, 2)
+	got, err := r.After(t.Context(), 4, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 1 || !got[0].Urgent || got[0].Plugin != "sei" || got[0].DisplayName != "SEI" {
 		t.Fatalf("notification = %+v, want urgent from sei", got)
 	}
