@@ -541,9 +541,11 @@ Use this if the hub misbehaves and you want the old services back. The old stack
 
 ### Coming forward again
 
-Moving back to the hub after a rollback is a new take-over. With the hub still stopped, reset its stored position for both plugins. Otherwise the hub resumes from a position that no longer matches what the Go programs added in between, and announces again everything they stored and already sent: for the gazette every alert with a `seq` above the hub's old position, for SEI every event with a higher id. Back up the hub's database first, then:
+Moving back to the hub after a rollback is a new take-over. With the hub still stopped, reset its stored position for both plugins. Otherwise the hub resumes from a position that no longer matches what the Go programs added in between, and announces again everything they stored and already sent: for the gazette every alert with a `seq` above the hub's old position, for SEI every event with a higher id. Back up the hub's database first, then reset:
 
 ```bash
+docker exec <postgres-container> pg_dump -U monitor_hub -Fc monitor_hub > ~/monitor_hub-$(date +%F).dump
+ls -l ~/monitor_hub-*.dump
 docker exec -i <postgres-container> psql -U monitor_hub -d monitor_hub <<'SQL'
 DELETE FROM events WHERE plugin IN ('diario', 'sei');
 UPDATE plugins SET cursor = 0, baselined_at = NULL WHERE name IN ('diario', 'sei');
@@ -559,6 +561,7 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
 - **Resetting a plugin's database.** Do it only together with the hub's stored position for that plugin, and with the hub stopped. Reset alone, the plugin's numbering restarts below the hub's position, and its new events up to that position are never delivered. Both plugins tell you when this happens. The gazette plugin logs `the hub is ahead of this database: reset the hub's position for this plugin` at `error` level once per process. The SEI plugin logs `the hub is ahead of this database: reset the hub's position for the sei plugin` at `error` level when it notices. `/api/plugins` then shows the plugin as `failing` with the same text in `message`. Until the two agree the plugin returns no events and confirms none, so it deletes none of them either. Reset the hub's side too. This deletes the hub's stored events for that plugin, so back up the hub's database first. The table and columns are from `sql/schema/00001_hub.sql`.
 
   ```bash
+  docker exec <postgres-container> pg_dump -U monitor_hub -Fc monitor_hub > ~/monitor_hub-$(date +%F).dump
   docker exec -i <postgres-container> psql -U monitor_hub -d monitor_hub <<'SQL'
   DELETE FROM events WHERE plugin = '<plugin>';
   UPDATE plugins SET cursor = 0, baselined_at = NULL WHERE name = '<plugin>';
