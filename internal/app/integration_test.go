@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net"
 	"net/http"
@@ -169,6 +170,16 @@ func TestAConsumerReceivesEventsAfterTheBaseline(t *testing.T) {
 	stream := openStream(t, server.URL, token)
 	if got, want := stream.next(t), (frame{id: "2", event: "caught_up", data: `{"seq":2,"backlog":0}`}); got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	list := request(t, app, http.MethodGet, "/api/consumers", apiToken)
+	var listed struct {
+		Items []struct {
+			Name      string `json:"name"`
+			Connected bool   `json:"connected"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil || list.Code != http.StatusOK || len(listed.Items) != 1 || listed.Items[0].Name != "desk" || !listed.Items[0].Connected {
+		t.Errorf("consumers with the stream open = %d %s (%v), want desk connected", list.Code, list.Body.String(), err)
 	}
 
 	b.setEvents("3")
