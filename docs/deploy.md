@@ -475,13 +475,13 @@ Check: no "not paired" warning. If you paired while the hub was running, restart
 
 Use this if the hub misbehaves and you want the old services back. The old stacks are already pinned to their Go images (step 1).
 
-1. See what the hub has not delivered yet. Nobody sends these after the rollback: the old programs do not read the hub's tables.
+1. List what the hub has not delivered. Nobody sends these after the rollback: the old programs do not read the hub's tables.
 
    ```bash
-   docker exec -i <postgres-container> psql -U monitor_hub -d monitor_hub -c "SELECT e.plugin, d.channel, d.status, count(*) FROM deliveries d JOIN events e ON e.seq = d.event_seq WHERE d.status = 'pending' GROUP BY 1, 2, 3 ORDER BY 1, 2;"
+   docker exec -i <postgres-container> psql -U monitor_hub -d monitor_hub -c "SELECT e.seq, e.plugin, e.title, e.url, e.detected_at, d.channel, d.status, d.attempts, d.last_error FROM deliveries d JOIN events e ON e.seq = d.event_seq WHERE d.status <> 'sent' ORDER BY e.seq, d.channel;"
    ```
 
-   Each row is a plugin, a channel and how many notifications are still waiting. Read the events behind them with `/api/events` if you need them.
+   Each row is one notification for one channel: the event's position in the hub, its plugin, title and link, when the hub stored it, and the channel. `pending` means the hub still meant to send it. `failed` means the hub gave up after six attempts, with the last error in `last_error`; the hub never retries those, so the list may hold old ones you already know about. The query reads only the database, so it works with the hub stopped too. Save the output, and pass on every row you have not already handled.
 
 2. Stop the hub:
 
@@ -489,7 +489,7 @@ Use this if the hub misbehaves and you want the old services back. The old stack
    cd /opt/stacks/monitor-hub && docker compose down
    ```
 
-   The hub may have read SEI events after item 1 and not sent them before it stopped, and the SEI plugin may have recorded events after the hub's last read. Run the query of item 1 once more, then list the SEI events the hub never read. The first command prints the hub's stored position for `sei`; put that number in the second:
+   The hub may have read SEI events after item 1 and not sent them before it stopped, and the SEI plugin may have recorded events after the hub's last read. Run the query of item 1 once more, which now also shows what the hub read in its last seconds and never sent, then list the SEI events the hub never read. The first command prints the hub's stored position for `sei`; put that number in the second:
 
    ```bash
    docker exec <postgres-container> psql -U monitor_hub -d monitor_hub -tAc "SELECT cursor FROM plugins WHERE name = 'sei';"
