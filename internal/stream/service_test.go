@@ -210,6 +210,48 @@ func TestTheBacklogIsReadInPages(t *testing.T) {
 	}
 }
 
+func TestABacklogStopsBetweenPagesWhenTheStreamMustEnd(t *testing.T) {
+	stops := map[string]func(*harness, context.CancelFunc){
+		"the signal closes": func(h *harness, _ context.CancelFunc) { h.signal.Close() },
+		"the request ends":  func(_ *harness, cancel context.CancelFunc) { cancel() },
+	}
+	for name, stop := range stops {
+		t.Run(name, func(t *testing.T) {
+			repo := &fakeRepo{latest: 1201}
+			for i := int64(1); i <= 1201; i++ {
+				repo.add(i)
+			}
+			h := newHarness(t, repo)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			sent := 0
+			done := make(chan error, 1)
+			go func() {
+				done <- h.service.Stream(ctx, Client{Name: "desk"}, func(sse.Message) error {
+					sent++
+					if sent == PageSize {
+						stop(h, cancel)
+					}
+					return nil
+				})
+			}()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("Stream = %v, want nil", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the stream did not end within 5s")
+			}
+			repo.mu.Lock()
+			defer repo.mu.Unlock()
+			if sent != PageSize || len(repo.limits) != 1 {
+				t.Fatalf("sent %d messages over %d pages, want %d over 1", sent, len(repo.limits), PageSize)
+			}
+		})
+	}
+}
+
 func TestAPositionAheadOfTheHubStartsFromTheEndAndIsSaved(t *testing.T) {
 	repo := &fakeRepo{latest: 4}
 	repo.add(1, 2, 3, 4)

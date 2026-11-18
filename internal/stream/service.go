@@ -61,7 +61,7 @@ func (s *Service) Stream(ctx context.Context, c Client, send sse.Sender) error {
 		cursor = latest
 	}
 	cursor, backlog, err := s.drain(ctx, cursor, send)
-	if err != nil {
+	if err != nil || s.stopped(ctx) {
 		return err
 	}
 	seq := max(latest, cursor)
@@ -93,7 +93,7 @@ func (s *Service) Stream(ctx context.Context, c Client, send sse.Sender) error {
 				return nil
 			}
 		}
-		if cursor, _, err = s.drain(ctx, cursor, send); err != nil {
+		if cursor, _, err = s.drain(ctx, cursor, send); err != nil || s.stopped(ctx) {
 			return err
 		}
 	}
@@ -101,7 +101,7 @@ func (s *Service) Stream(ctx context.Context, c Client, send sse.Sender) error {
 
 func (s *Service) drain(ctx context.Context, cursor int64, send sse.Sender) (int64, int, error) {
 	sent := 0
-	for {
+	for !s.stopped(ctx) {
 		page, err := s.repo.After(ctx, cursor, PageSize)
 		if err != nil {
 			return cursor, sent, err
@@ -118,5 +118,17 @@ func (s *Service) drain(ctx context.Context, cursor int64, send sse.Sender) (int
 		if len(page) < PageSize {
 			return cursor, sent, nil
 		}
+	}
+	return cursor, sent, nil
+}
+
+func (s *Service) stopped(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	case <-s.signal.Done():
+		return true
+	default:
+		return false
 	}
 }
