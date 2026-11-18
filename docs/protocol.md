@@ -642,7 +642,7 @@ The guarantee is at least once: an event that was sent and not acknowledged come
 ### Rules for a consumer
 
 1. Ignore JSON fields and event types you do not know.
-2. Acknowledge after handling, never a `seq` higher than the last one you received, and acknowledge the `caught_up` `seq`.
+2. Acknowledge after handling the events, and no more than 10 seconds later. Never acknowledge a `seq` higher than the last one you received, or lower than one you already acknowledged: the hub ignores a lower one, but acknowledgements out of order are a bug in the consumer, and the conformance check reports them. Acknowledge the `caught_up` `seq` too.
 3. Wait at least 1 second before reconnecting, and treat a connection that has delivered no byte for 60 seconds as dead. Close a dead connection before you open a new one: if it stays open, the hub sends `replaced` on it when the new one starts.
 4. After a `401`, try again no more than once a minute.
 5. After `replaced`, wait at least 5 minutes before reconnecting, and tell whoever uses the consumer that another program has the same token.
