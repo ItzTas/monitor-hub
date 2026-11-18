@@ -675,7 +675,7 @@ The second form suits a consumer that keeps its token in a keyring or its own co
 The check runs two consumers in turn, each with a new token, and looks for these:
 
 1. The consumer opens `GET /consumer/v1/stream` with `Authorization: Bearer <token>`.
-2. After events 1 to 3 and `caught_up` 3, it acknowledges 3 within 10 seconds. It never acknowledges past the last `seq` sent or below an earlier acknowledgement, and it sends the token and a valid body.
+2. After events 1 to 3 and `caught_up` 3, it acknowledges 3 within 10 seconds. It never acknowledges past the last `seq` sent or below an earlier acknowledgement. It sends the token, a body that holds only `seq`, and either no `Content-Type` or a JSON one such as `application/json`.
 3. An event of an unknown type does not drop the connection: the next event is acknowledged on the same connection.
 4. When the hub closes the stream, the consumer reconnects, and not sooner than 1 second later.
 5. After a `401`, it makes at most one more request in the next 10 seconds.

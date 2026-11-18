@@ -37,6 +37,8 @@ type consumer struct {
 	path                    string
 	streamAuth              func(token string) string
 	ackAuth                 func(token string) string
+	ackMethod               string
+	ackType                 string
 	ackBody                 func(seq int64) string
 	acks                    func(seq int64) []int64
 	dropOnUnknown           bool
@@ -73,6 +75,8 @@ func wellBehaved() consumer {
 		path:           "/consumer/v1/stream",
 		streamAuth:     bearerHeader,
 		ackAuth:        bearerHeader,
+		ackMethod:      http.MethodPost,
+		ackType:        "application/json",
 		ackBody:        func(seq int64) string { return fmt.Sprintf(`{"seq": %d}`, seq) },
 		acks:           func(seq int64) []int64 { return []int64{seq} },
 		reconnectDelay: 300 * time.Millisecond,
@@ -242,11 +246,13 @@ func fetchIcon(ctx context.Context, url string, l *launcher) {
 
 func (c consumer) ack(ctx context.Context, url, token string, seq int64, l *launcher) {
 	for _, n := range c.acks(seq) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+"/consumer/v1/ack", strings.NewReader(c.ackBody(n)))
+		req, err := http.NewRequestWithContext(ctx, c.ackMethod, url+"/consumer/v1/ack", strings.NewReader(c.ackBody(n)))
 		if err != nil {
 			return
 		}
-		req.Header.Set("Content-Type", "application/json")
+		if c.ackType != "" {
+			req.Header.Set("Content-Type", c.ackType)
+		}
 		setAuth(req, c.ackAuth(token))
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -425,22 +431,39 @@ func TestAcksPastTheLastSeqOrBackwardsAreViolations(t *testing.T) {
 	}
 }
 
-func TestAnAckWithoutTheTokenOrWithABadBodyIsReported(t *testing.T) {
+func TestAnAckTheHubRejectsIsReported(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
 		change func(*consumer)
 		want   string
 		reply  string
 	}{
+		"a method other than POST": {
+			change: func(c *consumer) { c.ackMethod = http.MethodPut },
+			want:   "an ack was sent with PUT, want POST",
+			reply:  "ack 3: 405",
+		},
 		"no token": {
 			change: func(c *consumer) { c.ackAuth = noHeader },
 			want:   "an ack did not send the consumer token as a bearer token",
 			reply:  "ack 3: 401",
 		},
+		"a form content type": {
+			change: func(c *consumer) { c.ackType = "application/x-www-form-urlencoded" },
+			want:   "an ack was sent with Content-Type application/x-www-form-urlencoded, want application/json",
+			reply:  "ack 3: 415",
+		},
 		"a seq that is not an integer": {
 			change: func(c *consumer) { c.ackBody = func(seq int64) string { return fmt.Sprintf(`{"seq": "%d"}`, seq) } },
 			want:   `an ack body was not {"seq": <integer>}`,
 			reply:  "ack 3: 422",
+		},
+		"an unknown field": {
+			change: func(c *consumer) {
+				c.ackBody = func(seq int64) string { return fmt.Sprintf(`{"seq": %d, "extra": 1}`, seq) }
+			},
+			want:  `an ack body was not {"seq": <integer>}`,
+			reply: "ack 3: 422",
 		},
 	}
 	for name, tt := range tests {
@@ -457,6 +480,27 @@ func TestAnAckWithoutTheTokenOrWithABadBodyIsReported(t *testing.T) {
 				"no ack reached seq 4 within 200ms after an unknown event type",
 			)
 			expect(t, "first reply", l.acks()[:min(len(l.acks()), 1)], tt.reply)
+		})
+	}
+}
+
+func TestAnAckTheHubAcceptsPasses(t *testing.T) {
+	t.Parallel()
+	tests := map[string]func(*consumer){
+		"no content type":            func(c *consumer) { c.ackType = "" },
+		"a charset parameter":        func(c *consumer) { c.ackType = "application/json; charset=utf-8" },
+		"a +json type":               func(c *consumer) { c.ackType = "application/vnd.consumer+json" },
+		"a content type in capitals": func(c *consumer) { c.ackType = "Application/JSON" },
+		"the field name in capitals": func(c *consumer) { c.ackBody = func(seq int64) string { return fmt.Sprintf(`{"SEQ": %d}`, seq) } },
+	}
+	for name, change := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			c := wellBehaved()
+			change(&c)
+			got, l := runCheck(t, c, quick())
+			expect(t, "violations", got)
+			expect(t, "first reply", l.acks()[:min(len(l.acks()), 1)], `ack 3: 200 {"position":3}`)
 		})
 	}
 }

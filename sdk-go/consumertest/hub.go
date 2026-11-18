@@ -3,6 +3,7 @@ package consumertest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -158,6 +159,7 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *hub) ack(w http.ResponseWriter, r *http.Request, current *run) {
 	if r.Method != http.MethodPost {
+		h.report.add("an ack was sent with %s, want POST", r.Method)
 		w.Header().Set("Allow", http.MethodPost)
 		problem(w, http.StatusMethodNotAllowed, "the ack is sent with POST")
 		return
@@ -165,6 +167,11 @@ func (h *hub) ack(w http.ResponseWriter, r *http.Request, current *run) {
 	if !hasToken(r, current.token) {
 		h.report.add("an ack did not send the consumer token as a bearer token")
 		unauthorized(w)
+		return
+	}
+	if contentType := r.Header.Get("Content-Type"); !isJSON(contentType) {
+		h.report.add("an ack was sent with Content-Type %s, want application/json", contentType)
+		problem(w, http.StatusUnsupportedMediaType, "the body must be application/json")
 		return
 	}
 	seq, ok := readSeq(r.Body)
@@ -261,15 +268,28 @@ func hasToken(r *http.Request, token string) bool {
 	return ok && strings.EqualFold(scheme, "Bearer") && value == token
 }
 
-func readSeq(body io.Reader) (int64, bool) {
-	raw, err := io.ReadAll(io.LimitReader(body, 1<<10))
-	if err != nil {
-		return 0, false
+func isJSON(contentType string) bool {
+	start := strings.IndexByte(contentType, '+') + 1
+	end := strings.IndexByte(contentType, ';')
+	if end < 0 {
+		end = len(contentType)
 	}
+	if end < start {
+		return false
+	}
+	return slices.Contains([]string{"", "application/json", "json"}, strings.ToLower(contentType[start:end]))
+}
+
+func readSeq(body io.Reader) (int64, bool) {
+	decoder := json.NewDecoder(io.LimitReader(body, 1<<10))
+	decoder.DisallowUnknownFields()
 	var ack struct {
 		Seq *int64 `json:"seq"`
 	}
-	if json.Unmarshal(raw, &ack) != nil || ack.Seq == nil || *ack.Seq < 0 {
+	if decoder.Decode(&ack) != nil || ack.Seq == nil || *ack.Seq < 0 {
+		return 0, false
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return 0, false
 	}
 	return *ack.Seq, true
