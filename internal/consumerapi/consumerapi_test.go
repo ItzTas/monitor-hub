@@ -263,6 +263,22 @@ func TestTheContractRequiresAConsumerToken(t *testing.T) {
 	}
 }
 
+func TestTheBearerSchemeIsCaseInsensitive(t *testing.T) {
+	h := newHub(t)
+	token := h.add(t, "desk")
+	for _, scheme := range []string{"bearer", "BEARER"} {
+		header := map[string]string{"Authorization": scheme + " " + token, "Content-Type": "application/json"}
+		resp := h.send(t, http.MethodGet, streamPath, "", header)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("stream with %q = %d, want 200", scheme, resp.StatusCode)
+		}
+		if got := h.call(t, http.MethodPost, "/consumer/v1/ack", `{"seq":0}`, header); got.status != http.StatusOK {
+			t.Errorf("ack with %q = %d %s, want 200", scheme, got.status, got.body)
+		}
+	}
+}
+
 func TestTheStreamStartsAtTheConsumersPosition(t *testing.T) {
 	h := newHub(t)
 	h.store(t, 1, 2)

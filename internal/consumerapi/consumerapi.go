@@ -87,8 +87,8 @@ func Register(mux *http.ServeMux, deps Deps) {
 
 func authenticate(protocol huma.API, service *consumers.Service) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		token, ok := strings.CutPrefix(ctx.Header("Authorization"), "Bearer ")
-		if !ok {
+		scheme, token, _ := strings.Cut(ctx.Header("Authorization"), " ")
+		if !strings.EqualFold(scheme, "Bearer") {
 			unauthorized(protocol, ctx)
 			return
 		}
