@@ -51,6 +51,10 @@ func atSecond(text string) []string {
 	return []string{"settings.json: fields[1]: " + text}
 }
 
+func notValidAtSecond(text string) []string {
+	return []string{"settings.json is not valid: fields[1]: " + text}
+}
+
 func TestSettingsViolations(t *testing.T) {
 	const nameRule = ` does not match ^[A-Z][A-Z0-9_]*$`
 	const reserved = ` is reserved by the hub`
@@ -69,13 +73,13 @@ func TestSettingsViolations(t *testing.T) {
 		{"trailing data", designExample + "{}", []string{"settings.json is not valid: trailing data after the JSON object"}},
 		{"trailing garbage", designExample + "x", []string{"settings.json is not valid: trailing data after the JSON object"}},
 		{"unknown top-level attribute", `{"settings_version":1,"fields":[],"extra":1}`, []string{`settings.json is not valid: json: unknown field "extra"`}},
-		{"unknown attribute", settingsDoc(`{"name":"A","label":"L","type":"string","secert":true}`), []string{`settings.json is not valid: json: unknown field "secert"`}},
-		{"attribute in another case", settingsDoc(`{"name":"A","label":"L","type":"string","Secret":true}`), []string{`settings.json is not valid: json: unknown field "Secret"`}},
+		{"unknown attribute", badSecond(`{"name":"B","label":"L","type":"string","secert":true}`), notValidAtSecond(`json: unknown field "secert"`)},
+		{"attribute in another case", badSecond(`{"name":"B","label":"L","type":"string","Secret":true}`), notValidAtSecond(`json: unknown field "Secret"`)},
 		{"top-level attribute in another case", `{"Settings_Version":1,"fields":[]}`, []string{`settings.json is not valid: json: unknown field "Settings_Version"`}},
-		{"null secret", settingsDoc(`{"name":"A","label":"L","type":"string","secret":null}`), []string{"settings.json is not valid: secret must be true or false"}},
-		{"null required", settingsDoc(`{"name":"A","label":"L","type":"string","required":null}`), []string{"settings.json is not valid: required must be true or false"}},
-		{"null editable", settingsDoc(`{"name":"A","label":"L","type":"string","editable":null}`), []string{"settings.json is not valid: editable must be true or false"}},
-		{"string secret", settingsDoc(`{"name":"A","label":"L","type":"string","secret":"yes"}`), []string{"settings.json is not valid: secret must be true or false"}},
+		{"null secret", badSecond(`{"name":"B","label":"L","type":"string","secret":null}`), notValidAtSecond("secret must be true or false")},
+		{"null required", badSecond(`{"name":"B","label":"L","type":"string","required":null}`), notValidAtSecond("required must be true or false")},
+		{"null editable", badSecond(`{"name":"B","label":"L","type":"string","editable":null}`), notValidAtSecond("editable must be true or false")},
+		{"string secret", badSecond(`{"name":"B","label":"L","type":"string","secret":"yes"}`), notValidAtSecond("secret must be true or false")},
 		{"settings_version 2", `{"settings_version":2,"fields":[]}`, []string{"settings.json: settings_version is 2, want 1"}},
 		{"settings_version 0", `{"settings_version":0,"fields":[]}`, []string{"settings.json: settings_version is 0, want 1"}},
 		{"no settings_version", `{"fields":[]}`, []string{"settings.json: settings_version is missing"}},

@@ -115,7 +115,6 @@ func settingsViolations(data []byte) []string {
 func decodeSettings(data []byte) (settingsDocument, string) {
 	var doc settingsDocument
 	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(&doc); err != nil {
 		return doc, err.Error()
 	}
@@ -148,9 +147,9 @@ func unknownKey(data []byte) string {
 	if err := json.Unmarshal(top["fields"], &fields); err != nil {
 		return ""
 	}
-	for _, field := range fields {
+	for i, field := range fields {
 		if key := firstUnknown(field, fieldKeys); key != "" {
-			return fmt.Sprintf("json: unknown field %q", key)
+			return fmt.Sprintf("fields[%d]: json: unknown field %q", i, key)
 		}
 	}
 	return ""
@@ -166,14 +165,14 @@ func firstUnknown(got map[string]json.RawMessage, known map[string]bool) string 
 }
 
 func badFlag(fields []settingsField) string {
-	for _, f := range fields {
+	for i, f := range fields {
 		flags := []struct {
 			name string
 			raw  json.RawMessage
 		}{{"secret", f.Secret}, {"required", f.Required}, {"editable", f.Editable}}
 		for _, flag := range flags {
 			if _, ok := readFlag(flag.raw, false); !ok {
-				return flag.name + " must be true or false"
+				return fmt.Sprintf("fields[%d]: %s must be true or false", i, flag.name)
 			}
 		}
 	}
