@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -112,7 +113,10 @@ func (s *script) execute(body func(*run) bool) (bool, error) {
 	current := s.hub.begin(token)
 	stop, err := s.launch(s.hub.url, s.tokenFile, token)
 	if err != nil {
-		return false, fmt.Errorf("launch the consumer: %w", err)
+		return false, abandon(stop, err)
+	}
+	if stop == nil {
+		return false, errors.New("launch the consumer: the launcher returned neither a stop function nor an error")
 	}
 	more := body(current)
 	_ = stop()
@@ -254,6 +258,13 @@ func (s *script) count(current *run, answer func(*request)) (int, bool) {
 		}
 		answer(req)
 	}
+}
+
+func abandon(stop func() error, err error) error {
+	if stop != nil {
+		_ = stop()
+	}
+	return fmt.Errorf("launch the consumer: %w", err)
 }
 
 func replace(conn, req *request) *request {

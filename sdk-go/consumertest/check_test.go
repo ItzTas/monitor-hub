@@ -669,16 +669,40 @@ func TestAConsumerThatNeverConnectsStopsTheScript(t *testing.T) {
 	}
 }
 
-func TestALaunchErrorIsAnError(t *testing.T) {
+func TestALaunchThatFailsIsAnError(t *testing.T) {
 	t.Parallel()
 	boom := errors.New("boom")
-	launch := func(string, string, string) (func() error, error) { return nil, boom }
-	got, err := consumertest.Check(t.Context(), launch, quick())
-	if !errors.Is(err, boom) {
-		t.Errorf("Check error = %v, want %v", err, boom)
+	tests := map[string]struct {
+		stop  bool
+		err   error
+		want  string
+		stops int
+	}{
+		"an error":                    {err: boom, want: "launch the consumer: boom"},
+		"an error and a stop":         {stop: true, err: boom, want: "launch the consumer: boom", stops: 1},
+		"neither a stop nor an error": {want: "launch the consumer: the launcher returned neither a stop function nor an error"},
 	}
-	if got != nil {
-		t.Errorf("violations = %q, want none", got)
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			stops := 0
+			launch := func(string, string, string) (func() error, error) {
+				if !tt.stop {
+					return nil, tt.err
+				}
+				return func() error {
+					stops++
+					return nil
+				}, tt.err
+			}
+			got, err := consumertest.Check(t.Context(), launch, quick())
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("Check error = %v, want %s", err, tt.want)
+			}
+			if got != nil || stops != tt.stops {
+				t.Errorf("violations = %q and stops = %d, want none and %d", got, stops, tt.stops)
+			}
+		})
 	}
 }
 
