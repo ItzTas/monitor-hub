@@ -87,6 +87,15 @@ pub struct Event {
     pub payload: ::core::option::Option<::prost_types::Struct>,
 }
 #[allow(clippy::all)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WatchRequest {}
+#[allow(clippy::all)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WatchResponse {
+    #[prost(int64, tag = "1")]
+    pub latest_seq: i64,
+}
+#[allow(clippy::all)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum State {
@@ -171,19 +180,36 @@ pub mod plugin_server {
         ) -> std::result::Result<
             tonic::Response<super::DescribeResponse>,
             tonic::Status,
-        >;
+        > {
+            Err(tonic::Status::unimplemented("Not yet implemented"))
+        }
         async fn status(
             &self,
             request: tonic::Request<super::StatusRequest>,
-        ) -> std::result::Result<tonic::Response<super::StatusResponse>, tonic::Status>;
+        ) -> std::result::Result<tonic::Response<super::StatusResponse>, tonic::Status> {
+            Err(tonic::Status::unimplemented("Not yet implemented"))
+        }
         async fn check(
             &self,
             request: tonic::Request<super::CheckRequest>,
-        ) -> std::result::Result<tonic::Response<super::CheckResponse>, tonic::Status>;
+        ) -> std::result::Result<tonic::Response<super::CheckResponse>, tonic::Status> {
+            Err(tonic::Status::unimplemented("Not yet implemented"))
+        }
         async fn events(
             &self,
             request: tonic::Request<super::EventsRequest>,
-        ) -> std::result::Result<tonic::Response<super::EventsResponse>, tonic::Status>;
+        ) -> std::result::Result<tonic::Response<super::EventsResponse>, tonic::Status> {
+            Err(tonic::Status::unimplemented("Not yet implemented"))
+        }
+        async fn watch(
+            &self,
+            request: tonic::Request<super::WatchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<BoxStream<super::WatchResponse>>,
+            tonic::Status,
+        > {
+            Err(tonic::Status::unimplemented("Not yet implemented"))
+        }
     }
     #[derive(Debug)]
     pub struct PluginServer<T> {
@@ -429,6 +455,52 @@ pub mod plugin_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/monitorhub.plugin.v1.Plugin/Watch" => {
+                    #[allow(non_camel_case_types)]
+                    struct WatchSvc<T: Plugin>(pub Arc<T>);
+                    impl<
+                        T: Plugin,
+                    > tonic::server::ServerStreamingService<super::WatchRequest>
+                    for WatchSvc<T> {
+                        type Response = super::WatchResponse;
+                        type ResponseStream = BoxStream<super::WatchResponse>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::WatchRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Plugin>::watch(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = WatchSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

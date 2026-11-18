@@ -38,6 +38,10 @@ func (f *fakeClient) Check(context.Context, *pluginpb.CheckRequest, ...grpc.Call
 	return &pluginpb.CheckResponse{Accepted: true}, nil
 }
 
+func (f *fakeClient) Watch(context.Context, *pluginpb.WatchRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+	return nil, status.Error(codes.Unimplemented, "method Watch not implemented")
+}
+
 func (f *fakeClient) Events(_ context.Context, req *pluginpb.EventsRequest, _ ...grpc.CallOption) (*pluginpb.EventsResponse, error) {
 	f.calls++
 	if f.eventsErr != nil && (f.failures < 0 || f.calls <= f.failures) {

@@ -12,6 +12,7 @@ service Plugin {
   rpc Status(StatusRequest) returns (StatusResponse);
   rpc Check(CheckRequest) returns (CheckResponse);
   rpc Events(EventsRequest) returns (EventsResponse);
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
 }
 
 message DescribeRequest {}
@@ -78,4 +79,10 @@ message Event {
   string body = 7;
   string url = 8;
   google.protobuf.Struct payload = 9;
+}
+
+message WatchRequest {}
+
+message WatchResponse {
+  int64 latest_seq = 1;
 }

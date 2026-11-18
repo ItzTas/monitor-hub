@@ -687,6 +687,86 @@ func (x *Event) GetPayload() *structpb.Struct {
 	return nil
 }
 
+type WatchRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WatchRequest) Reset() {
+	*x = WatchRequest{}
+	mi := &file_monitorhub_plugin_v1_plugin_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchRequest) ProtoMessage() {}
+
+func (x *WatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_monitorhub_plugin_v1_plugin_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchRequest.ProtoReflect.Descriptor instead.
+func (*WatchRequest) Descriptor() ([]byte, []int) {
+	return file_monitorhub_plugin_v1_plugin_proto_rawDescGZIP(), []int{10}
+}
+
+type WatchResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	LatestSeq     int64                  `protobuf:"varint,1,opt,name=latest_seq,json=latestSeq,proto3" json:"latest_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WatchResponse) Reset() {
+	*x = WatchResponse{}
+	mi := &file_monitorhub_plugin_v1_plugin_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchResponse) ProtoMessage() {}
+
+func (x *WatchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_monitorhub_plugin_v1_plugin_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchResponse.ProtoReflect.Descriptor instead.
+func (*WatchResponse) Descriptor() ([]byte, []int) {
+	return file_monitorhub_plugin_v1_plugin_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *WatchResponse) GetLatestSeq() int64 {
+	if x != nil {
+		return x.LatestSeq
+	}
+	return 0
+}
+
 var File_monitorhub_plugin_v1_plugin_proto protoreflect.FileDescriptor
 
 const file_monitorhub_plugin_v1_plugin_proto_rawDesc = "" +
@@ -727,7 +807,11 @@ const file_monitorhub_plugin_v1_plugin_proto_rawDesc = "" +
 	"\x05title\x18\x06 \x01(\tR\x05title\x12\x12\n" +
 	"\x04body\x18\a \x01(\tR\x04body\x12\x10\n" +
 	"\x03url\x18\b \x01(\tR\x03url\x121\n" +
-	"\apayload\x18\t \x01(\v2\x17.google.protobuf.StructR\apayload*g\n" +
+	"\apayload\x18\t \x01(\v2\x17.google.protobuf.StructR\apayload\"\x0e\n" +
+	"\fWatchRequest\".\n" +
+	"\rWatchResponse\x12\x1d\n" +
+	"\n" +
+	"latest_seq\x18\x01 \x01(\x03R\tlatestSeq*g\n" +
 	"\x05State\x12\x15\n" +
 	"\x11STATE_UNSPECIFIED\x10\x00\x12\x0e\n" +
 	"\n" +
@@ -738,12 +822,13 @@ const file_monitorhub_plugin_v1_plugin_proto_rawDesc = "" +
 	"\bSeverity\x12\x18\n" +
 	"\x14SEVERITY_UNSPECIFIED\x10\x00\x12\x11\n" +
 	"\rSEVERITY_INFO\x10\x01\x12\x13\n" +
-	"\x0fSEVERITY_URGENT\x10\x022\xdf\x02\n" +
+	"\x0fSEVERITY_URGENT\x10\x022\xb3\x03\n" +
 	"\x06Plugin\x12Y\n" +
 	"\bDescribe\x12%.monitorhub.plugin.v1.DescribeRequest\x1a&.monitorhub.plugin.v1.DescribeResponse\x12S\n" +
 	"\x06Status\x12#.monitorhub.plugin.v1.StatusRequest\x1a$.monitorhub.plugin.v1.StatusResponse\x12P\n" +
 	"\x05Check\x12\".monitorhub.plugin.v1.CheckRequest\x1a#.monitorhub.plugin.v1.CheckResponse\x12S\n" +
-	"\x06Events\x12#.monitorhub.plugin.v1.EventsRequest\x1a$.monitorhub.plugin.v1.EventsResponseB5Z3github.com/ItzTas/monitor-hub/sdk/pluginpb;pluginpbb\x06proto3"
+	"\x06Events\x12#.monitorhub.plugin.v1.EventsRequest\x1a$.monitorhub.plugin.v1.EventsResponse\x12R\n" +
+	"\x05Watch\x12\".monitorhub.plugin.v1.WatchRequest\x1a#.monitorhub.plugin.v1.WatchResponse0\x01B5Z3github.com/ItzTas/monitor-hub/sdk/pluginpb;pluginpbb\x06proto3"
 
 var (
 	file_monitorhub_plugin_v1_plugin_proto_rawDescOnce sync.Once
@@ -758,7 +843,7 @@ func file_monitorhub_plugin_v1_plugin_proto_rawDescGZIP() []byte {
 }
 
 var file_monitorhub_plugin_v1_plugin_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_monitorhub_plugin_v1_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_monitorhub_plugin_v1_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_monitorhub_plugin_v1_plugin_proto_goTypes = []any{
 	(State)(0),                    // 0: monitorhub.plugin.v1.State
 	(Severity)(0),                 // 1: monitorhub.plugin.v1.Severity
@@ -772,29 +857,33 @@ var file_monitorhub_plugin_v1_plugin_proto_goTypes = []any{
 	(*EventsRequest)(nil),         // 9: monitorhub.plugin.v1.EventsRequest
 	(*EventsResponse)(nil),        // 10: monitorhub.plugin.v1.EventsResponse
 	(*Event)(nil),                 // 11: monitorhub.plugin.v1.Event
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 13: google.protobuf.Struct
+	(*WatchRequest)(nil),          // 12: monitorhub.plugin.v1.WatchRequest
+	(*WatchResponse)(nil),         // 13: monitorhub.plugin.v1.WatchResponse
+	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),       // 15: google.protobuf.Struct
 }
 var file_monitorhub_plugin_v1_plugin_proto_depIdxs = []int32{
 	4,  // 0: monitorhub.plugin.v1.DescribeResponse.kinds:type_name -> monitorhub.plugin.v1.EventKind
 	0,  // 1: monitorhub.plugin.v1.StatusResponse.state:type_name -> monitorhub.plugin.v1.State
-	12, // 2: monitorhub.plugin.v1.StatusResponse.last_check_started_at:type_name -> google.protobuf.Timestamp
-	12, // 3: monitorhub.plugin.v1.StatusResponse.last_success_at:type_name -> google.protobuf.Timestamp
-	12, // 4: monitorhub.plugin.v1.StatusResponse.next_check_at:type_name -> google.protobuf.Timestamp
+	14, // 2: monitorhub.plugin.v1.StatusResponse.last_check_started_at:type_name -> google.protobuf.Timestamp
+	14, // 3: monitorhub.plugin.v1.StatusResponse.last_success_at:type_name -> google.protobuf.Timestamp
+	14, // 4: monitorhub.plugin.v1.StatusResponse.next_check_at:type_name -> google.protobuf.Timestamp
 	11, // 5: monitorhub.plugin.v1.EventsResponse.events:type_name -> monitorhub.plugin.v1.Event
 	1,  // 6: monitorhub.plugin.v1.Event.severity:type_name -> monitorhub.plugin.v1.Severity
-	12, // 7: monitorhub.plugin.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
-	13, // 8: monitorhub.plugin.v1.Event.payload:type_name -> google.protobuf.Struct
+	14, // 7: monitorhub.plugin.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
+	15, // 8: monitorhub.plugin.v1.Event.payload:type_name -> google.protobuf.Struct
 	2,  // 9: monitorhub.plugin.v1.Plugin.Describe:input_type -> monitorhub.plugin.v1.DescribeRequest
 	5,  // 10: monitorhub.plugin.v1.Plugin.Status:input_type -> monitorhub.plugin.v1.StatusRequest
 	7,  // 11: monitorhub.plugin.v1.Plugin.Check:input_type -> monitorhub.plugin.v1.CheckRequest
 	9,  // 12: monitorhub.plugin.v1.Plugin.Events:input_type -> monitorhub.plugin.v1.EventsRequest
-	3,  // 13: monitorhub.plugin.v1.Plugin.Describe:output_type -> monitorhub.plugin.v1.DescribeResponse
-	6,  // 14: monitorhub.plugin.v1.Plugin.Status:output_type -> monitorhub.plugin.v1.StatusResponse
-	8,  // 15: monitorhub.plugin.v1.Plugin.Check:output_type -> monitorhub.plugin.v1.CheckResponse
-	10, // 16: monitorhub.plugin.v1.Plugin.Events:output_type -> monitorhub.plugin.v1.EventsResponse
-	13, // [13:17] is the sub-list for method output_type
-	9,  // [9:13] is the sub-list for method input_type
+	12, // 13: monitorhub.plugin.v1.Plugin.Watch:input_type -> monitorhub.plugin.v1.WatchRequest
+	3,  // 14: monitorhub.plugin.v1.Plugin.Describe:output_type -> monitorhub.plugin.v1.DescribeResponse
+	6,  // 15: monitorhub.plugin.v1.Plugin.Status:output_type -> monitorhub.plugin.v1.StatusResponse
+	8,  // 16: monitorhub.plugin.v1.Plugin.Check:output_type -> monitorhub.plugin.v1.CheckResponse
+	10, // 17: monitorhub.plugin.v1.Plugin.Events:output_type -> monitorhub.plugin.v1.EventsResponse
+	13, // 18: monitorhub.plugin.v1.Plugin.Watch:output_type -> monitorhub.plugin.v1.WatchResponse
+	14, // [14:19] is the sub-list for method output_type
+	9,  // [9:14] is the sub-list for method input_type
 	9,  // [9:9] is the sub-list for extension type_name
 	9,  // [9:9] is the sub-list for extension extendee
 	0,  // [0:9] is the sub-list for field type_name
@@ -811,7 +900,7 @@ func file_monitorhub_plugin_v1_plugin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_monitorhub_plugin_v1_plugin_proto_rawDesc), len(file_monitorhub_plugin_v1_plugin_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   10,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

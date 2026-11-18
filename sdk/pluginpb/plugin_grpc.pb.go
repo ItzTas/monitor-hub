@@ -23,6 +23,7 @@ const (
 	Plugin_Status_FullMethodName   = "/monitorhub.plugin.v1.Plugin/Status"
 	Plugin_Check_FullMethodName    = "/monitorhub.plugin.v1.Plugin/Check"
 	Plugin_Events_FullMethodName   = "/monitorhub.plugin.v1.Plugin/Events"
+	Plugin_Watch_FullMethodName    = "/monitorhub.plugin.v1.Plugin/Watch"
 )
 
 // PluginClient is the client API for Plugin service.
@@ -33,6 +34,7 @@ type PluginClient interface {
 	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
 	Check(ctx context.Context, in *CheckRequest, opts ...grpc.CallOption) (*CheckResponse, error)
 	Events(ctx context.Context, in *EventsRequest, opts ...grpc.CallOption) (*EventsResponse, error)
+	Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchResponse], error)
 }
 
 type pluginClient struct {
@@ -83,6 +85,25 @@ func (c *pluginClient) Events(ctx context.Context, in *EventsRequest, opts ...gr
 	return out, nil
 }
 
+func (c *pluginClient) Watch(ctx context.Context, in *WatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Plugin_ServiceDesc.Streams[0], Plugin_Watch_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchRequest, WatchResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Plugin_WatchClient = grpc.ServerStreamingClient[WatchResponse]
+
 // PluginServer is the server API for Plugin service.
 // All implementations must embed UnimplementedPluginServer
 // for forward compatibility.
@@ -91,6 +112,7 @@ type PluginServer interface {
 	Status(context.Context, *StatusRequest) (*StatusResponse, error)
 	Check(context.Context, *CheckRequest) (*CheckResponse, error)
 	Events(context.Context, *EventsRequest) (*EventsResponse, error)
+	Watch(*WatchRequest, grpc.ServerStreamingServer[WatchResponse]) error
 	mustEmbedUnimplementedPluginServer()
 }
 
@@ -112,6 +134,9 @@ func (UnimplementedPluginServer) Check(context.Context, *CheckRequest) (*CheckRe
 }
 func (UnimplementedPluginServer) Events(context.Context, *EventsRequest) (*EventsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Events not implemented")
+}
+func (UnimplementedPluginServer) Watch(*WatchRequest, grpc.ServerStreamingServer[WatchResponse]) error {
+	return status.Error(codes.Unimplemented, "method Watch not implemented")
 }
 func (UnimplementedPluginServer) mustEmbedUnimplementedPluginServer() {}
 func (UnimplementedPluginServer) testEmbeddedByValue()                {}
@@ -206,6 +231,17 @@ func _Plugin_Events_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Plugin_Watch_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(PluginServer).Watch(m, &grpc.GenericServerStream[WatchRequest, WatchResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Plugin_WatchServer = grpc.ServerStreamingServer[WatchResponse]
+
 // Plugin_ServiceDesc is the grpc.ServiceDesc for Plugin service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -230,6 +266,12 @@ var Plugin_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Plugin_Events_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Watch",
+			Handler:       _Plugin_Watch_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "monitorhub/plugin/v1/plugin.proto",
 }

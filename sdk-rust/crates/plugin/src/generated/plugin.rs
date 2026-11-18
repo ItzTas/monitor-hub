@@ -18,7 +18,9 @@ pub mod grpc_controller_server {
         async fn shutdown(
             &self,
             request: tonic::Request<super::Empty>,
-        ) -> std::result::Result<tonic::Response<super::Empty>, tonic::Status>;
+        ) -> std::result::Result<tonic::Response<super::Empty>, tonic::Status> {
+            Err(tonic::Status::unimplemented("Not yet implemented"))
+        }
     }
     #[derive(Debug)]
     pub struct GrpcControllerServer<T> {
