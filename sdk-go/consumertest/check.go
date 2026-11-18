@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -284,7 +283,7 @@ func newToken() (string, error) {
 }
 
 func scripted(seq int64) notification {
-	bell := icon{Emoji: "🔔", Image: iconsPrefix + strings.Repeat("0", 64) + ".png"}
+	bell := icon{Emoji: "🔔", Image: iconPath}
 	return notification{
 		Seq:         seq,
 		Plugin:      "conformance",

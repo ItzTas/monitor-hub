@@ -1,14 +1,21 @@
 package consumertest
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +27,11 @@ const (
 	healthPath   = "/healthz"
 	iconsPrefix  = "/icons/"
 	invalidToken = "missing or invalid consumer token"
+)
+
+var (
+	iconPNG  = drawIcon()
+	iconPath = iconsPrefix + fingerprint(iconPNG) + ".png"
 )
 
 type action func(http.ResponseWriter, *http.ResponseController) error
@@ -148,7 +160,7 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.handlers.Done()
 	if strings.HasPrefix(r.URL.Path, iconsPrefix) {
-		http.NotFound(w, r)
+		serveIcon(w, r)
 		return
 	}
 	routes := map[string]func(http.ResponseWriter, *http.Request, *run){
@@ -175,6 +187,19 @@ func (h *hub) health(w http.ResponseWriter, r *http.Request, current *run) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = io.WriteString(w, "{\"ok\":true}\n")
+}
+
+func serveIcon(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != iconPath || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		http.NotFound(w, r)
+		return
+	}
+	header := w.Header()
+	header.Set("Content-Type", "image/png")
+	header.Set("Cache-Control", "public, max-age=31536000, immutable")
+	header.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	header.Set("Content-Length", strconv.Itoa(len(iconPNG)))
+	_, _ = w.Write(iconPNG)
 }
 
 func (h *hub) ack(w http.ResponseWriter, r *http.Request, current *run) {
@@ -320,6 +345,19 @@ func masked(path, token string) string {
 		return path
 	}
 	return strings.ReplaceAll(path, token, "<token>")
+}
+
+func drawIcon() []byte {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.NRGBA{R: 0xf5, G: 0xb7, B: 0x00, A: 0xff})
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, img)
+	return buf.Bytes()
+}
+
+func fingerprint(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func unauthorized(w http.ResponseWriter) {

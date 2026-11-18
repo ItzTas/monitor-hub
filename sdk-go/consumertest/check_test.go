@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"io/fs"
 	"net/http"
@@ -21,7 +24,10 @@ import (
 	"github.com/ItzTas/monitor-hub/sdk-go/consumertest"
 )
 
-const forever = time.Duration(-1)
+const (
+	forever    = time.Duration(-1)
+	servedIcon = "icon: 200 image/png; public, max-age=31536000, immutable; default-src 'none'; sandbox; named by its sha256: true; png: true"
+)
 
 type ending int
 
@@ -227,7 +233,7 @@ func (c consumer) read(ctx context.Context, url, token string, body io.Reader, l
 			caughtUp = true
 			c.ack(ctx, url, token, msg.Seq, l)
 		case "notification":
-			fetchIcon(ctx, url+msg.Icon.Image, l)
+			fetchIcon(ctx, url, msg.Icon.Image, l)
 			if caughtUp {
 				c.ack(ctx, url, token, msg.Seq, l)
 			}
@@ -251,8 +257,8 @@ func parse(lines []string) (string, message) {
 	return values["event"], msg
 }
 
-func fetchIcon(ctx context.Context, url string, l *launcher) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func fetchIcon(ctx context.Context, url, path string, l *launcher) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+path, nil)
 	if err != nil {
 		return
 	}
@@ -260,8 +266,17 @@ func fetchIcon(ctx context.Context, url string, l *launcher) {
 	if err != nil {
 		return
 	}
+	body, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	l.note(fmt.Sprintf("icon: %d", resp.StatusCode))
+	if err != nil {
+		return
+	}
+	sum := sha256.Sum256(body)
+	_, decodeErr := png.Decode(bytes.NewReader(body))
+	h := resp.Header
+	l.note(fmt.Sprintf("icon: %d %s; %s; %s; named by its sha256: %t; png: %t",
+		resp.StatusCode, h.Get("Content-Type"), h.Get("Cache-Control"), h.Get("Content-Security-Policy"),
+		path == "/icons/"+hex.EncodeToString(sum[:])+".png", decodeErr == nil))
 }
 
 func (c consumer) ack(ctx context.Context, url, token string, seq int64, l *launcher) {
@@ -321,8 +336,8 @@ func expect(t *testing.T, name string, got []string, want ...string) {
 	}
 }
 
-func notificationFrame(seq int) string {
-	icon := `{"emoji":"🔔","image":"/icons/` + strings.Repeat("0", 64) + `.png"}`
+func notificationFrame(seq int, image string) string {
+	icon := `{"emoji":"🔔","image":"` + image + `"}`
 	return fmt.Sprintf(`id: %d
 event: notification
 data: {"seq":%d,"plugin":"conformance","display_name":"Consumer conformance","kind":"check","urgent":false,"title":"Conformance notification %d","body":"Sent by the consumer conformance check.","url":"https://example.com/conformance/%d","occurred_at":"2026-11-17T12:00:00Z","detected_at":"2026-11-17T12:00:14.25Z","icon":%s,"plugin_icon":%s}`, seq, seq, seq, seq, icon, icon)
@@ -358,15 +373,16 @@ func TestAWellBehavedConsumerPasses(t *testing.T) {
 func TestAWellBehavedConsumerReceivesTheScript(t *testing.T) {
 	t.Parallel()
 	_, l := runCheck(t, wellBehaved(), quick())
+	image := regexp.MustCompile(`/icons/[0-9a-f]{64}\.png`).FindString(strings.Join(l.transcript, "\n"))
 	expect(t, "transcript", l.transcript,
 		"stream: 200 text/event-stream",
-		notificationFrame(1), "icon: 404",
-		notificationFrame(2), "icon: 404",
-		notificationFrame(3), "icon: 404",
+		notificationFrame(1, image), servedIcon,
+		notificationFrame(2, image), servedIcon,
+		notificationFrame(3, image), servedIcon,
 		"id: 3\nevent: caught_up\ndata: {\"seq\":3,\"backlog\":3}",
 		`ack 3: 200 {"position":3}`,
 		"event: future_thing\ndata: {\"x\":1}",
-		notificationFrame(4), "icon: 404",
+		notificationFrame(4, image), servedIcon,
 		`ack 4: 200 {"position":4}`,
 		"stream: 401 Bearer",
 		"stream: 200 text/event-stream",
