@@ -89,7 +89,10 @@ func TestRunPollsEachPluginOnItsOwn(t *testing.T) {
 	pool := coretest.Pool(t)
 	gate := make(chan struct{})
 	a := plugin("a", numbered(1, 2)...)
+	entered := make(chan struct{})
+	var once sync.Once
 	a.respond = func(ctx context.Context, req *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
+		once.Do(func() { close(entered) })
 		select {
 		case <-gate:
 		case <-ctx.Done():
@@ -109,6 +112,7 @@ func TestRunPollsEachPluginOnItsOwn(t *testing.T) {
 	if got := r.nextPoll(t); got.name != "b" || got.req != (pollRequest{full: true}) {
 		t.Fatalf("second poll = %+v, want b with a full request", got)
 	}
+	waitFor(t, entered, "the first Events call of a")
 	if inFlight := a.eventsRunning.Load(); inFlight != 1 {
 		t.Fatalf("Events calls of a in flight = %d, want 1", inFlight)
 	}
