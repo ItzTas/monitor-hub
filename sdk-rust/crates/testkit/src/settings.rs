@@ -123,7 +123,7 @@ fn answer_violation(finished: &Finished, declared: Option<&BTreeSet<&str>>) -> R
     if let Some(index) = answer
         .problems
         .iter()
-        .position(|problem| problem.message.is_empty())
+        .position(|problem| problem.message.trim().is_empty())
     {
         return Err(format!(
             "validate-settings answer is invalid: problem {index} has an empty message"

@@ -275,6 +275,13 @@ fn misbehaving_validators_are_reported() {
             )],
         ),
         Case::new(
+            "blank message",
+            r#"printf '{"problems":[{"name":"X","message":" \\t"}]}'; exit 1"#,
+            vec![Want::Exact(
+                "validate-settings answer is invalid: problem 0 has an empty message",
+            )],
+        ),
+        Case::new(
             "empty message with code 0",
             r#"echo '{"problems":[{"name":"X","message":""}]}'"#,
             vec![Want::Exact(

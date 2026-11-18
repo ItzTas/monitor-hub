@@ -167,6 +167,7 @@ func TestConformanceReportsValidatorViolations(t *testing.T) {
 		"no-problems":              {want: "validate-settings answer is invalid: problems is missing"},
 		"wrong-type":               {want: "validate-settings answer is invalid: ", prefix: true},
 		"no-message":               {want: "validate-settings answer is invalid: problem 0 has no message"},
+		"blank-message":            {want: "validate-settings answer is invalid: problem 0 has an empty message"},
 		"empty-message":            {want: "validate-settings answer is invalid: problem 0 has an empty message"},
 		"mismatch":                 {want: "validate-settings exited with code 0 but listed problems"},
 		"unlisted":                 {want: "validate-settings exited with code 1 but listed no problems"},

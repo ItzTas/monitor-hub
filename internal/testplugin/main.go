@@ -73,6 +73,7 @@ func validateSettings() int {
 		"no-problems":              {`{}`, 0},
 		"wrong-type":               {`{"problems":"none"}`, 0},
 		"no-message":               {`{"problems":[{"name":"EVENTS"}]}`, 1},
+		"blank-message":            {`{"problems":[{"name":"EVENTS","message":" \t"}]}`, 1},
 		"empty-message":            {`{"problems":[{"name":"EVENTS","message":""}]}`, 1},
 		"mismatch":                 {`{"problems":[{"name":"EVENTS","message":"set EVENTS"}]}`, 0},
 		"unlisted":                 {noProblems, 1},

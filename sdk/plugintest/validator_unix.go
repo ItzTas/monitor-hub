@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -166,7 +167,7 @@ func readAnswer(stdout []byte) ([]validatorProblem, string) {
 	if i := slices.IndexFunc(problems, func(p validatorProblem) bool { return p.Message == nil }); i >= 0 {
 		return nil, invalid + fmt.Sprintf("problem %d has no message", i)
 	}
-	if i := slices.IndexFunc(problems, func(p validatorProblem) bool { return *p.Message == "" }); i >= 0 {
+	if i := slices.IndexFunc(problems, func(p validatorProblem) bool { return strings.TrimSpace(*p.Message) == "" }); i >= 0 {
 		return nil, invalid + fmt.Sprintf("problem %d has an empty message", i)
 	}
 	return problems, ""
