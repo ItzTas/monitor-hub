@@ -11,7 +11,7 @@ The process model comes from [hashicorp/go-plugin](https://github.com/hashicorp/
 1. The hub starts your command. Its working directory is the plugin directory.
 2. Your process checks the magic cookie, opens a gRPC server on a Unix socket, and prints one handshake line on stdout.
 3. The hub reads the line, connects to the socket, and checks health.
-4. From then on the hub calls `Describe`, `Status`, `Check` and `Events` whenever it wants.
+4. From then on the hub calls `Describe`, `Status`, `Check` and `Events` whenever it wants, and calls `Watch` to learn when to poll (see [`Watch`](#watch)).
 5. On shutdown the hub asks your process to exit and kills it if it does not.
 
 The plugin runs inside the hub's container. It must serve on a local socket only, never on a network interface.
@@ -139,7 +139,16 @@ The hub starts each plugin in its own process group and kills that whole group o
 
 ### How the hub calls a plugin
 
-The hub polls every plugin every 15 seconds. Each poll calls `Describe` first. When `Describe` fails, or returns a `name` other than the plugin's name in `plugin.json`, the hub logs a warning and skips the rest of that poll. Otherwise it calls `Status` and reads `Events` at the same time. Each of these calls has a 30-second time limit.
+The hub polls each plugin on its own, one poll at a time, so a slow plugin does not delay the others. Each poll calls `Describe` first. When `Describe` fails, or returns a `name` other than the plugin's name in `plugin.json`, the hub logs a warning and skips the rest of that poll. Otherwise it calls `Status` and reads `Events` at the same time, or calls only `Status` when the poll does not need events (see the list below). Each of these calls has a 30-second time limit.
+
+The hub polls a plugin:
+
+- Right after the plugin's process starts: when the first [`Watch`](#watch) signal arrives, or when `Watch` answers `UNIMPLEMENTED` or fails.
+- On every `Watch` signal. It calls `Status` every time. It reads `Events` only on the first signal of a `Watch` call, while the plugin's baseline is not complete (see [The first read is the baseline](#the-first-read-is-the-baseline)), or when the signal's `latest_seq` is greater than the highest `seq` the hub has stored for the plugin.
+- 15 seconds after the previous poll ends, when the plugin does not implement `Watch` or its `Watch` call is down.
+- Every 5 minutes while `Watch` is up, counted from the end of the last full poll. A full poll reads `Events` whatever `latest_seq` says: the poll after the first signal of a call is one, and so is this 5-minute poll. The polls that follow later signals, heartbeats included, follow the rule of the previous item and do not postpone the 5-minute poll.
+
+Requests that arrive while a poll runs, for example a burst of signals, become one more poll. It starts 250 ms after the running poll ends, and it reads `Events` when any of the merged requests needed them.
 
 The hub calls `Plugin.Check` (the `Check` of `monitorhub.plugin.v1.Plugin`, not the health service's `Check` from [Startup](#3-serve-the-grpc-services)) only when someone asks it, through the hub's API, to run a cycle now. That call has a 10-second time limit.
 
@@ -173,9 +182,39 @@ Ask the plugin to run a cycle now. It must return immediately and not wait for t
 
 Return events the hub has not stored yet. See the next section for the rules.
 
+### `Watch`
+
+`Watch` is optional. It lets the plugin ask the hub to poll now, so a notification goes out as soon as the plugin records an event instead of up to 15 seconds later. The hub sends an empty `WatchRequest` and reads a stream of `WatchResponse` messages. Each message is a signal. It carries `latest_seq` and nothing else: no state and no event. The hub reads those through its usual poll (see [How the hub calls a plugin](#how-the-hub-calls-a-plugin)).
+
+A plugin that implements `Watch` follows these rules:
+
+- Send a signal as soon as the call starts, with the highest `seq` the plugin has issued, or 0 when it has issued none.
+- Send a signal after every write of events, with the highest `seq` written. Send it once the write is committed, never before the commit.
+- Send a signal when the answer `Status` would give changes, for example when the plugin pauses, resumes or starts failing.
+- Send a signal at least every 30 seconds, with the same `latest_seq` when nothing changed. This heartbeat tells the hub that the call is alive.
+- Signals may be merged. When several are due before the previous one has gone out, send one, with the newest `latest_seq`.
+- `latest_seq` is a hint. The hub uses it only to decide whether to read `Events`, and it may be greater than what `Events` returns at that moment, for example while the plugin holds events back during the first read (see [Events recorded before the first read ends](#events-recorded-before-the-first-read-ends)).
+- Keep the call open for as long as the process runs. It ends when the hub cancels it or the plugin shuts down.
+
+The hub reads `Events` after a signal only when its `latest_seq` is greater than the position the hub has stored. So after recording events, signal with their `seq`. A signal that repeats the old `latest_seq` only makes the hub read `Status` again.
+
+A plugin that does not implement `Watch` answers `UNIMPLEMENTED`, and nothing else changes for it: the hub polls it every 15 seconds. `protocol_version` stays `1` in both cases.
+
+What the hub does with the call:
+
+- When `Watch` answers `UNIMPLEMENTED` before its first signal, the hub logs `the plugin has no Watch; polling it every 15s`, polls at once and then every 15 seconds. It does not call `Watch` again until the plugin's process restarts.
+- On the first signal of a call, the hub logs `watching a plugin` and polls.
+- When 90 seconds pass without a signal, the hub cancels the call, polls at once, goes back to polling every 15 seconds, and opens `Watch` again after a delay.
+- Any other error, and the end of the call, are handled the same way. For these and for the 90 seconds of silence, the hub logs a warning, `the plugin's Watch stopped; polling it every 15s`, with the error and the delay.
+- The delay before the hub opens `Watch` again grows: 1 second, 5 seconds, 30 seconds, then 2 minutes for every further attempt. It goes back to 1 second after a call that sent at least one signal, and when the plugin's process changes.
+- When the plugin's process restarts, the hub cancels the old call and opens `Watch` on the new process.
+- A signal that comes early, twice or never changes only when the hub polls, never what it stores. When a signal announces a `seq` that `Events` does not return yet, the hub reads `Events`, stores nothing and keeps its position. The next signal, or the 5-minute poll, reads again.
+
+With the Rust SDK, use `Notifier` and `serve_with_notifier` (see [Signalling the hub](../sdk-rust/README.md#signalling-the-hub)). In Go, implement `Watch(*pluginpb.WatchRequest, grpc.ServerStreamingServer[pluginpb.WatchResponse]) error` on the server type that embeds `pluginpb.UnimplementedPluginServer`. Without it, the embedded method answers `UNIMPLEMENTED`. Return when `stream.Context()` is done.
+
 ## Scheduling
 
-The plugin schedules its own cycles. The hub never tells it when to run, except through `Check`. The hub only pulls events and status.
+The plugin schedules its own cycles. The hub never tells it when to run, except through `Check`. The hub only pulls events and status, and a plugin can ask it to pull now through [`Watch`](#watch).
 
 State that belongs to the monitor, such as the processes already seen or the editions already read, stays inside the plugin. The hub stores events, deliveries and status.
 
@@ -206,7 +245,7 @@ The other `Event` fields. Two are required, and different parts enforce them: th
 
 The baseline is the hub's whole first read of a plugin it has not read to the end before: a new plugin, or one whose stored position was reset. It covers every `Events` page from `after = 0` up to the first page shorter than 500. The events of that read are stored for history and are never notified. The baseline ends when a read reaches its short page without an error; if a read fails halfway, the next poll goes on reading as part of the baseline. Everything stored after that is a candidate for a notification.
 
-The first read happens on the hub's first poll after the plugin is up. The hub polls once when it starts and then 15 seconds after each poll ends, and a poll skips any plugin the hub has not connected to yet. A poll reads every plugin at the same time and ends only when the slowest one is done, and each call it makes may take up to 30 seconds. So the first read usually starts about 15 seconds after the plugin's handshake, and later while another plugin's poll is slow.
+The first read happens on the hub's first poll after the plugin is up. That poll comes right after the plugin's process starts: when the first `Watch` signal arrives, or when `Watch` answers `UNIMPLEMENTED` (see [How the hub calls a plugin](#how-the-hub-calls-a-plugin)). The hub polls each plugin on its own, so a slow poll of another plugin does not delay it. Each call the poll makes may take up to 30 seconds.
 
 This has one consequence for plugins. If your plugin cannot read its events yet, because it is not logged in or its database is not ready, **fail the `Events` call with gRPC status `UNAVAILABLE`**. Do not answer with an empty list. An empty answer is a success, so it completes the baseline, and every event that shows up later gets notified as if it were new.
 
@@ -222,7 +261,7 @@ The recommended behavior, which both first-party plugins, `diario` and `sei`, fo
 2. Until one `Events` call has answered OK with a page shorter than its `limit`, return only events with a `seq` at or below that value. The newer ones do not count as available yet, so the page rule above still holds.
 3. After that call, return every event as usual.
 
-The first read then holds only what existed before the plugin started. Events recorded after the start reach the hub on its next poll, about 15 seconds later, and are announced. On a new database, where nothing was issued before the start, everything the plugin records, a welcome event included, is announced on that second read. When the hub already knows the plugin, holding back costs one poll.
+The first read then holds only what existed before the plugin started. Events recorded after the start reach the hub on the next poll, and are announced. That poll comes right after the plugin's next `Watch` signal, a heartbeat included, so within 30 seconds; without `Watch`, within 15 seconds. On a new database, where nothing was issued before the start, everything the plugin records, a welcome event included, is announced on that second read. When the hub already knows the plugin, holding back costs one poll.
 
 What this does not cover:
 
@@ -486,6 +525,7 @@ The suite checks that:
 - `Events` after the last `seq` is empty, and `Events` after the first `seq` equals the first list without its first event.
 - When the first list holds at least two events, `Events(after = 0, limit = 1)` returns exactly the first event, and `Events(after = 0, limit = 0)` returns at most 100 events.
 - `Check` succeeds.
+- When the plugin implements `Watch`, the first signal arrives within 5 seconds, no signal has a negative `latest_seq`, and the call is still open 1 second after the first signal. A plugin that answers `UNIMPLEMENTED` passes without this check.
 
 With `-plugin-dir`, when `DIR` holds `settings.json`, the suite also checks that:
 
@@ -494,13 +534,15 @@ With `-plugin-dir`, when `DIR` holds `settings.json`, the suite also checks that
 
 When `DIR` has no `settings.json`, the suite checks nothing more and does not run the validator.
 
-The checks are limited to 30 seconds plus `-ready-timeout`. Starting the plugin and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. The validator runs earlier still, under its own 5-second limit. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
+The checks are limited to 30 seconds plus `-ready-timeout`. The `Watch` check runs last and fits inside that limit: it takes at most 6 seconds, 5 for the first signal and 1 for the call to stay open. When the limit runs out during it, the check reports `Watch` as failed. Starting the plugin and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. The validator runs earlier still, under its own 5-second limit. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
 
 The Rust SDK's testkit runs this command from `cargo test`. See [`sdk-rust/README.md`](../sdk-rust/README.md).
 
 ## Writing a plugin without an SDK
 
 Generate the stubs from `plugin.proto` with your language's protoc plugin. Pin the generator to a version no newer than the protobuf and gRPC runtimes the plugin ships with, because protobuf refuses to import generated code that is newer than its runtime. [`examples/python-plugin`](../examples/python-plugin) shows this for Python.
+
+`Watch` is a server-streaming call. To implement it, your language's gRPC generator has to support those; otherwise leave `Watch` out. A server that does not implement the method answers `UNIMPLEMENTED`, which the hub accepts: the Python example's stubs come from a `plugin.proto` without `Watch`, and it passes the conformance suite.
 
 ## Checklist
 
@@ -513,6 +555,7 @@ Generate the stubs from `plugin.proto` with your language's protoc plugin. Pin t
 - Return exactly `min(limit, available)` events from `Events`, with 100 as the default limit.
 - Fail `Events` with `UNAVAILABLE` while the plugin cannot read yet, and keep answering `Describe`, `Status` and `Check`.
 - Recommended: until the first short page, return only events issued before the plugin started (see [Events recorded before the first read ends](#events-recorded-before-the-first-read-ends)).
+- Optional: implement `Watch`: a signal at once, after every committed write and every status change, and at least every 30 seconds; never before the commit.
 - Implement `plugin.GRPCController/Shutdown`, or be ready to be killed after 2 seconds.
 - Give every event a non-empty `title` and an `occurred_at`, and pass `plugin-conformance`.
 - If you ship `settings.json`, answer `validate-settings` and keep both in step with the code.

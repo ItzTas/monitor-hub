@@ -226,6 +226,87 @@ Pick this shape when preparation can take longer than the budget, for example a 
 
 When preparation fails, log the error, keep reporting it through `status`, and retry in the task if retrying can help. In the conformance test, set `ready_timeout` long enough to cover preparation.
 
+## Signalling the hub
+
+A plugin started with `serve` answers [`Watch`](../docs/protocol.md#watch) with `UNIMPLEMENTED`, and the hub polls it every 15 seconds. A plugin started with `serve_with_notifier` tells the hub when to poll, so a notification goes out as soon as the plugin records an event:
+
+```rust
+use std::process::ExitCode;
+use std::time::Duration;
+
+use monitor_hub_plugin::{
+    NOT_LAUNCHED_BY_HUB, Notifier, ServeError, launched_by_hub, logging, serve_with_notifier,
+};
+
+async fn run_cycles(notifier: Notifier) {
+    loop {
+        notifier.status_changed();
+        if let Some(seq) = check_and_record().await {
+            notifier.notify(seq);
+        }
+        notifier.status_changed();
+        tokio::time::sleep(Duration::from_secs(30 * 60)).await;
+    }
+}
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    if !launched_by_hub() {
+        eprintln!("{NOT_LAUNCHED_BY_HUB}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(err) = logging::init("info") {
+        eprintln!("cannot start logging: {err}");
+        return ExitCode::FAILURE;
+    }
+    let notifier = Notifier::new();
+    notifier.notify(highest_issued_seq().await);
+    tokio::spawn(run_cycles(notifier.clone()));
+    match serve_with_notifier(Ping, notifier).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,
+        Err(err) => {
+            tracing::error!(error = &err as &dyn std::error::Error, "serve failed");
+            ExitCode::FAILURE
+        }
+    }
+}
+```
+
+`Ping` is the plugin from [A minimal plugin](#a-minimal-plugin). `check_and_record` and `highest_issued_seq` stand for your own code. The first runs a cycle and returns the highest `seq` it committed, or `None` when it recorded nothing. The second returns the highest `seq` the plugin has issued so far, or 0. The cycles start only after the cookie check, so a manual run does no work (see [`launched_by_hub`](#launched_by_hub)).
+
+- `Notifier::new()` creates the notifier. Give a clone to every part of the plugin that records events or changes what `status` answers. All clones share one value.
+- Call `notify(seq)` once before `serve_with_notifier`, with the highest `seq` the plugin has issued. The first signal of every `Watch` call carries the current value.
+- Call `notify(seq)` after each write of events is committed, with the highest `seq` written. Never call it before the commit. The notifier keeps the highest value it was given, so a lower `seq` does not lower it, and every call sends a signal.
+- Call `status_changed()` when what `status` answers changes, for example when a cycle starts or ends, fails, or recovers. It sends a signal with the same `latest_seq`.
+- After recording events, call `notify(seq)`, not `status_changed()`. The hub reads `Events` only when `latest_seq` is greater than the position it has stored, so a signal with the old value only refreshes the status.
+
+`serve_with_notifier(plugin, notifier)` does everything `serve` does and answers `Watch` from the notifier. The SDK sends the first signal as soon as the hub opens the call. While the hub reads slowly, signals that pile up go out as one, with the newest `latest_seq`. When 30 seconds pass without a signal, the SDK sends a heartbeat. When the plugin shuts down, it ends every open `Watch` call.
+
+`notify` and `status_changed` never block and never fail, even when no one is watching. A plugin built with this SDK therefore runs on an older hub, which never calls `Watch` and polls every 15 seconds.
+
+You can also implement `watch` on your `Plugin` yourself, returning a `tonic::codegen::BoxStream<WatchResponse>`, and call `serve`. The rules in the [protocol document](../docs/protocol.md#watch) then apply to your code.
+
+In tests, `notifier.subscribe()` returns `Signals`. `latest_seq()` returns the current value and marks it seen. `changed().await` waits for a signal not yet seen and returns the `latest_seq` at that moment. Wrap it in a `timeout`, because it never returns once every clone of the `Notifier` is gone. In this test, `record_one_event` stands for the code under test, which commits the event with `seq` 1 and calls `notify(1)`:
+
+```rust
+use std::time::Duration;
+
+use monitor_hub_plugin::Notifier;
+use tokio::time::timeout;
+
+#[tokio::test]
+async fn recording_an_event_signals_the_hub() {
+    let notifier = Notifier::new();
+    let mut signals = notifier.subscribe();
+    record_one_event(&notifier).await;
+    let seq = timeout(Duration::from_secs(5), signals.changed())
+        .await
+        .expect("a signal within 5 seconds");
+    assert_eq!(seq, 1);
+}
+```
+
 ## Logging
 
 ```rust
