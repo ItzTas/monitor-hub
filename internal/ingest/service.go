@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 
-	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 )
 
 const (

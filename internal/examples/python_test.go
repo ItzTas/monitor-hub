@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
-	"github.com/ItzTas/monitor-hub/sdk/plugintest"
+	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"

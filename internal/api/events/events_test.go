@@ -15,7 +15,7 @@ import (
 
 	"github.com/ItzTas/monitor-hub/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/internal/db"
-	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 )
 
 var t0 = time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)

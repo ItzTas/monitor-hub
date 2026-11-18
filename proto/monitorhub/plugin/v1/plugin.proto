@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package monitorhub.plugin.v1;
 
-option go_package = "github.com/ItzTas/monitor-hub/sdk/pluginpb;pluginpb";
+option go_package = "github.com/ItzTas/monitor-hub/sdk-go/pluginpb;pluginpb";
 
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";

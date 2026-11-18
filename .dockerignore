@@ -4,7 +4,7 @@
 !go.sum
 !cmd/monitor-hub
 !internal
-!sdk
+!sdk-go
 !sql
 
 **/*_test.go

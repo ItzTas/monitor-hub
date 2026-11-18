@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 )
 
 type Clients interface {

@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/ItzTas/monitor-hub/internal/core/coretest"
-	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 )
 
 func expectPoll(t *testing.T, r *running, want pollRequest) {

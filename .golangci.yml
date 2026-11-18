@@ -21,7 +21,7 @@ linters:
         text: G204
         linters:
           - gosec
-      - path: (^|/)sdk/cmd/plugin-conformance/main\.go$|^cmd/plugin-conformance/main\.go$
+      - path: (^|/)sdk-go/cmd/plugin-conformance/main\.go$|^cmd/plugin-conformance/main\.go$
         text: G204|G702
         linters:
           - gosec
@@ -34,5 +34,5 @@ linters:
         linters:
           - gosec
     paths:
-      - sdk/pluginpb
+      - sdk-go/pluginpb
       - internal/db

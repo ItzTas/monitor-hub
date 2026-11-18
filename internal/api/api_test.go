@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/ItzTas/monitor-hub/internal/core/coretest"
-	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 )
 
 const token = "api-token-0123456789"

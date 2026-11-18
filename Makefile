@@ -1,4 +1,4 @@
-MODULES := . sdk
+MODULES := . sdk-go
 
 .PHONY: check lint test generate generate-rust generate-python check-rust dockerfile dockerfile-check
 

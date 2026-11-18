@@ -10,7 +10,7 @@ tool (
 )
 
 require (
-	github.com/ItzTas/monitor-hub/sdk v0.0.0
+	github.com/ItzTas/monitor-hub/sdk-go v0.0.0
 	github.com/coder/websocket v1.8.15
 	github.com/danielgtaylor/huma/v2 v2.40.0
 	github.com/hashicorp/go-hclog v1.6.3
@@ -154,4 +154,4 @@ require (
 	pluginrpc.com/pluginrpc v0.6.0 // indirect
 )
 
-replace github.com/ItzTas/monitor-hub/sdk => ./sdk
+replace github.com/ItzTas/monitor-hub/sdk-go => ./sdk-go

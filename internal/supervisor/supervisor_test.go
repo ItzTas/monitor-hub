@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/ItzTas/monitor-hub/internal/catalog"
-	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 )
 
 var pluginDir string

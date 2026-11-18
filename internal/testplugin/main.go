@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk"
-	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go"
+	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 	"github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

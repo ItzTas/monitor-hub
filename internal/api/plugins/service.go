@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 )
 
 const checkTimeout = 10 * time.Second

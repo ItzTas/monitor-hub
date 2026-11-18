@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/ItzTas/monitor-hub/internal/core/coretest"
-	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 )
 
 func rejectAfterBaseline(t *testing.T, page []*pluginpb.Event) {

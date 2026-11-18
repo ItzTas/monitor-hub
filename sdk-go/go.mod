@@ -1,4 +1,4 @@
-module github.com/ItzTas/monitor-hub/sdk
+module github.com/ItzTas/monitor-hub/sdk-go
 
 go 1.27.2
 

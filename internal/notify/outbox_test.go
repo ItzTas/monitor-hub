@@ -9,7 +9,7 @@ import (
 
 	"github.com/ItzTas/monitor-hub/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/internal/db"
-	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 )
 
 type stored struct {

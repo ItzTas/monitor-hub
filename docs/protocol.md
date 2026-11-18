@@ -2,7 +2,7 @@
 
 monitor-hub runs each monitor as a plugin: a separate process that the hub starts and talks to over gRPC. This document is enough to write a plugin in any language. You do not need to read the Go code.
 
-The contract lives in [`proto/monitorhub/plugin/v1/plugin.proto`](../proto/monitorhub/plugin/v1/plugin.proto). Generate stubs for your language from that file. The Go stubs are in `sdk/pluginpb`.
+The contract lives in [`proto/monitorhub/plugin/v1/plugin.proto`](../proto/monitorhub/plugin/v1/plugin.proto). Generate stubs for your language from that file. The Go stubs are in `sdk-go/pluginpb`.
 
 The process model comes from [hashicorp/go-plugin](https://github.com/hashicorp/go-plugin) v1.8.0. The hub is the go-plugin client and your plugin is the go-plugin server. The sections below say exactly what that requires.
 
@@ -468,9 +468,11 @@ The hub image build copies that directory to `/opt/monitor-hub/plugins/<name>/`.
 The `plugin-conformance` command starts your plugin through go-plugin, as the hub does, calls it over gRPC, and reports every rule it breaks. The start is not identical to the hub's: [What the plugin receives](#what-the-plugin-receives) lists the differences. Build the command from this repository, or run it at a released version:
 
 ```
-go run github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.4.0 \
+go run github.com/ItzTas/monitor-hub/sdk-go/cmd/plugin-conformance@v0.4.0 \
   -min-events 2 -ready-timeout 10s -plugin-dir . -env EVENTS=2 -- ./my-plugin
 ```
+
+Releases up to v0.3.0 were published as `github.com/ItzTas/monitor-hub/sdk` and still install from that path.
 
 Everything after `--` is the plugin's command line. The flags go before it:
 

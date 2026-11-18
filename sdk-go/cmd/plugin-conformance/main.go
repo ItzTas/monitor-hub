@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ItzTas/monitor-hub/sdk/plugintest"
+	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
 )
 
 const (

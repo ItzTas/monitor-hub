@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ItzTas/monitor-hub/sdk/plugintest"
+	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
 )
 
 func TestRustExampleSettings(t *testing.T) {

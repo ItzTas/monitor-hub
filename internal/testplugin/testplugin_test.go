@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ItzTas/monitor-hub/sdk/plugintest"
+	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
 )
 
 var (
@@ -34,7 +34,7 @@ func run(m *testing.M) int {
 		return 1
 	}
 	conformer = filepath.Join(dir, "plugin-conformance")
-	out, err = exec.CommandContext(context.Background(), "go", "build", "-o", conformer, "github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance").CombinedOutput()
+	out, err = exec.CommandContext(context.Background(), "go", "build", "-o", conformer, "github.com/ItzTas/monitor-hub/sdk-go/cmd/plugin-conformance").CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build conformance command failed: %v\n%s", err, out)
 		return 1

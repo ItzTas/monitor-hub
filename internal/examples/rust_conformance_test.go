@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ItzTas/monitor-hub/sdk/plugintest"
+	"github.com/ItzTas/monitor-hub/sdk-go/plugintest"
 )
 
 func TestRustExampleConformance(t *testing.T) {

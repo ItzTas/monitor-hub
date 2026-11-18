@@ -828,7 +828,7 @@ const file_monitorhub_plugin_v1_plugin_proto_rawDesc = "" +
 	"\x06Status\x12#.monitorhub.plugin.v1.StatusRequest\x1a$.monitorhub.plugin.v1.StatusResponse\x12P\n" +
 	"\x05Check\x12\".monitorhub.plugin.v1.CheckRequest\x1a#.monitorhub.plugin.v1.CheckResponse\x12S\n" +
 	"\x06Events\x12#.monitorhub.plugin.v1.EventsRequest\x1a$.monitorhub.plugin.v1.EventsResponse\x12R\n" +
-	"\x05Watch\x12\".monitorhub.plugin.v1.WatchRequest\x1a#.monitorhub.plugin.v1.WatchResponse0\x01B5Z3github.com/ItzTas/monitor-hub/sdk/pluginpb;pluginpbb\x06proto3"
+	"\x05Watch\x12\".monitorhub.plugin.v1.WatchRequest\x1a#.monitorhub.plugin.v1.WatchResponse0\x01B8Z6github.com/ItzTas/monitor-hub/sdk-go/pluginpb;pluginpbb\x06proto3"
 
 var (
 	file_monitorhub_plugin_v1_plugin_proto_rawDescOnce sync.Once

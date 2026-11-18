@@ -23,7 +23,7 @@ fn unavailable(reason: &str) -> Option<&'static Setup> {
 }
 
 fn build_command() -> Option<PathBuf> {
-    let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sdk");
+    let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sdk-go");
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let binary = dir.join("plugin-conformance");
     let staging = dir.join(format!("plugin-conformance.{}", process::id()));
