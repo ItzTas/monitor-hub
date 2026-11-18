@@ -7,6 +7,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,11 +28,17 @@ var (
 
 type fakePlugin struct {
 	pluginpb.PluginClient
-	name    string
-	version string
-	status  *pluginpb.StatusResponse
-	events  []*pluginpb.Event
-	respond func(ctx context.Context, req *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error)
+	name          string
+	version       string
+	mu            sync.Mutex
+	status        *pluginpb.StatusResponse
+	events        []*pluginpb.Event
+	respond       func(ctx context.Context, req *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error)
+	describeCalls atomic.Int64
+	statusCalls   atomic.Int64
+	eventsCalls   atomic.Int64
+	eventsRunning atomic.Int64
+	eventsMost    atomic.Int64
 }
 
 func plugin(name string, events ...*pluginpb.Event) *fakePlugin {
@@ -43,21 +51,45 @@ func plugin(name string, events ...*pluginpb.Event) *fakePlugin {
 }
 
 func (p *fakePlugin) Describe(context.Context, *pluginpb.DescribeRequest, ...grpc.CallOption) (*pluginpb.DescribeResponse, error) {
+	p.describeCalls.Add(1)
 	return &pluginpb.DescribeResponse{Name: p.name, DisplayName: strings.ToUpper(p.name), Version: p.version}, nil
 }
 
 func (p *fakePlugin) Status(context.Context, *pluginpb.StatusRequest, ...grpc.CallOption) (*pluginpb.StatusResponse, error) {
+	p.statusCalls.Add(1)
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.status, nil
 }
 
 func (p *fakePlugin) Events(ctx context.Context, req *pluginpb.EventsRequest, _ ...grpc.CallOption) (*pluginpb.EventsResponse, error) {
+	p.eventsCalls.Add(1)
+	p.noteRunningEvents(p.eventsRunning.Add(1))
+	defer p.eventsRunning.Add(-1)
 	if p.respond != nil {
 		return p.respond(ctx, req)
 	}
 	return p.page(req), nil
 }
 
+func (p *fakePlugin) noteRunningEvents(running int64) {
+	for {
+		most := p.eventsMost.Load()
+		if running <= most || p.eventsMost.CompareAndSwap(most, running) {
+			return
+		}
+	}
+}
+
+func (p *fakePlugin) add(events ...*pluginpb.Event) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.events = append(p.events, events...)
+}
+
 func (p *fakePlugin) page(req *pluginpb.EventsRequest) *pluginpb.EventsResponse {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	var page []*pluginpb.Event
 	for _, e := range p.events {
 		if e.GetSeq() > req.GetAfter() && len(page) < int(req.GetLimit()) {
@@ -150,4 +182,72 @@ func expectStored(t *testing.T, pool *pgxpool.Pool, name string, events, deliver
 	if gotCursor != cursor || gotBaselined != baselined {
 		t.Errorf("%s cursor = %d (baselined %v), want %d (baselined %v)", name, gotCursor, gotBaselined, cursor, baselined)
 	}
+}
+
+type fakeTimer struct {
+	d     time.Duration
+	c     chan time.Time
+	fired bool
+}
+
+type fakeClock struct {
+	mu     sync.Mutex
+	timers []*fakeTimer
+	read   int
+	armed  chan struct{}
+}
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{armed: make(chan struct{}, 1)}
+}
+
+func (c *fakeClock) after(d time.Duration) <-chan time.Time {
+	timer := &fakeTimer{d: d, c: make(chan time.Time, 1)}
+	c.mu.Lock()
+	c.timers = append(c.timers, timer)
+	c.mu.Unlock()
+	select {
+	case c.armed <- struct{}{}:
+	default:
+	}
+	return timer.c
+}
+
+func (c *fakeClock) fire(t *testing.T, d time.Duration) {
+	t.Helper()
+	c.waitArmed(t, d)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, timer := range c.timers {
+		if timer.d != d || timer.fired {
+			continue
+		}
+		timer.fired = true
+		timer.c <- fixedNow
+	}
+}
+
+func (c *fakeClock) waitArmed(t *testing.T, d time.Duration) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for !c.consume(d) {
+		select {
+		case <-c.armed:
+		case <-deadline:
+			t.Fatalf("no after(%s) armed within 5s", d)
+		}
+	}
+}
+
+func (c *fakeClock) consume(d time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for c.read < len(c.timers) {
+		timer := c.timers[c.read]
+		c.read++
+		if timer.d == d && !timer.fired {
+			return true
+		}
+	}
+	return false
 }

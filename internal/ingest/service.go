@@ -26,6 +26,9 @@ type Service struct {
 	now         func() time.Time
 	callTimeout time.Duration
 	wake        func()
+	after       func(time.Duration) <-chan time.Time
+	schedules   map[string]*schedule
+	onPolled    func(name string, req pollRequest)
 }
 
 type Option func(*Service)
@@ -43,6 +46,11 @@ func NewService(repo Repository, clients Clients, channels []string, log *slog.L
 		now:         now,
 		callTimeout: 30 * time.Second,
 		wake:        func() {},
+		after:       time.After,
+		schedules:   map[string]*schedule{},
+	}
+	for _, name := range clients.Names() {
+		s.schedules[name] = newSchedule()
 	}
 	for _, option := range options {
 		option(s)
@@ -51,33 +59,71 @@ func NewService(repo Repository, clients Clients, channels []string, log *slog.L
 }
 
 func (s *Service) Run(ctx context.Context) error {
-	for {
-		s.PollOnce(ctx)
+	var wg sync.WaitGroup
+	for name, sch := range s.schedules {
+		sch.request(pollRequest{full: true})
+		wg.Go(func() { s.loop(ctx, name, sch) })
+	}
+	wg.Wait()
+	return nil
+}
+
+func (s *Service) loop(ctx context.Context, name string, sch *schedule) {
+	for s.wait(ctx, sch) {
+		req, ok := sch.take()
+		if !ok {
+			continue
+		}
+		s.pollPlugin(ctx, name, req)
+		if !sch.pending() {
+			continue
+		}
 		select {
 		case <-ctx.Done():
-			return nil
-		case <-time.After(PollInterval):
+			return
+		case <-s.after(followUpDelay):
 		}
 	}
+}
+
+func (s *Service) wait(ctx context.Context, sch *schedule) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-sch.kick:
+	case <-s.after(sch.interval()):
+		sch.request(pollRequest{full: true})
+	}
+	return ctx.Err() == nil
 }
 
 func (s *Service) PollOnce(ctx context.Context) {
 	var wg sync.WaitGroup
 	for _, name := range s.clients.Names() {
-		client, ok := s.clients.Client(name)
-		if !ok {
-			continue
-		}
-		wg.Go(func() {
-			if err := s.poll(ctx, name, client); err != nil {
-				s.log.Warn("poll a plugin", "plugin", name, "error", err)
-			}
-		})
+		wg.Go(func() { s.pollPlugin(ctx, name, pollRequest{full: true}) })
 	}
 	wg.Wait()
 }
 
-func (s *Service) poll(ctx context.Context, name string, client pluginpb.PluginClient) error {
+func (s *Service) pollPlugin(ctx context.Context, name string, req pollRequest) {
+	defer s.polled(name, req)
+	client, ok := s.clients.Client(name)
+	if !ok {
+		return
+	}
+	if err := s.poll(ctx, name, client, req); err != nil {
+		s.log.Warn("poll a plugin", "plugin", name, "error", err)
+	}
+}
+
+func (s *Service) polled(name string, req pollRequest) {
+	if s.onPolled == nil {
+		return
+	}
+	s.onPolled(name, req)
+}
+
+func (s *Service) poll(ctx context.Context, name string, client pluginpb.PluginClient, req pollRequest) error {
 	var (
 		cursor int64
 		known  bool
@@ -87,6 +133,10 @@ func (s *Service) poll(ctx context.Context, name string, client pluginpb.PluginC
 	g.Go(func() error { return s.describe(gctx, name, client) })
 	if err := g.Wait(); err != nil {
 		return err
+	}
+	if !req.readsEvents(cursor, known) {
+		s.refreshStatus(ctx, name, client)
+		return nil
 	}
 	var wg sync.WaitGroup
 	wg.Go(func() { s.refreshStatus(ctx, name, client) })
