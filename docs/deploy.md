@@ -299,6 +299,8 @@ docker ps --format '{{.Names}}' | grep -E 'sei-monitor|diario-alerr'
 
 Check: no app container is left. The sei-monitor stack's Postgres container may remain.
 
+From now on, never start an old app while the hub runs, neither by hand nor from a stack manager. The stopped containers still exist, and `docker compose up -d` in an old folder starts the Go program next to the plugins: every gazette alert goes out twice, and two monitors work the same SEI account. Only the rollback (section 7) starts them again, after the hub has stopped.
+
 Note the time each Go container stopped. Step 5 compares them with what the plugins record. Docker keeps them, in UTC:
 
 ```bash
