@@ -15,12 +15,12 @@ import (
 )
 
 type fakeRepo struct {
-	mu      sync.Mutex
-	events  []Notification
-	latest  int64
-	limits  []int
-	onAfter func(call int)
-	calls   int
+	mu        sync.Mutex
+	events    []Notification
+	latest    int64
+	limits    []int
+	pageBuilt func(call int)
+	calls     int
 }
 
 func (f *fakeRepo) add(seqs ...int64) {
@@ -36,18 +36,16 @@ func (f *fakeRepo) After(_ context.Context, after int64, limit int) ([]Notificat
 	f.calls++
 	call := f.calls
 	f.limits = append(f.limits, limit)
-	hook := f.onAfter
-	f.mu.Unlock()
-	if hook != nil {
-		hook(call)
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	var out []Notification
 	for _, n := range f.events {
 		if n.Seq > after && len(out) < limit {
 			out = append(out, n)
 		}
+	}
+	hook := f.pageBuilt
+	f.mu.Unlock()
+	if hook != nil {
+		hook(call)
 	}
 	return out, nil
 }
@@ -293,19 +291,21 @@ func TestAnEventStoredWhileTheBacklogIsReadIsSentOnce(t *testing.T) {
 	repo := &fakeRepo{latest: 5}
 	repo.add(5)
 	h := newHarness(t, repo)
-	repo.onAfter = func(call int) {
+	repo.pageBuilt = func(call int) {
 		if call == 1 {
 			repo.add(6)
 			h.signal.Notify()
 		}
 	}
 	r := h.start(Client{Name: "desk", Position: 4, Check: func(context.Context) (bool, error) { return true, nil }})
-	var got []int64
-	for len(got) < 2 {
-		m := r.next(t)
-		if n, ok := m.Data.(Notification); ok {
-			got = append(got, n.Seq)
-		}
+	if n := r.notification(t); n.Seq != 5 {
+		t.Fatalf("got seq %d, want 5", n.Seq)
+	}
+	if got := r.caughtUp(t); got != (CaughtUp{Seq: 5, Backlog: 1}) {
+		t.Fatalf("got %+v", got)
+	}
+	if n := r.notification(t); n.Seq != 6 {
+		t.Fatalf("got seq %d, want 6 through the signal", n.Seq)
 	}
 	h.signal.Notify()
 	h.signal.Notify()
@@ -318,9 +318,6 @@ func TestAnEventStoredWhileTheBacklogIsReadIsSentOnce(t *testing.T) {
 		if m.Comment == "ping" {
 			break
 		}
-	}
-	if !slices.Equal(got, []int64{5, 6}) {
-		t.Fatalf("got %v", got)
 	}
 }
 
