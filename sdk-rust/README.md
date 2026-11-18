@@ -23,6 +23,8 @@ monitor-hub-plugin-testkit = { git = "https://github.com/ItzTas/monitor-hub", ta
 
 Your crate implements the `Plugin` trait the SDK generates with tonic and builds messages with prost, so it needs its own `tonic` and `prost-types` dependencies, in the same 0.14 series as the SDK. This workspace uses `tonic` 0.14.8 and `prost-types` 0.14.4. `tracing` is what you log with. If you use migrations, also add `tokio-postgres = "0.7.18"`.
 
+Both crates build on Unix systems only.
+
 The SDK pins its toolchain in [`rust-toolchain.toml`](rust-toolchain.toml): Rust 1.99.1 with `rustfmt` and `clippy`, edition 2024. Pin the same version in your plugin's repository so both build with the same compiler.
 
 ## A minimal plugin
@@ -469,7 +471,7 @@ fn the_settings_contract_holds() {
 }
 ```
 
-`check(dir, program)` reads `dir/settings.json` with `parse`, then runs `program validate-settings` in `dir` with an empty environment. It returns one line per violation, and an empty list when both pass. It reports at most one problem with the file and one with the validator. What the validator writes to stderr is read and thrown away. The file must exist: without it, `check` reports that it cannot read it. A validator that runs longer than 5 seconds is stopped together with its process group.
+`check(dir, program)` reads `dir/settings.json` with `parse`, then runs `program validate-settings` in `dir` with an empty environment. It returns one line per violation, and an empty list when both pass. It reports at most one problem with the file and one with the validator. A validator that exits with code 1 and lists problems passes: with an empty environment, that is the expected answer of a plugin with required settings. What the validator writes to stderr is read and thrown away. The file must exist: without it, `check` reports that it cannot read it. `check` stops a validator that runs longer than 5 seconds, together with its process group: it sends SIGTERM, then SIGKILL five seconds later, so a validator that ignores SIGTERM makes `check` take about 11 seconds.
 
 `check` runs `program` exactly as given, made absolute against the current directory. A bare name such as `validator` becomes `<current directory>/validator` and is not looked up in `PATH`, so pass a full path, for example `env!("CARGO_BIN_EXE_<name>")`.
 

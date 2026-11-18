@@ -324,7 +324,7 @@ The file is UTF-8 without a byte order mark and holds exactly one JSON object. W
 
 `null` counts as absent for `help`, `default`, `options`, `group` and `reason`. For `secret`, `required` and `editable` it is an error: write `true` or `false`, or leave the attribute out. Keys must match exactly, letter case included, so `"Secret"` is an unknown attribute.
 
-Each field must follow these rules. A broken rule is reported as `settings.json: fields[<index>]: ` followed by the text in the second column.
+Each field must follow these rules. A broken rule is reported as `settings.json: fields[<index>]: ` followed by the text in the second column. `<index>` counts from 0.
 
 | Rule | Text |
 |---|---|
@@ -344,7 +344,11 @@ Each field must follow these rules. A broken rule is reported as `settings.json:
 
 Options are compared exactly, character by character. `"a"` and `"A"`, or `"a"` and `"a "`, are two different options, and a `default` must be equal to one of them. Only the first broken rule of a field is reported.
 
-The Rust SDK and the conformance command reject an unknown attribute and an unknown `type`, so that a typo such as `secert` cannot leave a secret on show. The hub's reader will ignore them instead and treat an unknown `type` as `string`, so that a new optional attribute does not break an older hub. A change that an older hub cannot safely ignore raises `settings_version`.
+The Rust SDK and the conformance command reject an unknown attribute and an unknown `type`, so that a typo such as `secert` cannot leave a secret on show. The hub's reader will ignore them instead and treat an unknown `type` as `string`, so that a new optional attribute does not break an older hub. A change that an older hub cannot safely ignore raises `settings_version`. The hub will treat a plugin whose `settings_version` it does not know as one that declares nothing.
+
+The hub will apply the `options` rules only to the types it knows. For a `type` it does not know, it reads the field as `string` and ignores `options`, so a later type can carry options without raising `settings_version`.
+
+An older Rust SDK or conformance command rejects a file that uses an attribute or a type added later, so check such a file with the release that added it. A new optional attribute does not affect a file written for an older release.
 
 The hub does not check values against these attributes, beyond what the form control allows: a `choice` field offers only its options. Rules such as "set exactly one of these three" belong in the plugin's `validate-settings`.
 
@@ -356,7 +360,7 @@ The Rust SDK's reader and the conformance command apply the same rules and give 
 
 - A key repeated in one object, such as two `name` keys in a field, and a lone surrogate escape in a string, such as `"\ud800"`, are errors in Rust. The conformance command accepts both.
 - Rust stops at the first broken field. The conformance command reports every broken field, one line each.
-- When the JSON itself is wrong (bad syntax, a wrong value type, an unknown attribute), each side writes `settings.json is not valid: ` followed by its own decoder's message, so the details differ. Rust reports an unknown `type` the same way. The conformance command reports it as a field rule: `type "password" is not one of string, list, integer, number, duration, choice`.
+- When the JSON itself is wrong (bad syntax, a wrong value type, an unknown attribute), each side writes `settings.json is not valid: ` followed by its own decoder's message, so the details differ. Rust reports an unknown `type` the same way. The conformance command reports it as a field rule: `type "password" is not one of string, list, integer, number, duration, choice`. A missing key, a negative `settings_version`, and `null` inside `options` or `fields` are errors on both sides, but each side words them its own way.
 
 ### `validate-settings`
 
@@ -382,7 +386,7 @@ A validator that exits with `0` but lists problems, exits with `1` but lists non
 
 - `problems` is required. Each problem has a `message` that is not empty or only spaces, and a `name` that is either a field the file declares or empty, for a problem with several fields together. `name` may be left out. Other keys are ignored.
 - List every problem at once, not only the first.
-- Finish within 5 seconds.
+- Finish within 5 seconds. A validator past the limit is killed without warning, so it must not depend on cleaning up.
 - Write the answer and nothing else on stdout, in UTF-8 and at most 64 KiB (65536 bytes). Whitespace around the object is fine. Logs go to stderr.
 - Do not require the magic cookie, open a database, use the network, run a program named in the settings (a password command, for example) or write to disk.
 - Never put the value of a `secret` field in a message.
@@ -426,7 +430,7 @@ The `plugin-conformance` command starts your plugin through go-plugin, as the hu
 
 ```
 go run github.com/ItzTas/monitor-hub/sdk/cmd/plugin-conformance@v0.3.0 \
-  -min-events 2 -ready-timeout 10s -env EVENTS=2 -- ./my-plugin
+  -min-events 2 -ready-timeout 10s -plugin-dir . -env EVENTS=2 -- ./my-plugin
 ```
 
 Everything after `--` is the plugin's command line. The flags go before it:
@@ -485,8 +489,8 @@ The suite checks that:
 
 With `-plugin-dir`, when `DIR` holds `settings.json`, the suite also checks that:
 
-- The file can be read and follows every rule in [`settings.json`](#settingsjson). Each broken rule is one violation.
-- `validate-settings`, run as described in [What the plugin receives](#what-the-plugin-receives), finishes within 5 seconds, exits with `0` or `1`, writes at most 64 KiB on stdout, and prints one JSON object whose `problems` agree with its exit code, each with a `message` that is not empty or only spaces. When the file follows every rule, each problem's `name` must also be empty or a field the file declares; that check comes last. A validator that waits for the magic cookie prints nothing and fails. Only the first problem with the validator is reported.
+- The file can be read and follows every rule in [`settings.json`](#settingsjson). Each broken field is one violation, for its first broken rule, except that a field without `name`, `label` or `type` gives one line for each attribute it lacks.
+- `validate-settings`, run as described in [What the plugin receives](#what-the-plugin-receives), finishes within 5 seconds, exits with `0` or `1`, writes at most 64 KiB on stdout, and prints one JSON object whose `problems` agree with its exit code, each with a `message` that is not empty or only spaces. An answer with exit code `1` that lists problems passes: a plugin with required settings is expected to answer that way to the empty environment. When the file follows every rule, each problem's `name` must also be empty or a field the file declares; that check comes last. A validator that waits for the magic cookie prints nothing and fails. Only the first problem with the validator is reported.
 
 When `DIR` has no `settings.json`, the suite checks nothing more and does not run the validator.
 
