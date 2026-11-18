@@ -33,9 +33,12 @@ Do this first, for two reasons.
 - Both old compose files follow the tag `latest`. When a Rust version reaches the default branch of its repository, CI publishes it as `latest`. The Rust image is a plugin and does not run on its own: started alone, it prints that the hub did not launch it and exits at once, and `restart: unless-stopped` turns that into a restart loop while nothing watches the gazette or SEI. Anything that pulls on the board would swap the working program for that loop.
 - A rollback must start the Go programs, so the old stacks have to point at the Go images.
 
-For diario-alerr this sets the order of the next two moves. The Rust version is released as `2.0.0`, but its pull request into `main`, https://github.com/ItzTas/diario-alerr/pull/1, is left open on purpose, because merging it moves `latest`. Pin first, then merge. The same holds for sei-monitor once its Rust version is released: its old compose file names `:latest` directly.
+Both Rust versions are released: the gazette plugin as `ghcr.io/itztas/diario-alerr:2.0.1` and the SEI plugin as `ghcr.io/itztas/sei-monitor:2.0.0`. Their pull requests into `main`, https://github.com/ItzTas/diario-alerr/pull/1 and https://github.com/ItzTas/sei-monitor/pull/1, are left open on purpose, because merging either one moves `latest` to the plugin. So pin first, then merge, and keep the pins afterwards: the way back needs the Go images. The old gazette compose file reads its tag from `DIARIO_ALERR_TAG` and falls back to `latest`. The old SEI compose file names `ghcr.io/itztas/sei-monitor:latest` directly.
 
-The Go release `v1.0.0` of each repository published its image as `ghcr.io/itztas/<name>:1.0.0` (the tag has no `v`).
+The Go images to pin:
+
+- sei-monitor: `ghcr.io/itztas/sei-monitor:1.0.0`, the Go release `v1.0.0` (the tag has no `v`). On 2026-11-17 `latest` was the same image.
+- diario-alerr: `ghcr.io/itztas/diario-alerr:sha-764b330`, the Go program built from `main` after the `1.0.0` release. On 2026-11-17 `latest` was the same image. Its program differs from `1.0.0` only in how it matches `WATCH_TERMS`: it carries the two matching fixes (names with middle names between the words, and registration numbers in any formatting), and the plugin matches the same way (step 3). Its database code is the same as in `1.0.0`. Pinned to `1.0.0` instead, the gazette would match the old way until the switch and again after a rollback, and miss the alerts those fixes find.
 
 1. sei-monitor: its compose file has a literal image line. Change it in `/opt/stacks/sei-monitor/compose.yaml`:
 
@@ -46,10 +49,10 @@ The Go release `v1.0.0` of each repository published its image as `ghcr.io/itzta
 2. diario-alerr: its compose file reads the tag from a variable. Add this line to `/opt/stacks/diario-alerr/.env`:
 
    ```
-   DIARIO_ALERR_TAG=1.0.0
+   DIARIO_ALERR_TAG=sha-764b330
    ```
 
-   The files on your host may differ from the `v1.0.0` ones: edit the image line or variable you actually have.
+   The files on your host may differ from the ones in the repositories: edit the image line or variable you actually have.
 
 3. Restart each stack and check the image:
 
@@ -59,24 +62,26 @@ The Go release `v1.0.0` of each repository published its image as `ghcr.io/itzta
    docker ps --format '{{.Names}}\t{{.Image}}' | grep -E 'sei-monitor|diario-alerr'
    ```
 
-   Check: both app containers show a `:1.0.0` image. Also note the image digest of each, in case a tag is ever overwritten:
+   Check: the SEI app container shows `ghcr.io/itztas/sei-monitor:1.0.0` and the gazette one `ghcr.io/itztas/diario-alerr:sha-764b330`. Also note the image digest of each, in case a tag is ever overwritten:
 
    ```bash
    docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/itztas/sei-monitor:1.0.0
+   docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/itztas/diario-alerr:sha-764b330
    ```
 
-4. Only now merge https://github.com/ItzTas/diario-alerr/pull/1. Once its CI run has finished, pull again on the board:
+4. Only now merge the two pull requests. Once their CI runs have finished, pull again on the board:
 
    ```bash
+   cd /opt/stacks/sei-monitor && docker compose pull && docker compose up -d
    cd /opt/stacks/diario-alerr && docker compose pull && docker compose up -d
-   docker ps --format '{{.Names}}\t{{.Image}}' | grep diario-alerr
+   docker ps --format '{{.Names}}\t{{.Image}}' | grep -E 'sei-monitor|diario-alerr'
    ```
 
-   Check: the container still shows `ghcr.io/itztas/diario-alerr:1.0.0` and stays up.
+   Check: both containers still show the images of item 3 and stay up.
 
 ### The images for the hub
 
-The hub image carries the plugins listed in `plugins.json` in the hub repository. Today that file lists one, `diario`, at `ghcr.io/itztas/diario-alerr:2.0.0`, and the published `ghcr.io/itztas/monitor-hub:latest` bundles it. The `sei` entry is added when the sei-monitor plugin image is published, and the next hub image then carries both.
+The hub image carries the plugins listed in `plugins.json` in the hub repository: `diario` from `ghcr.io/itztas/diario-alerr:2.0.1` and `sei` from `ghcr.io/itztas/sei-monitor:2.0.0`. Each `ghcr.io/itztas/monitor-hub` image built from that file holds both, under `/opt/monitor-hub/plugins/diario/` and `/opt/monitor-hub/plugins/sei/`.
 
 Pull the image now so the downtime later is short, and list the plugins inside it:
 
@@ -85,7 +90,7 @@ docker compose pull
 docker run --rm --entrypoint ls ghcr.io/itztas/monitor-hub:latest /opt/monitor-hub/plugins
 ```
 
-Check: the list shows both `diario` and `sei`. If it shows only `diario`, stop here and leave both old stacks running. Step 4 stops sei-monitor too, and nothing in this image would replace it, so SEI would go unwatched. Come back to this check when a newer hub image carries `sei`.
+Check: the list shows both `diario` and `sei`. If `sei` is missing, the image is older than the commit that added it: stop here, leave both old stacks running, and pull again after the hub's CI has published a newer image. Step 4 stops sei-monitor too, and nothing in an image without `sei` would replace it, so SEI would go unwatched. If you set `MONITOR_HUB_TAG`, use that tag in the command instead of `latest`.
 
 ### Where the databases are
 
