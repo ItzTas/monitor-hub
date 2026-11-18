@@ -279,9 +279,9 @@ async fn main() -> ExitCode {
 - Call `notify(seq)` once before `serve_with_notifier`, with the highest `seq` the plugin has issued. The first signal of every `Watch` call carries the current value.
 - Call `notify(seq)` after each write of events is committed, with the highest `seq` written. Never call it before the commit. The notifier keeps the highest value it was given, so a lower `seq` does not lower it, and every call sends a signal.
 - Call `status_changed()` when what `status` answers changes, for example when a cycle starts or ends, fails, or recovers. It sends a signal with the same `latest_seq`.
-- After recording events, call `notify(seq)`, not `status_changed()`. The hub reads `Events` only when `latest_seq` is greater than the position it has stored, so a signal with the old value only refreshes the status.
+- After recording events, call `notify(seq)`, not `status_changed()`. After the first signal of a call, the hub reads `Events` only when `latest_seq` is greater than the position it has stored, so a signal with the old value only refreshes the status.
 
-`serve_with_notifier(plugin, notifier)` does everything `serve` does and answers `Watch` from the notifier. The SDK sends the first signal as soon as the hub opens the call. While the hub reads slowly, signals that pile up go out as one, with the newest `latest_seq`. When 30 seconds pass without a signal, the SDK sends a heartbeat. When the plugin shuts down, it ends every open `Watch` call.
+`serve_with_notifier(plugin, notifier)` does everything `serve` does and answers `Watch` from the notifier. The SDK sends the first signal as soon as the hub opens the call. While the hub reads slowly, signals that pile up are merged: at most one waits to be read, and the one sent after it carries the newest `latest_seq`. When 30 seconds pass without a signal, the SDK sends a heartbeat. When the plugin shuts down, it ends every open `Watch` call.
 
 `notify` and `status_changed` never block and never fail, even when no one is watching. A plugin built with this SDK therefore runs on an older hub, which never calls `Watch` and polls every 15 seconds.
 

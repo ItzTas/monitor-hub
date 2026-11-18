@@ -196,7 +196,7 @@ A plugin that implements `Watch` follows these rules:
 - `latest_seq` is a hint. The hub uses it only to decide whether to read `Events`, and it may be greater than what `Events` returns at that moment, for example while the plugin holds events back during the first read (see [Events recorded before the first read ends](#events-recorded-before-the-first-read-ends)).
 - Keep the call open for as long as the process runs. It ends when the hub cancels it or the plugin shuts down.
 
-The hub reads `Events` after a signal only when its `latest_seq` is greater than the position the hub has stored. So after recording events, signal with their `seq`. A signal that repeats the old `latest_seq` only makes the hub read `Status` again.
+The first signal of a call always makes the hub read `Events`, and so does every signal until the hub's first read of the plugin is complete. After that, the hub reads `Events` only when a signal's `latest_seq` is greater than the position the hub has stored. So after recording events, signal with their `seq`. A signal that repeats the old `latest_seq` only makes the hub read `Status` again.
 
 A plugin that does not implement `Watch` answers `UNIMPLEMENTED`, and nothing else changes for it: the hub polls it every 15 seconds. `protocol_version` stays `1` in both cases.
 
@@ -534,7 +534,7 @@ With `-plugin-dir`, when `DIR` holds `settings.json`, the suite also checks that
 
 When `DIR` has no `settings.json`, the suite checks nothing more and does not run the validator.
 
-The checks are limited to 30 seconds plus `-ready-timeout`. The `Watch` check runs last and fits inside that limit: it takes at most 6 seconds, 5 for the first signal and 1 for the call to stay open. When the limit runs out during it, the check reports `Watch` as failed. Starting the plugin and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. The validator runs earlier still, under its own 5-second limit. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
+The checks are limited to 30 seconds plus `-ready-timeout`. The `Watch` check runs last, inside that limit. It takes at most 6 seconds, 5 for the first signal and 1 for the call to stay open. When the earlier checks leave it less than that and the limit runs out during it, the check reports `Watch` as failed. Starting the plugin and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. The validator runs earlier still, under its own 5-second limit. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
 
 The Rust SDK's testkit runs this command from `cargo test`. See [`sdk-rust/README.md`](../sdk-rust/README.md).
 
