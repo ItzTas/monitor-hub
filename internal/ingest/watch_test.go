@@ -141,7 +141,9 @@ func TestAPluginWithoutWatchIsAskedOncePerProcess(t *testing.T) {
 func TestAFailedWatchIsRetriedWithBackOff(t *testing.T) {
 	pool := coretest.Pool(t)
 	p := watched(plugin("sei", numbered(1, 3)...))
-	r := start(t, serviceOf(pool, newSwitchingClients(p)))
+	s := serviceOf(pool, newSwitchingClients(p))
+	wall := withSteppingClock(s)
+	r := start(t, s)
 	r.clock.waitArmed(t, PollInterval)
 
 	p.nextStream(t).failWith(t, restarting())
@@ -155,6 +157,7 @@ func TestAFailedWatchIsRetriedWithBackOff(t *testing.T) {
 	r.clock.waitArmed(t, SafetyInterval)
 	second.signal(t, 3)
 	expectPoll(t, r, pollRequest{latestSeq: 3})
+	wall.advance(EstablishedAfter)
 
 	second.failWith(t, restarting())
 	expectPoll(t, r, pollRequest{full: true})
@@ -174,12 +177,15 @@ func TestAFailedWatchIsRetriedWithBackOff(t *testing.T) {
 func TestAStreamThatSignalsOnceAndEndsWalksTheBackOff(t *testing.T) {
 	pool := coretest.Pool(t)
 	p := watched(plugin("sei", numbered(1, 3)...))
-	r := start(t, serviceOf(pool, newSwitchingClients(p)))
+	s := serviceOf(pool, newSwitchingClients(p))
+	wall := withSteppingClock(s)
+	r := start(t, s)
 
 	for _, delay := range []time.Duration{time.Second, 5 * time.Second, 30 * time.Second, 2 * time.Minute, 2 * time.Minute} {
 		stream := p.nextStream(t)
 		stream.signal(t, 3)
 		expectPoll(t, r, pollRequest{full: true})
+		wall.advance(EstablishedAfter)
 		stream.failWith(t, io.EOF)
 		expectPoll(t, r, pollRequest{full: true})
 		r.clock.fire(t, delay)
@@ -187,6 +193,30 @@ func TestAStreamThatSignalsOnceAndEndsWalksTheBackOff(t *testing.T) {
 	p.nextStream(t)
 	if calls := p.watchCalls.Load(); calls != 6 {
 		t.Errorf("Watch calls = %d, want 6", calls)
+	}
+}
+
+func TestAShortStreamThatSignalsTwiceAndEndsWalksTheBackOff(t *testing.T) {
+	pool := coretest.Pool(t)
+	p := watched(plugin("sei", numbered(1, 3)...))
+	s := serviceOf(pool, newSwitchingClients(p))
+	wall := withSteppingClock(s)
+	r := start(t, s)
+
+	for _, delay := range []time.Duration{time.Second, 5 * time.Second, 30 * time.Second, 2 * time.Minute} {
+		stream := p.nextStream(t)
+		stream.signal(t, 3)
+		expectPoll(t, r, pollRequest{full: true})
+		stream.signal(t, 3)
+		expectPoll(t, r, pollRequest{latestSeq: 3})
+		wall.advance(EstablishedAfter - time.Second)
+		stream.failWith(t, io.EOF)
+		expectPoll(t, r, pollRequest{full: true})
+		r.clock.fire(t, delay)
+	}
+	p.nextStream(t)
+	if calls := p.watchCalls.Load(); calls != 5 {
+		t.Errorf("Watch calls = %d, want 5", calls)
 	}
 }
 

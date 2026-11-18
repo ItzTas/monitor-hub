@@ -434,3 +434,26 @@ func (c *fakeClock) armedCount(d time.Duration) int {
 	}
 	return count
 }
+
+type steppingClock struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func (c *steppingClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at
+}
+
+func (c *steppingClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at = c.at.Add(d)
+}
+
+func withSteppingClock(s *Service) *steppingClock {
+	clock := &steppingClock{at: fixedNow}
+	s.now = clock.now
+	return clock
+}

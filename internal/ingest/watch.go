@@ -11,7 +11,10 @@ import (
 	"github.com/ItzTas/monitor-hub/sdk/pluginpb"
 )
 
-const HeartbeatLimit = 90 * time.Second
+const (
+	HeartbeatLimit   = 90 * time.Second
+	EstablishedAfter = 30 * time.Second
+)
 
 var reopenDelays = []time.Duration{time.Second, 5 * time.Second, 30 * time.Second, 2 * time.Minute}
 
@@ -93,6 +96,7 @@ func waitChange(ctx context.Context, changed <-chan struct{}) bool {
 }
 
 func (s *Service) follow(ctx context.Context, name string, client pluginpb.PluginClient, changed <-chan struct{}, sch *schedule) watchEnd {
+	opened := s.now()
 	streamCtx, cancel := context.WithCancel(ctx)
 	w := &watchStream{beat: make(chan struct{}, 1), ended: make(chan error, 1), done: make(chan struct{})}
 	go func() {
@@ -100,9 +104,10 @@ func (s *Service) follow(ctx context.Context, name string, client pluginpb.Plugi
 		w.ended <- s.read(streamCtx, name, client, sch, w)
 	}()
 	end := s.await(ctx, changed, w)
+	lived := s.now().Sub(opened)
 	cancel()
 	<-w.done
-	return settle(end, w.signals, sch)
+	return settle(end, w.signals >= 2 && lived >= EstablishedAfter, w.signals > 0, sch)
 }
 
 func (s *Service) await(ctx context.Context, changed <-chan struct{}, w *watchStream) watchEnd {
@@ -138,14 +143,14 @@ func ended(ctx context.Context, changed <-chan struct{}, err error, signalled bo
 	return dropped{err: err}
 }
 
-func settle(end watchEnd, signals int, sch *schedule) watchEnd {
-	if signals > 0 {
+func settle(end watchEnd, established, signalled bool, sch *schedule) watchEnd {
+	if signalled {
 		sch.setWatching(false)
 	}
 	switch end := end.(type) {
 	case dropped:
 		sch.request(pollRequest{full: true})
-		return dropped{established: signals >= 2, err: end.err}
+		return dropped{established: established, err: end.err}
 	case processChanged:
 		sch.request(pollRequest{full: true})
 	}
