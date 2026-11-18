@@ -88,6 +88,40 @@ func TestRunStopsEverythingAndLogsNoSecret(t *testing.T) {
 	}
 }
 
+func TestHubNotifiesAsSoonAsThePluginSignals(t *testing.T) {
+	b := newBench(t, "TESTPLUGIN__WATCH=follow")
+	logs := newLogMessages()
+	app := b.assemble(slog.New(logs))
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- app.Run(ctx) }()
+	logs.waitFor(t, "baseline complete", 15*time.Second)
+
+	b.setEvents("3")
+	written := time.Now()
+	want := notification{title: "monitor-hub: 1 update from Test plugin", body: "ping 3"}
+	select {
+	case got := <-b.ntfy.arrived:
+		t.Logf("the notification arrived %s after the event was written", time.Since(written))
+		if got != want {
+			t.Errorf("ntfy received %+v, want %+v", got, want)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the notification did not arrive within 10s: the hub polls a plugin without Watch every 15s and the dispatcher every 30s, so the signal was not followed")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run returned %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Run did not return within 15s of the cancellation")
+	}
+}
+
 func TestRunFailsWhenTheAddressIsTaken(t *testing.T) {
 	var config net.ListenConfig
 	taken, err := config.Listen(t.Context(), "tcp", "127.0.0.1:0")

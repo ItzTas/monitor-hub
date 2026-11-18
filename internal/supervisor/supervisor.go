@@ -44,6 +44,7 @@ type Supervisor struct {
 
 	mu      sync.RWMutex
 	clients map[string]pluginpb.PluginClient
+	changes map[string]chan struct{}
 }
 
 func New(entries []catalog.Entry, environ []string, dataRoot string, log *slog.Logger) *Supervisor {
@@ -56,6 +57,7 @@ func New(entries []catalog.Entry, environ []string, dataRoot string, log *slog.L
 		stableAfter:   10 * time.Minute,
 		groupMembers:  liveMembers,
 		clients:       map[string]pluginpb.PluginClient{},
+		changes:       map[string]chan struct{}{},
 	}
 }
 
@@ -73,6 +75,18 @@ func (s *Supervisor) Client(name string) (pluginpb.PluginClient, bool) {
 	defer s.mu.RUnlock()
 	c, ok := s.clients[name]
 	return c, ok
+}
+
+func (s *Supervisor) Track(name string) (pluginpb.PluginClient, bool, <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.clients[name]
+	changed, known := s.changes[name]
+	if !known {
+		changed = make(chan struct{})
+		s.changes[name] = changed
+	}
+	return c, ok, changed
 }
 
 func (s *Supervisor) Names() []string {
@@ -313,12 +327,21 @@ func (s *Supervisor) setClient(name string, c pluginpb.PluginClient) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clients[name] = c
+	s.announce(name)
 }
 
 func (s *Supervisor) dropClient(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.clients, name)
+	s.announce(name)
+}
+
+func (s *Supervisor) announce(name string) {
+	if changed, ok := s.changes[name]; ok {
+		close(changed)
+	}
+	s.changes[name] = make(chan struct{})
 }
 
 func resolveCommand(entry catalog.Entry, env []string) (string, error) {

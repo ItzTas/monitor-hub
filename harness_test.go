@@ -33,6 +33,7 @@ type notification struct {
 type ntfyInbox struct {
 	mu       sync.Mutex
 	received []notification
+	arrived  chan notification
 }
 
 func (b *ntfyInbox) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -41,9 +42,14 @@ func (b *ntfyInbox) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		title = r.Header.Get("Title")
 	}
+	got := notification{title: title, body: string(body)}
 	b.mu.Lock()
-	b.received = append(b.received, notification{title: title, body: string(body)})
+	b.received = append(b.received, got)
 	b.mu.Unlock()
+	select {
+	case b.arrived <- got:
+	default:
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -64,7 +70,7 @@ func newBench(t *testing.T, extra ...string) *bench {
 	t.Helper()
 	pluginsDir := t.TempDir()
 	installTestplugin(t, filepath.Join(pluginsDir, "testplugin"))
-	b := &bench{t: t, dataDir: t.TempDir(), ntfy: &ntfyInbox{}}
+	b := &bench{t: t, dataDir: t.TempDir(), ntfy: &ntfyInbox{arrived: make(chan notification, 16)}}
 	ntfy := httptest.NewServer(b.ntfy)
 	t.Cleanup(ntfy.Close)
 	b.environ = append([]string{
@@ -197,4 +203,47 @@ func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+type logMessages struct {
+	messages chan string
+}
+
+func newLogMessages() *logMessages {
+	return &logMessages{messages: make(chan string, 256)}
+}
+
+func (l *logMessages) Enabled(context.Context, slog.Level) bool {
+	return true
+}
+
+func (l *logMessages) Handle(_ context.Context, r slog.Record) error {
+	select {
+	case l.messages <- r.Message:
+	default:
+	}
+	return nil
+}
+
+func (l *logMessages) WithAttrs([]slog.Attr) slog.Handler {
+	return l
+}
+
+func (l *logMessages) WithGroup(string) slog.Handler {
+	return l
+}
+
+func (l *logMessages) waitFor(t *testing.T, message string, limit time.Duration) {
+	t.Helper()
+	deadline := time.After(limit)
+	for {
+		select {
+		case got := <-l.messages:
+			if got == message {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("no %q log line within %s", message, limit)
+		}
+	}
 }

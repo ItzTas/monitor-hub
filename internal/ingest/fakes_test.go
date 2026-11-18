@@ -39,6 +39,10 @@ type fakePlugin struct {
 	eventsCalls   atomic.Int64
 	eventsRunning atomic.Int64
 	eventsMost    atomic.Int64
+	watch         func(ctx context.Context) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error)
+	streams       chan *fakeStream
+	watchCalls    atomic.Int64
+	release       chan struct{}
 }
 
 func plugin(name string, events ...*pluginpb.Event) *fakePlugin {
@@ -70,6 +74,98 @@ func (p *fakePlugin) Events(ctx context.Context, req *pluginpb.EventsRequest, _ 
 		return p.respond(ctx, req)
 	}
 	return p.page(req), nil
+}
+
+func (p *fakePlugin) Watch(ctx context.Context, _ *pluginpb.WatchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+	p.watchCalls.Add(1)
+	if p.watch == nil {
+		return nil, status.Error(codes.Unimplemented, "method Watch not implemented")
+	}
+	return p.watch(ctx)
+}
+
+func watched(p *fakePlugin) *fakePlugin {
+	p.streams = make(chan *fakeStream, 16)
+	p.release = make(chan struct{})
+	close(p.release)
+	p.watch = func(ctx context.Context) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+		stream := &fakeStream{
+			ctx:       ctx,
+			signals:   make(chan int64),
+			fail:      make(chan error),
+			receiving: make(chan struct{}, 64),
+			cancelled: make(chan struct{}),
+			release:   p.release,
+			ended:     make(chan struct{}),
+		}
+		p.streams <- stream
+		return stream, nil
+	}
+	return p
+}
+
+func (p *fakePlugin) nextStream(t *testing.T) *fakeStream {
+	t.Helper()
+	select {
+	case stream := <-p.streams:
+		waitFor(t, stream.receiving, "the first Recv of "+p.name+"'s stream")
+		return stream
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s's Watch was not opened within 5s", p.name)
+		return nil
+	}
+}
+
+type fakeStream struct {
+	grpc.ClientStream
+	ctx       context.Context
+	signals   chan int64
+	fail      chan error
+	receiving chan struct{}
+	cancelled chan struct{}
+	release   chan struct{}
+	ended     chan struct{}
+	endOnce   sync.Once
+}
+
+func (f *fakeStream) Context() context.Context {
+	return f.ctx
+}
+
+func (f *fakeStream) Recv() (*pluginpb.WatchResponse, error) {
+	f.receiving <- struct{}{}
+	select {
+	case seq := <-f.signals:
+		return &pluginpb.WatchResponse{LatestSeq: seq}, nil
+	case err := <-f.fail:
+		return nil, err
+	case <-f.ctx.Done():
+		f.endOnce.Do(func() {
+			close(f.cancelled)
+			<-f.release
+			close(f.ended)
+		})
+		return nil, status.FromContextError(f.ctx.Err()).Err()
+	}
+}
+
+func (f *fakeStream) signal(t *testing.T, seq int64) {
+	t.Helper()
+	select {
+	case f.signals <- seq:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("signal %d was not received within 5s", seq)
+	}
+	waitFor(t, f.receiving, fmt.Sprintf("the Recv after signal %d", seq))
+}
+
+func (f *fakeStream) failWith(t *testing.T, err error) {
+	t.Helper()
+	select {
+	case f.fail <- err:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the stream did not take the error %v within 5s", err)
+	}
 }
 
 func (p *fakePlugin) noteRunningEvents(running int64) {
@@ -123,11 +219,87 @@ func (c fakeClients) Client(name string) (pluginpb.PluginClient, bool) {
 	return p, true
 }
 
+func (c fakeClients) Track(name string) (pluginpb.PluginClient, bool, <-chan struct{}) {
+	client, ok := c.Client(name)
+	return client, ok, nil
+}
+
+type switchingClients struct {
+	mu      sync.Mutex
+	names   []string
+	current map[string]*fakePlugin
+	changes map[string]chan struct{}
+}
+
+func newSwitchingClients(plugins ...*fakePlugin) *switchingClients {
+	c := &switchingClients{current: map[string]*fakePlugin{}, changes: map[string]chan struct{}{}}
+	for _, p := range plugins {
+		c.names = append(c.names, p.name)
+		c.current[p.name] = p
+	}
+	slices.Sort(c.names)
+	return c
+}
+
+func (c *switchingClients) Names() []string {
+	return c.names
+}
+
+func (c *switchingClients) Client(name string) (pluginpb.PluginClient, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	p, ok := c.current[name]
+	if !ok {
+		return nil, false
+	}
+	return p, true
+}
+
+func (c *switchingClients) Track(name string) (pluginpb.PluginClient, bool, <-chan struct{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	changed, known := c.changes[name]
+	if !known {
+		changed = make(chan struct{})
+		c.changes[name] = changed
+	}
+	p, ok := c.current[name]
+	if !ok {
+		return nil, false, changed
+	}
+	return p, true, changed
+}
+
+func (c *switchingClients) set(name string, p *fakePlugin) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.current[name] = p
+	c.announce(name)
+}
+
+func (c *switchingClients) drop(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.current, name)
+	c.announce(name)
+}
+
+func (c *switchingClients) announce(name string) {
+	if changed, ok := c.changes[name]; ok {
+		close(changed)
+	}
+	c.changes[name] = make(chan struct{})
+}
+
 func newService(pool *pgxpool.Pool, plugins ...*fakePlugin) *Service {
 	clients := fakeClients{}
 	for _, p := range plugins {
 		clients[p.name] = p
 	}
+	return serviceOf(pool, clients)
+}
+
+func serviceOf(pool *pgxpool.Pool, clients Clients) *Service {
 	return NewService(NewPostgres(pool), clients, []string{"telegram", "ntfy"},
 		slog.New(slog.DiscardHandler), func() time.Time { return fixedNow })
 }
@@ -188,12 +360,12 @@ type fakeTimer struct {
 	d     time.Duration
 	c     chan time.Time
 	fired bool
+	seen  bool
 }
 
 type fakeClock struct {
 	mu     sync.Mutex
 	timers []*fakeTimer
-	read   int
 	armed  chan struct{}
 }
 
@@ -242,10 +414,9 @@ func (c *fakeClock) waitArmed(t *testing.T, d time.Duration) {
 func (c *fakeClock) consume(d time.Duration) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for c.read < len(c.timers) {
-		timer := c.timers[c.read]
-		c.read++
-		if timer.d == d && !timer.fired {
+	for _, timer := range c.timers {
+		if timer.d == d && !timer.fired && !timer.seen {
+			timer.seen = true
 			return true
 		}
 	}

@@ -61,8 +61,8 @@ func NewService(repo Repository, clients Clients, channels []string, log *slog.L
 func (s *Service) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	for name, sch := range s.schedules {
-		sch.request(pollRequest{full: true})
 		wg.Go(func() { s.loop(ctx, name, sch) })
+		wg.Go(func() { s.subscribe(ctx, name, sch) })
 	}
 	wg.Wait()
 	return nil

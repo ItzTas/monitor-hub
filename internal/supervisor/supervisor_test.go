@@ -144,6 +144,59 @@ func TestCrashedPluginIsRestarted(t *testing.T) {
 	waitDescribe(t, s, 5*time.Second)
 }
 
+func trackDescribing(t *testing.T, s *Supervisor) (pluginpb.PluginClient, <-chan struct{}) {
+	t.Helper()
+	for {
+		c, ok, changed := s.Track("testplugin")
+		if ok {
+			if !describes(t, c) {
+				t.Fatal("the tracked client does not answer Describe")
+			}
+			return c, changed
+		}
+		select {
+		case <-changed:
+		case <-time.After(10 * time.Second):
+			t.Fatal("Track's channel did not close within 10s while no client was running")
+		}
+	}
+}
+
+func closed(changed <-chan struct{}) bool {
+	select {
+	case <-changed:
+		return true
+	default:
+		return false
+	}
+}
+
+func TestTrackClosesItsChannelOnEveryProcessChange(t *testing.T) {
+	s, _, stop := startSupervisor(t, []string{"TESTPLUGIN__CRASH_ON_CHECK=1"})
+	c1, changed := trackDescribing(t, s)
+	if _, err := c1.Check(t.Context(), &pluginpb.CheckRequest{}); err == nil {
+		t.Fatal("Check succeeded, want the plugin to crash")
+	}
+	select {
+	case <-changed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Track's channel did not close within 10s of the crash")
+	}
+
+	c2, last := trackDescribing(t, s)
+	if c2 == c1 {
+		t.Fatal("Track returned the client of the crashed process")
+	}
+	if c, ok, absent := s.Track("absent"); ok || c != nil || closed(absent) {
+		t.Errorf("Track(\"absent\") = %v, %v, closed %v; want nil, false and an open channel", c, ok, closed(absent))
+	}
+
+	stop()
+	if !closed(last) {
+		t.Error("Track's channel is still open after Run returned")
+	}
+}
+
 func childEnviron(extra ...string) []string {
 	return append([]string{"PATH=" + os.Getenv("PATH"), "TESTPLUGIN__SPAWN_CHILD=1", "TESTPLUGIN__ECHO=CHILD_PID"}, extra...)
 }

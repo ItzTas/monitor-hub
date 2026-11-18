@@ -10,6 +10,7 @@ import (
 type Clients interface {
 	Names() []string
 	Client(name string) (pluginpb.PluginClient, bool)
+	Track(name string) (pluginpb.PluginClient, bool, <-chan struct{})
 }
 
 type Batch struct {
