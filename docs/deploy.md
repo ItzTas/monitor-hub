@@ -257,13 +257,13 @@ The SEI plugin continues the database as Go left it: the same account, no new ba
 
    A notification still pending at the switch is never sent while the plugin runs: the hub's first read takes its event as history, and the plugin never reads the Go program's `deliveries` table. If a channel never delivers (an unpaired WhatsApp number, for example), its rows stay pending: pair it, or accept that they go out only after a rollback.
 
-2. Check that the account is not paused by a rejected login:
+2. Check that the account is not paused by a rejected login, and note how many accounts the database holds:
 
    ```bash
-   docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c 'SELECT paused_reason FROM accounts;'
+   docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c 'SELECT paused_reason FROM accounts;' -c 'SELECT count(*) FROM accounts;'
    ```
 
-   Check: one row, with an empty `paused_reason`. With a reason there, the plugin starts held and watches nothing until you request a check (section 8, "When SEI refuses the login"). It says so once, in an event the hub announces on its second read. Fix the password now, and after step 5 request a check as that section describes.
+   Check: every `paused_reason` is empty. Note the count for step 5. It is usually 1, more if `SEI_URL`, `SEI_USERNAME` or `SEI_ORG` ever changed. With a reason there, the plugin starts held and watches nothing until you request a check (section 8, "When SEI refuses the login"). It says so once, in an event the hub announces on its second read. Fix the password now, and after step 5 request a check as that section describes.
 
 3. Make sure `.env` has the same `SEI_URL`, `SEI_USERNAME` and `SEI_ORG` as the old `.env`, with the `SEI__` prefix, and that `SEI__DATABASE_URL` points at this database (step 3).
 
@@ -368,13 +368,13 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
    docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c "SELECT id, kind, payload::jsonb->>'process_number' AS process, detected_at FROM events WHERE detected_at >= '<when the Go program stopped>' ORDER BY id;"
    ```
 
-   Also check that the plugin kept the Go program's account. This must still return `1`:
+   Also check that the plugin kept the Go program's account. This must return the count you noted in step 4:
 
    ```bash
    docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c 'SELECT count(*) FROM accounts;'
    ```
 
-   A `2` means `SEI__SEI_URL`, `SEI__SEI_USERNAME` or `SEI__SEI_ORG` differs from the old `.env`: the plugin started a new account, and its first check only took note of what is there. Stop the hub and compare the three values with the old `.env` before you go on.
+   One more means `SEI__SEI_URL`, `SEI__SEI_USERNAME` or `SEI__SEI_ORG` differs from the old `.env`: the plugin started a new account, and its first check only took note of what is there. Stop the hub and compare the three values with the old `.env` before you go on.
 
    For the gazette, wait one more minute after its line, then look in the plugin's database for alerts that nobody was told about:
 
