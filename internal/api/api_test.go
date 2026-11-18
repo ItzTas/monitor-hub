@@ -3,17 +3,25 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/ItzTas/monitor-hub/internal/api/plugins"
+	"github.com/ItzTas/monitor-hub/internal/consumers"
 	"github.com/ItzTas/monitor-hub/internal/core/coretest"
+	"github.com/ItzTas/monitor-hub/internal/ingest"
+	"github.com/ItzTas/monitor-hub/internal/stream"
 	"github.com/ItzTas/monitor-hub/sdk-go/pluginpb"
 )
 
@@ -29,9 +37,13 @@ func (noPlugins) Client(string) (pluginpb.PluginClient, bool) {
 	return nil, false
 }
 
+func deps(pool *pgxpool.Pool, supervisor plugins.Supervisor, log *slog.Logger) Deps {
+	return Deps{Pool: pool, Plugins: supervisor, Token: token, Log: log, Consumers: consumers.NewService(pool), Registry: stream.NewRegistry()}
+}
+
 func TestEveryRouteRequiresTheToken(t *testing.T) {
 	mux := http.NewServeMux()
-	api := Register(mux, Deps{Pool: coretest.Pool(t), Plugins: noPlugins{}, Token: token, Log: slog.New(slog.DiscardHandler)})
+	api := Register(mux, deps(coretest.Pool(t), noPlugins{}, slog.New(slog.DiscardHandler)))
 
 	routes := 0
 	for path, item := range api.OpenAPI().Paths {
@@ -64,7 +76,7 @@ func TestEveryRouteRequiresTheToken(t *testing.T) {
 
 func TestTheRightTokenIsAccepted(t *testing.T) {
 	mux := http.NewServeMux()
-	Register(mux, Deps{Pool: coretest.Pool(t), Plugins: noPlugins{}, Token: token, Log: slog.New(slog.DiscardHandler)})
+	Register(mux, deps(coretest.Pool(t), noPlugins{}, slog.New(slog.DiscardHandler)))
 
 	for _, target := range []string{"/api/plugins", "/api/events"} {
 		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
@@ -98,7 +110,7 @@ func (onePlugin) Client(string) (pluginpb.PluginClient, bool) {
 func TestServerErrorsAreLoggedButNotAnswered(t *testing.T) {
 	var logs bytes.Buffer
 	mux := http.NewServeMux()
-	Register(mux, Deps{Pool: coretest.Pool(t), Plugins: onePlugin{}, Token: token, Log: slog.New(slog.NewTextHandler(&logs, nil))})
+	Register(mux, deps(coretest.Pool(t), onePlugin{}, slog.New(slog.NewTextHandler(&logs, nil))))
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/plugins/sei/check", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
@@ -110,5 +122,41 @@ func TestServerErrorsAreLoggedButNotAnswered(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "plugin123") || !strings.Contains(logs.String(), "level=WARN") {
 		t.Errorf("the logs miss the cause:\n%s", logs.String())
+	}
+}
+
+func TestConsumersAreListedWithTheirLag(t *testing.T) {
+	pool := coretest.Pool(t)
+	mux := http.NewServeMux()
+	Register(mux, deps(pool, noPlugins{}, slog.New(slog.DiscardHandler)))
+	if _, err := consumers.NewService(pool).Add(t.Context(), "desk"); err != nil {
+		t.Fatal(err)
+	}
+	repo := ingest.NewPostgres(pool)
+	if err := repo.SaveDescription(t.Context(), &pluginpb.DescribeResponse{Name: "sei", DisplayName: "SEI", Version: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	events := []*pluginpb.Event{
+		{Seq: 1, Id: "e1", Kind: "ping", OccurredAt: timestamppb.Now(), Title: "ping 1"},
+		{Seq: 2, Id: "e2", Kind: "ping", OccurredAt: timestamppb.Now(), Title: "ping 2"},
+	}
+	if _, err := repo.StoreEvents(t.Context(), ingest.Batch{Plugin: "sei", Events: events}); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/consumers", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, request)
+
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("consumers = %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
+	want := []map[string]any{{"name": "desk", "position": 0.0, "behind": 2.0, "acked_at": nil, "seen_at": nil, "connected": false}}
+	if !reflect.DeepEqual(page.Items, want) {
+		t.Errorf("consumers = %v, want %v", page.Items, want)
 	}
 }

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -161,7 +163,12 @@ func waitForPlugin(t *testing.T, app *application) {
 
 func request(t *testing.T, app *application, method, target, token string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequestWithContext(t.Context(), method, target, nil)
+	return send(t, app, method, target, token, nil)
+}
+
+func send(t *testing.T, app *application, method, target, token string, body io.Reader) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(t.Context(), method, target, body)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -245,5 +252,88 @@ func (l *logMessages) waitFor(t *testing.T, message string, limit time.Duration)
 		case <-deadline:
 			t.Fatalf("no %q log line within %s", message, limit)
 		}
+	}
+}
+
+type frame struct {
+	id, event, data, comment string
+}
+
+func (f *frame) set(line string) {
+	field, value, _ := strings.Cut(line, ": ")
+	targets := map[string]*string{"id": &f.id, "event": &f.event, "data": &f.data, "": &f.comment}
+	if target, ok := targets[field]; ok {
+		*target = value
+	}
+}
+
+type consumerStream struct {
+	frames chan frame
+	stop   chan struct{}
+}
+
+func openStream(t *testing.T, base, token string) *consumerStream {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/consumer/v1/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("stream = %d %s, want 200", resp.StatusCode, body)
+	}
+	s := &consumerStream{frames: make(chan frame), stop: make(chan struct{})}
+	go s.read(resp.Body)
+	t.Cleanup(func() { close(s.stop) })
+	return s
+}
+
+func (s *consumerStream) read(body io.Reader) {
+	defer close(s.frames)
+	scanner := bufio.NewScanner(body)
+	current := frame{}
+	for scanner.Scan() {
+		if line := scanner.Text(); line != "" {
+			current.set(line)
+			continue
+		}
+		select {
+		case s.frames <- current:
+		case <-s.stop:
+			return
+		}
+		current = frame{}
+	}
+}
+
+func (s *consumerStream) next(t *testing.T) frame {
+	t.Helper()
+	select {
+	case f, ok := <-s.frames:
+		if !ok {
+			t.Fatal("the stream ended while a message was expected")
+		}
+		return f
+	case <-time.After(15 * time.Second):
+		t.Fatal("no stream message within 15s")
+	}
+	return frame{}
+}
+
+func (s *consumerStream) ended(t *testing.T) {
+	t.Helper()
+	select {
+	case f, ok := <-s.frames:
+		if ok {
+			t.Fatalf("got %+v, want the stream to end", f)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the stream did not end within 15s")
 	}
 }

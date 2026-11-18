@@ -5,9 +5,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ItzTas/monitor-hub/internal/consumers"
+	"github.com/ItzTas/monitor-hub/internal/icons"
 )
 
 func TestHubEndToEnd(t *testing.T) {
@@ -145,5 +149,88 @@ func TestRunFailsWhenTheAddressIsTaken(t *testing.T) {
 	}
 	if _, ok := app.supervisor.Client("testplugin"); ok {
 		t.Error("a plugin runs although the hub could not serve")
+	}
+}
+
+func TestAConsumerReceivesEventsAfterTheBaseline(t *testing.T) {
+	b := newBench(t)
+	app := b.assemble(slog.New(slog.DiscardHandler))
+	startSupervisor(t, app)
+	server := httptest.NewServer(app.handler)
+	t.Cleanup(server.Close)
+	t.Cleanup(app.signal.Close)
+	ctx := t.Context()
+
+	app.ingest.PollOnce(ctx)
+	token, err := consumers.NewService(app.pool).Add(ctx, "desk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := openStream(t, server.URL, token)
+	if got, want := stream.next(t), (frame{id: "2", event: "caught_up", data: `{"seq":2,"backlog":0}`}); got != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+
+	b.setEvents("3")
+	app.ingest.PollOnce(ctx)
+
+	got := stream.next(t)
+	if got.id != "3" || got.event != "notification" {
+		t.Fatalf("got %+v, want notification 3", got)
+	}
+	icon := icons.Default().Image
+	for _, part := range []string{`"plugin":"testplugin"`, `"title":"ping 3"`, `"urgent":false`, `"icon":{"emoji":"🔔","image":"` + icon + `"}`} {
+		if !strings.Contains(got.data, part) {
+			t.Errorf("notification %s, want it to contain %s", got.data, part)
+		}
+	}
+	ack := send(t, app, http.MethodPost, "/consumer/v1/ack", token, strings.NewReader(`{"seq":3}`))
+	if ack.Code != http.StatusOK || strings.TrimSpace(ack.Body.String()) != `{"position":3}` {
+		t.Errorf("ack = %d %s, want 200 {\"position\":3}", ack.Code, ack.Body.String())
+	}
+	if image := request(t, app, http.MethodGet, icon, ""); image.Code != http.StatusOK {
+		t.Errorf("GET %s = %d, want 200", icon, image.Code)
+	}
+}
+
+func TestRunEndsOpenStreams(t *testing.T) {
+	var config net.ListenConfig
+	reserved, err := config.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := reserved.Addr().String()
+	if err := reserved.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b := newBench(t, "HTTP_ADDRESS="+address)
+	logs := &syncBuffer{}
+	app := b.assemble(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	token, err := consumers.NewService(app.pool).Add(t.Context(), "desk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- app.Run(ctx) }()
+	waitForPlugin(t, app)
+	stream := openStream(t, "http://"+address, token)
+	if got := stream.next(t); got.event != "caught_up" {
+		t.Fatalf("got %+v, want caught_up", got)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run returned %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Run did not return within 15s of the cancellation")
+	}
+	stream.ended(t)
+	if strings.Contains(logs.String(), token) {
+		t.Errorf("the logs contain the consumer token:\n%s", logs.String())
 	}
 }

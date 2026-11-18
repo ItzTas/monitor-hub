@@ -15,11 +15,15 @@ import (
 
 	"github.com/ItzTas/monitor-hub/internal/api"
 	"github.com/ItzTas/monitor-hub/internal/catalog"
+	"github.com/ItzTas/monitor-hub/internal/consumerapi"
+	"github.com/ItzTas/monitor-hub/internal/consumers"
 	"github.com/ItzTas/monitor-hub/internal/core"
+	"github.com/ItzTas/monitor-hub/internal/icons"
 	"github.com/ItzTas/monitor-hub/internal/ingest"
 	"github.com/ItzTas/monitor-hub/internal/modules/feed"
 	"github.com/ItzTas/monitor-hub/internal/modules/health"
 	"github.com/ItzTas/monitor-hub/internal/notify"
+	"github.com/ItzTas/monitor-hub/internal/stream"
 	"github.com/ItzTas/monitor-hub/internal/supervisor"
 )
 
@@ -34,6 +38,7 @@ type application struct {
 	closers    []io.Closer
 	handler    http.Handler
 	whatsapp   *whatsAppLink
+	signal     *stream.Signal
 }
 
 func assemble(ctx context.Context, cfg core.Config, environ []string, logger *slog.Logger, now func() time.Time) (*application, error) {
@@ -49,22 +54,28 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 	link, sessions := whatsAppChannels(ctx, cfg.Channels.WhatsApp, pool, logger)
 	channels := notify.Channels(cfg.Channels, userAgent(), sessions...)
 	names := notify.ChannelNames(channels)
+	consumerService := consumers.NewService(pool)
+	signal := stream.NewSignal()
+	registry := stream.NewRegistry()
 	mux := http.NewServeMux()
 	health.Configure(mux, pool, logger)
 	feed.Configure(mux, pool, feed.Options{Token: cfg.FeedToken, PublicURL: cfg.PublicURL}, logger)
-	api.Register(mux, api.Deps{Pool: pool, Plugins: plugins, Token: cfg.APIToken, Log: logger})
+	icons.Register(mux)
+	consumerapi.Register(mux, consumerapi.Deps{Consumers: consumerService, Stream: stream.NewService(stream.NewPostgres(pool), signal, registry), Log: logger})
+	api.Register(mux, api.Deps{Pool: pool, Plugins: plugins, Token: cfg.APIToken, Log: logger, Consumers: consumerService, Registry: registry})
 	dispatcher := notify.NewDispatcher(notify.NewOutbox(pool), channels, logger, notify.WithClock(now, time.After))
 	return &application{
 		address:    cfg.HTTPAddress,
 		log:        logger,
 		pool:       pool,
 		supervisor: plugins,
-		ingest:     ingest.NewService(ingest.NewPostgres(pool), plugins, names, logger, now, ingest.WithWake(dispatcher.Wake)),
+		ingest:     ingest.NewService(ingest.NewPostgres(pool), plugins, names, logger, now, ingest.WithWake(dispatcher.Wake), ingest.WithNewEvents(signal.Notify)),
 		dispatcher: dispatcher,
 		channels:   names,
 		closers:    closers(channels),
 		handler:    withMiddleware(mux, logger),
 		whatsapp:   link,
+		signal:     signal,
 	}, nil
 }
 
@@ -84,7 +95,9 @@ func (a *application) Run(ctx context.Context) error {
 	g.Go(func() error { return a.supervisor.Run(gctx) })
 	g.Go(func() error { return a.ingest.Run(gctx) })
 	g.Go(func() error { return a.dispatcher.Run(gctx) })
-	g.Go(func() error { return serveHTTP(gctx, newServer(a.handler, a.log), listener) })
+	server := newServer(a.handler, a.log)
+	server.RegisterOnShutdown(a.signal.Close)
+	g.Go(func() error { return serveHTTP(gctx, server, listener) })
 	return g.Wait()
 }
 

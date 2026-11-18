@@ -10,8 +10,11 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	consumerlist "github.com/ItzTas/monitor-hub/internal/api/consumers"
 	"github.com/ItzTas/monitor-hub/internal/api/events"
 	"github.com/ItzTas/monitor-hub/internal/api/plugins"
+	"github.com/ItzTas/monitor-hub/internal/consumers"
+	"github.com/ItzTas/monitor-hub/internal/stream"
 )
 
 const (
@@ -20,27 +23,33 @@ const (
 )
 
 type Deps struct {
-	Pool    *pgxpool.Pool
-	Plugins plugins.Supervisor
-	Token   string
-	Log     *slog.Logger
+	Pool      *pgxpool.Pool
+	Plugins   plugins.Supervisor
+	Token     string
+	Log       *slog.Logger
+	Consumers *consumers.Service
+	Registry  *stream.Registry
 }
 
 func Register(mux *http.ServeMux, deps Deps) huma.API {
-	api := humago.New(mux, humaConfig(deps.Log))
+	api := humago.New(mux, HumaConfig(deps.Log,
+		"The plugins monitor-hub runs, the events they reported and the consumers that read them. Every route needs the header Authorization: Bearer <API_TOKEN>.",
+		"The API_TOKEN of the monitor-hub configuration.",
+	))
 	api.UseMiddleware(bearerAuth(api, deps.Token))
 	plugins.Configure(api, deps.Pool, deps.Plugins)
 	events.Configure(api, deps.Pool)
+	consumerlist.Configure(api, deps.Consumers, deps.Registry)
 	return api
 }
 
-func humaConfig(log *slog.Logger) huma.Config {
+func HumaConfig(log *slog.Logger, description, credential string) huma.Config {
 	cfg := huma.DefaultConfig("monitor-hub API", version)
 	cfg.OpenAPIPath, cfg.DocsPath, cfg.SchemasPath = "", "", ""
 	cfg.CreateHooks = nil
-	cfg.Info.Description = "The plugins monitor-hub runs and the events they reported. Every route needs the header Authorization: Bearer <API_TOKEN>."
+	cfg.Info.Description = description
 	cfg.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
-		securityScheme: {Type: "http", Scheme: "bearer", Description: "The API_TOKEN of the monitor-hub configuration."},
+		securityScheme: {Type: "http", Scheme: "bearer", Description: credential},
 	}
 	cfg.Security = []map[string][]string{{securityScheme: {}}}
 	cfg.Transformers = append(cfg.Transformers, serverErrors(log))
