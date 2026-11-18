@@ -216,7 +216,7 @@ When the plugin is working and there is simply nothing new, return an empty list
 
 Every event the plugin records between its own start and the end of the first read is part of the baseline, unless the plugin holds it back. A plugin that runs a cycle as soon as it starts can record new events in those seconds, and the hub then stores them as history and never announces them.
 
-The recommended behavior, which the `diario` plugin follows:
+The recommended behavior, which both first-party plugins, `diario` and `sei`, follow:
 
 1. At start-up, before the handshake, remember the highest `seq` the plugin has issued so far.
 2. Until one `Events` call has answered OK with a page shorter than its `limit`, return only events with a `seq` at or below that value. The newer ones do not count as available yet, so the page rule above still holds.
