@@ -261,6 +261,12 @@ The SEI plugin continues the database as Go left it: the same account, no new ba
 
    A notification still pending at the switch is never sent while the plugin runs: the hub's first read takes its event as history, and the plugin never reads the Go program's `deliveries` table. If a channel never delivers (an unpaired WhatsApp number, for example), its rows stay pending: pair it, or accept that they go out only after a rollback.
 
+   A delivery that fails six times in a row, about 8.6 hours after the first try, is marked `failed` and drops out of that count. Neither Go nor the plugin ever sends it. List the ones from the last day and pass them on yourself:
+
+   ```bash
+   docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c "SELECT e.id, e.kind, e.payload::jsonb->>'process_number' AS process, e.detected_at, d.channel, d.last_error FROM deliveries d JOIN events e ON e.id = d.event_id WHERE d.status = 'failed' AND e.detected_at > now() - interval '1 day' ORDER BY e.id;"
+   ```
+
 2. Check that the account is not paused by a rejected login, and note how many accounts the database holds:
 
    ```bash
