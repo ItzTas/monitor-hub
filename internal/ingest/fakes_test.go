@@ -43,6 +43,7 @@ type fakePlugin struct {
 	streams       chan *fakeStream
 	watchCalls    atomic.Int64
 	release       chan struct{}
+	stallStatus   chan struct{}
 }
 
 func plugin(name string, events ...*pluginpb.Event) *fakePlugin {
@@ -59,8 +60,13 @@ func (p *fakePlugin) Describe(context.Context, *pluginpb.DescribeRequest, ...grp
 	return &pluginpb.DescribeResponse{Name: p.name, DisplayName: strings.ToUpper(p.name), Version: p.version}, nil
 }
 
-func (p *fakePlugin) Status(context.Context, *pluginpb.StatusRequest, ...grpc.CallOption) (*pluginpb.StatusResponse, error) {
+func (p *fakePlugin) Status(ctx context.Context, _ *pluginpb.StatusRequest, _ ...grpc.CallOption) (*pluginpb.StatusResponse, error) {
 	p.statusCalls.Add(1)
+	if p.stallStatus != nil {
+		p.stallStatus <- struct{}{}
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.status, nil
@@ -456,4 +462,40 @@ func withSteppingClock(s *Service) *steppingClock {
 	clock := &steppingClock{at: fixedNow}
 	s.now = clock.now
 	return clock
+}
+
+type recordedLogs struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (l *recordedLogs) Enabled(context.Context, slog.Level) bool {
+	return true
+}
+
+func (l *recordedLogs) Handle(_ context.Context, r slog.Record) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.records = append(l.records, r)
+	return nil
+}
+
+func (l *recordedLogs) WithAttrs([]slog.Attr) slog.Handler {
+	return l
+}
+
+func (l *recordedLogs) WithGroup(string) slog.Handler {
+	return l
+}
+
+func (l *recordedLogs) atLeast(level slog.Level) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var messages []string
+	for _, r := range l.records {
+		if r.Level >= level {
+			messages = append(messages, r.Message)
+		}
+	}
+	return messages
 }

@@ -123,8 +123,15 @@ func (s *Service) pollPlugin(ctx context.Context, name string, req pollRequest) 
 		return
 	}
 	if err := s.poll(ctx, name, client, req); err != nil {
-		s.log.Warn("poll a plugin", "plugin", name, "error", err)
+		s.failed(ctx, slog.LevelWarn, "poll a plugin", name, err)
 	}
+}
+
+func (s *Service) failed(ctx context.Context, level slog.Level, message, name string, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+	s.log.Log(ctx, level, message, "plugin", name, "error", err)
 }
 
 func (s *Service) polled(name string, req pollRequest) {
@@ -173,11 +180,11 @@ func (s *Service) describe(ctx context.Context, name string, client pluginpb.Plu
 func (s *Service) refreshStatus(ctx context.Context, name string, client pluginpb.PluginClient) {
 	status, err := call(ctx, s.callTimeout, client.Status, &pluginpb.StatusRequest{})
 	if err != nil {
-		s.log.Warn("read a plugin status", "plugin", name, "error", err)
+		s.failed(ctx, slog.LevelWarn, "read a plugin status", name, err)
 		return
 	}
 	if err := s.repo.SaveStatus(ctx, name, status, s.now()); err != nil {
-		s.log.Error("save a plugin status", "plugin", name, "error", err)
+		s.failed(ctx, slog.LevelError, "save a plugin status", name, err)
 	}
 }
 

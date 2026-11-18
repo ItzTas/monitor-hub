@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"io"
+	"log/slog"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -382,5 +383,33 @@ func TestRunEndsEveryStreamBeforeItReturns(t *testing.T) {
 		if stream.ctx.Err() == nil {
 			t.Errorf("the context of %s's stream is still live after Run returned", name)
 		}
+	}
+}
+
+func TestPollsCutShortByTheEndOfRunLogNoWarning(t *testing.T) {
+	pool := coretest.Pool(t)
+	entered := make(chan struct{})
+	p := plugin("sei", numbered(1, 3)...)
+	p.stallStatus = make(chan struct{}, 1)
+	p.respond = func(ctx context.Context, _ *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
+		close(entered)
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	failing := plugin("tjsp", numbered(1, 3)...)
+	failing.respond = unavailable
+	s := newService(pool, p, failing)
+	logs := &recordedLogs{}
+	s.log = slog.New(logs)
+	r := start(t, s)
+	if got := r.nextPoll(t); got.name != "tjsp" {
+		t.Fatalf("first poll = %+v, want tjsp", got)
+	}
+	waitFor(t, entered, "the Events call")
+	waitFor(t, p.stallStatus, "the Status call")
+
+	r.stop(t)
+	if warnings := logs.atLeast(slog.LevelWarn); len(warnings) != 1 || warnings[0] != "poll a plugin" {
+		t.Errorf("warnings = %q, want only the failed poll of tjsp before the end of Run", warnings)
 	}
 }
