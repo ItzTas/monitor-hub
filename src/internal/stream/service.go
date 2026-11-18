@@ -108,7 +108,7 @@ func (s *Service) drain(ctx context.Context, cursor int64, send sse.Sender) (int
 		}
 		for _, n := range page {
 			n.Icon = icons.Default()
-			n.PluginIcon = icons.Default()
+			n.MonitorIcon = icons.Default()
 			if err := send(sse.Message{IDString: strconv.FormatInt(n.Seq, 10), Data: n}); err != nil {
 				return cursor, sent, err
 			}

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -190,7 +191,12 @@ func TestAConsumerReceivesEventsAfterTheBaseline(t *testing.T) {
 		t.Fatalf("got %+v, want notification 3", got)
 	}
 	icon := icons.Default().Image
-	for _, part := range []string{`"plugin":"testplugin"`, `"title":"ping 3"`, `"urgent":false`, `"icon":{"emoji":"🔔","image":"` + icon + `"}`} {
+	fields := []string{"seq", "monitor", "display_name", "kind", "urgent", "title", "body", "url", "occurred_at", "detected_at", "icon", "monitor_icon"}
+	if names := fieldNames(t, got.data); !slices.Equal(names, fields) {
+		t.Errorf("notification fields = %q, want %q", names, fields)
+	}
+	bell := `{"emoji":"🔔","image":"` + icon + `"}`
+	for _, part := range []string{`"monitor":"testplugin"`, `"title":"ping 3"`, `"urgent":false`, `"icon":` + bell, `"monitor_icon":` + bell} {
 		if !strings.Contains(got.data, part) {
 			t.Errorf("notification %s, want it to contain %s", got.data, part)
 		}

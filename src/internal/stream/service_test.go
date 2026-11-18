@@ -167,7 +167,7 @@ func TestTheBacklogStartsAfterTheConsumersPosition(t *testing.T) {
 	r := h.start(Client{Name: "desk", Position: 2})
 	for _, want := range []int64{3, 4, 5} {
 		n := r.notification(t)
-		if n.Seq != want || n.Icon != icons.Default() || n.PluginIcon != icons.Default() {
+		if n.Seq != want || n.Icon != icons.Default() || n.MonitorIcon != icons.Default() {
 			t.Fatalf("got %+v, want seq %d with the default icons", n, want)
 		}
 	}

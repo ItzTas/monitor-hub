@@ -8,7 +8,7 @@ import (
 
 type Notification struct {
 	Seq         int64      `json:"seq"`
-	Plugin      string     `json:"plugin"`
+	Monitor     string     `json:"monitor"`
 	DisplayName string     `json:"display_name"`
 	Kind        string     `json:"kind"`
 	Urgent      bool       `json:"urgent"`
@@ -18,7 +18,7 @@ type Notification struct {
 	OccurredAt  time.Time  `json:"occurred_at"`
 	DetectedAt  time.Time  `json:"detected_at"`
 	Icon        icons.Icon `json:"icon"`
-	PluginIcon  icons.Icon `json:"plugin_icon"`
+	MonitorIcon icons.Icon `json:"monitor_icon"`
 }
 
 type CaughtUp struct {

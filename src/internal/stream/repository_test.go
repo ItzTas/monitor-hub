@@ -58,7 +58,7 @@ func TestAfterSkipsBaselineEventsAndPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || !got[0].Urgent || got[0].Plugin != "sei" || got[0].DisplayName != "SEI" {
+	if len(got) != 1 || !got[0].Urgent || got[0].Monitor != "sei" || got[0].DisplayName != "SEI" {
 		t.Fatalf("notification = %+v, want urgent from sei", got)
 	}
 	if latest, err := r.Latest(t.Context()); err != nil || latest != 5 {

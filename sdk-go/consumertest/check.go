@@ -38,7 +38,7 @@ type icon struct {
 
 type notification struct {
 	Seq         int64  `json:"seq"`
-	Plugin      string `json:"plugin"`
+	Monitor     string `json:"monitor"`
 	DisplayName string `json:"display_name"`
 	Kind        string `json:"kind"`
 	Urgent      bool   `json:"urgent"`
@@ -48,7 +48,7 @@ type notification struct {
 	OccurredAt  string `json:"occurred_at"`
 	DetectedAt  string `json:"detected_at"`
 	Icon        icon   `json:"icon"`
-	PluginIcon  icon   `json:"plugin_icon"`
+	MonitorIcon icon   `json:"monitor_icon"`
 }
 
 type caughtUp struct {
@@ -297,7 +297,7 @@ func scripted(seq int64) notification {
 	bell := icon{Emoji: "🔔", Image: iconPath}
 	return notification{
 		Seq:         seq,
-		Plugin:      "conformance",
+		Monitor:     "conformance",
 		DisplayName: "Consumer conformance",
 		Kind:        "check",
 		Title:       fmt.Sprintf("Conformance notification %d", seq),
@@ -306,6 +306,6 @@ func scripted(seq int64) notification {
 		OccurredAt:  "2026-11-17T12:00:00Z",
 		DetectedAt:  "2026-11-17T12:00:14.25Z",
 		Icon:        bell,
-		PluginIcon:  bell,
+		MonitorIcon: bell,
 	}
 }

@@ -340,7 +340,7 @@ func notificationFrame(seq int, image string) string {
 	icon := `{"emoji":"🔔","image":"` + image + `"}`
 	return fmt.Sprintf(`id: %d
 event: notification
-data: {"seq":%d,"plugin":"conformance","display_name":"Consumer conformance","kind":"check","urgent":false,"title":"Conformance notification %d","body":"Sent by the consumer conformance check.","url":"https://example.com/conformance/%d","occurred_at":"2026-11-17T12:00:00Z","detected_at":"2026-11-17T12:00:14.25Z","icon":%s,"plugin_icon":%s}`, seq, seq, seq, seq, icon, icon)
+data: {"seq":%d,"monitor":"conformance","display_name":"Consumer conformance","kind":"check","urgent":false,"title":"Conformance notification %d","body":"Sent by the consumer conformance check.","url":"https://example.com/conformance/%d","occurred_at":"2026-11-17T12:00:00Z","detected_at":"2026-11-17T12:00:14.25Z","icon":%s,"monitor_icon":%s}`, seq, seq, seq, seq, icon, icon)
 }
 
 func TestDefaultOptionsFollowTheContract(t *testing.T) {

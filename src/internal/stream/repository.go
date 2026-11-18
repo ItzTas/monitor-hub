@@ -32,7 +32,7 @@ func (p *postgres) After(ctx context.Context, after int64, limit int) ([]Notific
 	for _, row := range rows {
 		out = append(out, Notification{
 			Seq:         row.Seq,
-			Plugin:      row.Plugin,
+			Monitor:     row.Plugin,
 			DisplayName: row.DisplayName,
 			Kind:        row.Kind,
 			Urgent:      pluginpb.Severity(row.Severity) == pluginpb.Severity_SEVERITY_URGENT,

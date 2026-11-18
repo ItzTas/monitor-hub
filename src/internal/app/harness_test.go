@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -336,4 +337,25 @@ func (s *consumerStream) ended(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("the stream did not end within 15s")
 	}
+}
+
+func fieldNames(t *testing.T, object string) []string {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(object))
+	if _, err := decoder.Token(); err != nil {
+		t.Fatalf("%s: %v", object, err)
+	}
+	var names []string
+	for decoder.More() {
+		name, err := decoder.Token()
+		if err != nil {
+			t.Fatalf("%s: %v", object, err)
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			t.Fatalf("%s: %v", object, err)
+		}
+		names = append(names, fmt.Sprint(name))
+	}
+	return names
 }

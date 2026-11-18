@@ -589,7 +589,7 @@ Three messages carry data.
 ```json
 {
   "seq": 1521,
-  "plugin": "diario",
+  "monitor": "diario",
   "display_name": "Diário Oficial",
   "kind": "match",
   "urgent": false,
@@ -599,13 +599,13 @@ Three messages carry data.
   "occurred_at": "2026-11-17T12:00:00Z",
   "detected_at": "2026-11-17T12:00:14Z",
   "icon": { "emoji": "🔔", "image": "/icons/3f1c….png" },
-  "plugin_icon": { "emoji": "🔔", "image": "/icons/3f1c….png" }
+  "monitor_icon": { "emoji": "🔔", "image": "/icons/3f1c….png" }
 }
 ```
 
 `occurred_at` and `detected_at` are RFC 3339 timestamps in UTC and may carry fractional seconds, such as `2026-11-17T12:00:14.25Z`.
 
-`icon` is the icon of the event's kind and `plugin_icon` the plugin's. `image` is a path from the hub's root, such as `/icons/<hash>.png`. It is never empty: at the least it is the default icon's path. Resolve it against the address you use to reach the hub. `/icons/` needs no token and serves `image/png` with `Cache-Control: public, max-age=31536000, immutable` and `Content-Security-Policy: default-src 'none'; sandbox`. The default emoji is `🔔`.
+`icon` is the icon of the event's kind and `monitor_icon` the monitor's. `image` is a path from the hub's root, such as `/icons/<hash>.png`. It is never empty: at the least it is the default icon's path. Resolve it against the address you use to reach the hub. `/icons/` needs no token and serves `image/png` with `Cache-Control: public, max-age=31536000, immutable` and `Content-Security-Policy: default-src 'none'; sandbox`. The default emoji is `🔔`.
 
 `event: caught_up` is sent once per connection, right after the backlog, with `id: <seq>` and `{"seq": 1530, "backlog": 9}`. The hub does not send it when the connection ends while the backlog is still being sent. `seq` is the larger of the newest `seq` the hub had when the connection opened and the last event sent. `backlog` is how many events the catch-up sent. It is how a consumer tells what it missed from what arrives live.
 
