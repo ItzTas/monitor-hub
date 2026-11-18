@@ -26,6 +26,7 @@ type Service struct {
 	now         func() time.Time
 	callTimeout time.Duration
 	wake        func()
+	newEvents   func()
 	after       func(time.Duration) <-chan time.Time
 	schedules   map[string]*schedule
 	onPolled    func(name string, req pollRequest)
@@ -37,6 +38,10 @@ func WithWake(wake func()) Option {
 	return func(s *Service) { s.wake = wake }
 }
 
+func WithNewEvents(notify func()) Option {
+	return func(s *Service) { s.newEvents = notify }
+}
+
 func NewService(repo Repository, clients Clients, channels []string, log *slog.Logger, now func() time.Time, options ...Option) *Service {
 	s := &Service{
 		repo:        repo,
@@ -46,6 +51,7 @@ func NewService(repo Repository, clients Clients, channels []string, log *slog.L
 		now:         now,
 		callTimeout: 30 * time.Second,
 		wake:        func() {},
+		newEvents:   func() {},
 		after:       time.After,
 		schedules:   map[string]*schedule{},
 	}
@@ -211,6 +217,9 @@ func (s *Service) ingest(ctx context.Context, name string, client pluginpb.Plugi
 		}
 		if inserted > 0 {
 			s.log.Info("stored events", "plugin", name, "count", inserted, "baseline", baseline)
+		}
+		if inserted > 0 && !baseline {
+			s.newEvents()
 		}
 		if inserted > 0 && !baseline && len(s.channels) > 0 {
 			s.wake()

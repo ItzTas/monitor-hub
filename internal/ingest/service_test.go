@@ -200,3 +200,28 @@ func TestQueuedDeliveriesWakeTheDispatcher(t *testing.T) {
 		t.Errorf("wakes without channels = %d, want 0", silentWakes)
 	}
 }
+
+func TestNewEventsAreAnnouncedEvenWithoutChannels(t *testing.T) {
+	pool := coretest.Pool(t)
+	p := plugin("sei", numbered(1, 3)...)
+	announced := 0
+	s := NewService(NewPostgres(pool), fakeClients{"sei": p}, nil, slog.New(slog.DiscardHandler),
+		func() time.Time { return fixedNow }, WithNewEvents(func() { announced++ }))
+
+	s.PollOnce(t.Context())
+	if announced != 0 {
+		t.Fatalf("announced %d times for the baseline, want 0", announced)
+	}
+
+	p.events = append(p.events, event(4, "event-4"))
+	s.PollOnce(t.Context())
+	if announced != 1 {
+		t.Fatalf("announced %d times for a new event, want 1", announced)
+	}
+
+	p.events = append(p.events, event(5, "event-4"))
+	s.PollOnce(t.Context())
+	if announced != 1 {
+		t.Fatalf("announced %d times after a repeated id, want 1", announced)
+	}
+}

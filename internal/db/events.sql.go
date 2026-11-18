@@ -142,3 +142,61 @@ func (q *Queries) LockEventOrder(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, lockEventOrder)
 	return err
 }
+
+const notificationsAfter = `-- name: NotificationsAfter :many
+SELECT e.seq, e.plugin, p.display_name, e.kind, e.severity, e.occurred_at, e.detected_at, e.title, e.body, e.url
+FROM events e
+JOIN plugins p ON p.name = e.plugin
+WHERE e.seq > $1::bigint AND NOT e.baseline
+ORDER BY e.seq
+LIMIT $2::bigint
+`
+
+type NotificationsAfterParams struct {
+	After   int64
+	MaxRows int64
+}
+
+type NotificationsAfterRow struct {
+	Seq         int64
+	Plugin      string
+	DisplayName string
+	Kind        string
+	Severity    int16
+	OccurredAt  time.Time
+	DetectedAt  time.Time
+	Title       string
+	Body        string
+	Url         string
+}
+
+func (q *Queries) NotificationsAfter(ctx context.Context, arg NotificationsAfterParams) ([]NotificationsAfterRow, error) {
+	rows, err := q.db.Query(ctx, notificationsAfter, arg.After, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NotificationsAfterRow
+	for rows.Next() {
+		var i NotificationsAfterRow
+		if err := rows.Scan(
+			&i.Seq,
+			&i.Plugin,
+			&i.DisplayName,
+			&i.Kind,
+			&i.Severity,
+			&i.OccurredAt,
+			&i.DetectedAt,
+			&i.Title,
+			&i.Body,
+			&i.Url,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
