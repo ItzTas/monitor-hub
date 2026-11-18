@@ -63,19 +63,22 @@ func validateSettings() int {
 		stdout string
 		code   int
 	}{
-		"problems":      {`{"problems":[{"name":"EVENTS","message":"set EVENTS"}]}`, 1},
-		"log-first":     {"starting\n" + noProblems, 0},
-		"exit-2":        {noProblems, 2},
-		"huge":          {strings.Repeat(" ", 65537) + noProblems, 0},
-		"huge-exit-2":   {strings.Repeat(" ", 65537) + noProblems, 2},
-		"not-object":    {`[]`, 0},
-		"trailing-data": {noProblems + "\n{}", 0},
-		"no-problems":   {`{}`, 0},
-		"wrong-type":    {`{"problems":"none"}`, 0},
-		"no-message":    {`{"problems":[{"name":"EVENTS"}]}`, 1},
-		"empty-message": {`{"problems":[{"name":"EVENTS","message":""}]}`, 1},
-		"mismatch":      {`{"problems":[{"name":"EVENTS","message":"set EVENTS"}]}`, 0},
-		"unlisted":      {noProblems, 1},
+		"problems":                 {`{"problems":[{"name":"EVENTS","message":"set EVENTS"}]}`, 1},
+		"log-first":                {"starting\n" + noProblems, 0},
+		"exit-2":                   {noProblems, 2},
+		"huge":                     {strings.Repeat(" ", 65537) + noProblems, 0},
+		"huge-exit-2":              {strings.Repeat(" ", 65537) + noProblems, 2},
+		"not-object":               {`[]`, 0},
+		"trailing-data":            {noProblems + "\n{}", 0},
+		"no-problems":              {`{}`, 0},
+		"wrong-type":               {`{"problems":"none"}`, 0},
+		"no-message":               {`{"problems":[{"name":"EVENTS"}]}`, 1},
+		"empty-message":            {`{"problems":[{"name":"EVENTS","message":""}]}`, 1},
+		"mismatch":                 {`{"problems":[{"name":"EVENTS","message":"set EVENTS"}]}`, 0},
+		"unlisted":                 {noProblems, 1},
+		"undeclared":               {`{"problems":[{"name":"EVENTS","message":"set EVENTS"},{"name":"","message":"together"},{"name":"NOT_DECLARED","message":"m"}]}`, 1},
+		"undeclared-0":             {`{"problems":[{"name":"NOT_DECLARED","message":"m"}]}`, 0},
+		"undeclared-empty-message": {`{"problems":[{"name":"NOT_DECLARED","message":"m"},{"name":"EVENTS","message":""}]}`, 1},
 	}
 	if answer, ok := answers[mode]; ok {
 		fmt.Println(answer.stdout)

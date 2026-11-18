@@ -9,6 +9,6 @@ import (
 
 const validatorNeedsUnix = validateArg + " was not run: the validator check needs a Unix system"
 
-func validatorViolation(context.Context, string, string, io.Writer) string {
+func validatorViolation(context.Context, string, string, map[string]bool, io.Writer) string {
 	return validatorNeedsUnix
 }

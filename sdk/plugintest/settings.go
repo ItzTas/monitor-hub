@@ -56,7 +56,11 @@ func CheckSettings(ctx context.Context, dir, program string, stderr io.Writer) [
 		return nil
 	}
 	out := fileViolations(data, err)
-	if violation := validatorViolation(ctx, dir, program, stderr); violation != "" {
+	var declared map[string]bool
+	if len(out) == 0 {
+		declared = declaredNames(data)
+	}
+	if violation := validatorViolation(ctx, dir, program, declared, stderr); violation != "" {
 		out = append(out, violation)
 	}
 	return out
@@ -78,6 +82,15 @@ func fileViolations(data []byte, err error) []string {
 		return []string{fmt.Sprintf("%s: cannot read: %v", settingsFile, err)}
 	}
 	return settingsViolations(data)
+}
+
+func declaredNames(data []byte) map[string]bool {
+	doc, _ := decodeSettings(data)
+	names := map[string]bool{}
+	for _, f := range *doc.Fields {
+		names[*f.Name] = true
+	}
+	return names
 }
 
 func notValid(detail string) []string {

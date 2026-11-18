@@ -155,21 +155,24 @@ func TestConformanceReportsValidatorViolations(t *testing.T) {
 		prefix bool
 		limit  time.Duration
 	}{
-		"log-first":     {want: "validate-settings did not print a single JSON object on stdout: ", prefix: true},
-		"needs-cookie":  {want: "validate-settings printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_PLUGIN"},
-		"hang":          {want: "validate-settings did not finish within 5s", limit: 15 * time.Second},
-		"exit-2":        {want: "validate-settings exited with code 2, want 0 or 1"},
-		"killed":        {want: "validate-settings was killed by signal 9"},
-		"huge":          {want: "validate-settings wrote more than 65536 bytes on stdout"},
-		"huge-exit-2":   {want: "validate-settings exited with code 2, want 0 or 1"},
-		"not-object":    {want: "validate-settings did not print a single JSON object on stdout: the answer is not an object"},
-		"trailing-data": {want: "validate-settings did not print a single JSON object on stdout: trailing data after the JSON object"},
-		"no-problems":   {want: "validate-settings answer is invalid: problems is missing"},
-		"wrong-type":    {want: "validate-settings answer is invalid: ", prefix: true},
-		"no-message":    {want: "validate-settings answer is invalid: problem 0 has no message"},
-		"empty-message": {want: "validate-settings answer is invalid: problem 0 has an empty message"},
-		"mismatch":      {want: "validate-settings exited with code 0 but listed problems"},
-		"unlisted":      {want: "validate-settings exited with code 1 but listed no problems"},
+		"log-first":                {want: "validate-settings did not print a single JSON object on stdout: ", prefix: true},
+		"needs-cookie":             {want: "validate-settings printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_PLUGIN"},
+		"hang":                     {want: "validate-settings did not finish within 5s", limit: 15 * time.Second},
+		"exit-2":                   {want: "validate-settings exited with code 2, want 0 or 1"},
+		"killed":                   {want: "validate-settings was killed by signal 9"},
+		"huge":                     {want: "validate-settings wrote more than 65536 bytes on stdout"},
+		"huge-exit-2":              {want: "validate-settings exited with code 2, want 0 or 1"},
+		"not-object":               {want: "validate-settings did not print a single JSON object on stdout: the answer is not an object"},
+		"trailing-data":            {want: "validate-settings did not print a single JSON object on stdout: trailing data after the JSON object"},
+		"no-problems":              {want: "validate-settings answer is invalid: problems is missing"},
+		"wrong-type":               {want: "validate-settings answer is invalid: ", prefix: true},
+		"no-message":               {want: "validate-settings answer is invalid: problem 0 has no message"},
+		"empty-message":            {want: "validate-settings answer is invalid: problem 0 has an empty message"},
+		"mismatch":                 {want: "validate-settings exited with code 0 but listed problems"},
+		"unlisted":                 {want: "validate-settings exited with code 1 but listed no problems"},
+		"undeclared":               {want: `validate-settings answer is invalid: problem 2 names "NOT_DECLARED", which settings.json does not declare`},
+		"undeclared-0":             {want: "validate-settings exited with code 0 but listed problems"},
+		"undeclared-empty-message": {want: "validate-settings answer is invalid: problem 1 has an empty message"},
 	}
 	for mode, tt := range tests {
 		t.Run(mode, func(t *testing.T) {
@@ -277,6 +280,16 @@ func TestConformanceReportsFileViolationsBeforeTheValidators(t *testing.T) {
 	want := []string{badSettingsLine, "validate-settings exited with code 2, want 0 or 1"}
 	if own := ownLines(stderr); !slices.Equal(own, want) {
 		t.Fatalf("the command's own stderr lines = %q, want %q", own, want)
+	}
+}
+
+func TestConformanceChecksProblemNamesOnlyAgainstAValidFile(t *testing.T) {
+	code, stdout, stderr := conformance(t, settingsArgs(pluginDir(t, badSettings, "undeclared"))...)
+	if code != 1 || stdout != "" {
+		t.Fatalf("exit code = %d, stdout = %q, want 1 and empty; stderr: %s", code, stdout, stderr)
+	}
+	if own := ownLines(stderr); !slices.Equal(own, []string{badSettingsLine}) {
+		t.Fatalf("the command's own stderr lines = %q, want only %q", own, badSettingsLine)
 	}
 }
 

@@ -378,7 +378,7 @@ The plugin writes one JSON object on stdout and exits:
 | `1` | at least one | The values are invalid. |
 | anything else | | The validator failed. |
 
-A validator that exits with `0` but lists problems, exits with `1` but lists none, prints something other than one JSON object, or runs for more than 5 seconds has failed too. When the validator fails, the hub will save nothing and say that the plugin could not validate the values.
+A validator that exits with `0` but lists problems, exits with `1` but lists none, prints something other than one JSON object, names a field the file does not declare, or runs for more than 5 seconds has failed too. When the validator fails, the hub will save nothing and say that the plugin could not validate the values.
 
 - `problems` is required. Each problem has a non-empty `message`, and a `name` that is either a field the file declares or empty, for a problem with several fields together. `name` may be left out. Other keys are ignored.
 - List every problem at once, not only the first.
@@ -486,7 +486,7 @@ The suite checks that:
 With `-plugin-dir`, when `DIR` holds `settings.json`, the suite also checks that:
 
 - The file can be read and follows every rule in [`settings.json`](#settingsjson). Each broken rule is one violation.
-- `validate-settings`, run as described in [What the plugin receives](#what-the-plugin-receives), finishes within 5 seconds, exits with `0` or `1`, writes at most 64 KiB on stdout, and prints one JSON object whose `problems` agree with its exit code, each with a non-empty `message`. A validator that waits for the magic cookie prints nothing and fails. Only the first problem with the validator is reported.
+- `validate-settings`, run as described in [What the plugin receives](#what-the-plugin-receives), finishes within 5 seconds, exits with `0` or `1`, writes at most 64 KiB on stdout, and prints one JSON object whose `problems` agree with its exit code, each with a non-empty `message`. When the file follows every rule, each problem's `name` must also be empty or a field the file declares; that check comes last. A validator that waits for the magic cookie prints nothing and fails. Only the first problem with the validator is reported.
 
 When `DIR` has no `settings.json`, the suite checks nothing more and does not run the validator.
 

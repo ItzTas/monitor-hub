@@ -42,12 +42,12 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func validatorViolation(ctx context.Context, dir, program string, stderr io.Writer) string {
+func validatorViolation(ctx context.Context, dir, program string, declared map[string]bool, stderr io.Writer) string {
 	state, stdout, violation := runValidator(ctx, dir, program, stderr)
 	if violation != "" {
 		return violation
 	}
-	return answerViolation(state, stdout)
+	return answerViolation(state, stdout, declared)
 }
 
 func runValidator(ctx context.Context, dir, program string, stderr io.Writer) (*os.ProcessState, []byte, string) {
@@ -95,7 +95,7 @@ func stopViolation(ctx context.Context) string {
 	return fmt.Sprintf("%s did not finish within %s", validateArg, validateLimit)
 }
 
-func answerViolation(state *os.ProcessState, stdout []byte) string {
+func answerViolation(state *os.ProcessState, stdout []byte, declared map[string]bool) string {
 	code, violation := exitViolation(state)
 	if violation != "" {
 		return violation
@@ -106,17 +106,28 @@ func answerViolation(state *os.ProcessState, stdout []byte) string {
 	if len(bytes.Trim(stdout, answerSpace)) == 0 {
 		return validateArg + " printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_PLUGIN"
 	}
-	listed, violation := readAnswer(stdout)
+	problems, violation := readAnswer(stdout)
 	if violation != "" {
 		return violation
 	}
-	if code == 0 && listed {
+	if code == 0 && len(problems) > 0 {
 		return validateArg + " exited with code 0 but listed problems"
 	}
-	if code == 1 && !listed {
+	if code == 1 && len(problems) == 0 {
 		return validateArg + " exited with code 1 but listed no problems"
 	}
-	return ""
+	return undeclaredViolation(problems, declared)
+}
+
+func undeclaredViolation(problems []validatorProblem, declared map[string]bool) string {
+	if declared == nil {
+		return ""
+	}
+	i := slices.IndexFunc(problems, func(p validatorProblem) bool { return p.Name != "" && !declared[p.Name] })
+	if i < 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s answer is invalid: problem %d names %q, which %s does not declare", validateArg, i, problems[i].Name, settingsFile)
 }
 
 func exitViolation(state *os.ProcessState) (int, string) {
@@ -130,33 +141,33 @@ func exitViolation(state *os.ProcessState) (int, string) {
 	return code, ""
 }
 
-func readAnswer(stdout []byte) (bool, string) {
+func readAnswer(stdout []byte) ([]validatorProblem, string) {
 	notObject := validateArg + " did not print a single JSON object on stdout: "
 	invalid := validateArg + " answer is invalid: "
 	dec := json.NewDecoder(bytes.NewReader(stdout))
 	var raw json.RawMessage
 	if err := dec.Decode(&raw); err != nil {
-		return false, notObject + err.Error()
+		return nil, notObject + err.Error()
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return false, notObject + "trailing data after the JSON object"
+		return nil, notObject + "trailing data after the JSON object"
 	}
 	if raw[0] != '{' {
-		return false, notObject + "the answer is not an object"
+		return nil, notObject + "the answer is not an object"
 	}
 	var answer validatorAnswer
 	if err := json.Unmarshal(raw, &answer); err != nil {
-		return false, invalid + err.Error()
+		return nil, invalid + err.Error()
 	}
 	if answer.Problems == nil {
-		return false, invalid + "problems is missing"
+		return nil, invalid + "problems is missing"
 	}
 	problems := *answer.Problems
 	if i := slices.IndexFunc(problems, func(p validatorProblem) bool { return p.Message == nil }); i >= 0 {
-		return false, invalid + fmt.Sprintf("problem %d has no message", i)
+		return nil, invalid + fmt.Sprintf("problem %d has no message", i)
 	}
 	if i := slices.IndexFunc(problems, func(p validatorProblem) bool { return *p.Message == "" }); i >= 0 {
-		return false, invalid + fmt.Sprintf("problem %d has an empty message", i)
+		return nil, invalid + fmt.Sprintf("problem %d has an empty message", i)
 	}
-	return len(problems) > 0, ""
+	return problems, ""
 }

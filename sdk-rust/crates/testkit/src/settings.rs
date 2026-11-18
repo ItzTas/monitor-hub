@@ -7,7 +7,7 @@ use std::path::{self, Path};
 use std::process::{Command, ExitStatus};
 
 use monitor_hub_plugin::settings::{
-    ANSWER_LIMIT, Answer, SETTINGS_FILE, VALIDATE_SETTINGS_ARG, VALIDATE_SETTINGS_LIMIT,
+    ANSWER_LIMIT, Answer, SETTINGS_FILE, Settings, VALIDATE_SETTINGS_ARG, VALIDATE_SETTINGS_LIMIT,
     is_reserved, parse,
 };
 use serde_json::Value;
@@ -16,10 +16,16 @@ use crate::process::{Failure, Finished, Keep, execute};
 
 pub fn check(dir: impl AsRef<Path>, program: impl AsRef<Path>) -> Vec<String> {
     let dir = dir.as_ref();
-    file_violation(dir)
-        .into_iter()
-        .chain(validator_violation(dir, program.as_ref()))
-        .collect()
+    let settings = read_settings(dir);
+    let declared: Option<BTreeSet<&str>> = settings.as_ref().ok().map(|settings| {
+        settings
+            .fields
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect()
+    });
+    let validator = validator_violation(dir, program.as_ref(), declared.as_ref());
+    settings.err().into_iter().chain(validator).collect()
 }
 
 #[track_caller]
@@ -64,21 +70,18 @@ fn chain(err: &(dyn Error + 'static)) -> String {
         .join(": ")
 }
 
-fn file_violation(dir: &Path) -> Option<String> {
+fn read_settings(dir: &Path) -> Result<Settings, String> {
     let path = dir.join(SETTINGS_FILE);
-    let json = match fs::read(&path) {
-        Ok(json) => json,
-        Err(err) => {
-            return Some(format!(
-                "{SETTINGS_FILE}: cannot read {}: {err}",
-                path.display()
-            ));
-        }
-    };
-    parse(&json).err().map(|err| chain(&err))
+    let json = fs::read(&path)
+        .map_err(|err| format!("{SETTINGS_FILE}: cannot read {}: {err}", path.display()))?;
+    parse(&json).map_err(|err| chain(&err))
 }
 
-fn validator_violation(dir: &Path, program: &Path) -> Option<String> {
+fn validator_violation(
+    dir: &Path,
+    program: &Path,
+    declared: Option<&BTreeSet<&str>>,
+) -> Option<String> {
     let not_started = "validate-settings could not be started";
     let program = match path::absolute(program) {
         Ok(program) => program,
@@ -96,7 +99,7 @@ fn validator_violation(dir: &Path, program: &Path) -> Option<String> {
         .env_clear()
         .current_dir(dir);
     match execute(&mut command, VALIDATE_SETTINGS_LIMIT, Keep::Nothing) {
-        Ok(finished) => answer_violation(&finished).err(),
+        Ok(finished) => answer_violation(&finished, declared).err(),
         Err(Failure::Timeout(_)) => Some(format!(
             "validate-settings did not finish within {}s",
             VALIDATE_SETTINGS_LIMIT.as_secs()
@@ -105,7 +108,7 @@ fn validator_violation(dir: &Path, program: &Path) -> Option<String> {
     }
 }
 
-fn answer_violation(finished: &Finished) -> Result<(), String> {
+fn answer_violation(finished: &Finished, declared: Option<&BTreeSet<&str>>) -> Result<(), String> {
     let code = exit_code(finished.status)?;
     let stdout = finished.stdout.as_slice();
     if stdout.len() > ANSWER_LIMIT {
@@ -129,8 +132,25 @@ fn answer_violation(finished: &Finished) -> Result<(), String> {
     match (code, answer.problems.is_empty()) {
         (0, false) => Err("validate-settings exited with code 0 but listed problems".to_owned()),
         (1, true) => Err("validate-settings exited with code 1 but listed no problems".to_owned()),
-        _ => Ok(()),
+        _ => undeclared_violation(&answer, declared),
     }
+}
+
+fn undeclared_violation(answer: &Answer, declared: Option<&BTreeSet<&str>>) -> Result<(), String> {
+    let Some(declared) = declared else {
+        return Ok(());
+    };
+    let Some((index, problem)) =
+        answer.problems.iter().enumerate().find(|(_, problem)| {
+            !problem.name.is_empty() && !declared.contains(problem.name.as_str())
+        })
+    else {
+        return Ok(());
+    };
+    Err(format!(
+        "validate-settings answer is invalid: problem {index} names {:?}, which {SETTINGS_FILE} does not declare",
+        problem.name
+    ))
 }
 
 fn exit_code(status: ExitStatus) -> Result<i32, String> {

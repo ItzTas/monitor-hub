@@ -18,6 +18,8 @@ const FIXED_SETTINGS: &str = include_str!("../../plugin/examples/fixed-plugin/se
 const EMPTY_SETTINGS: &str = r#"{"settings_version":1,"fields":[]}"#;
 const BAD_SETTINGS: &str =
     r#"{"settings_version":1,"fields":[{"name":"events","label":"Events","type":"integer"}]}"#;
+const API_SETTINGS: &str =
+    r#"{"settings_version":1,"fields":[{"name":"API_URL","label":"API","type":"string"}]}"#;
 const CLEAN_ENVIRONMENT: &str =
     r#"[ -z "${CARGO_MANIFEST_DIR:-}" ] && [ -f settings.json ] || exit 3; echo '{"problems":[]}'"#;
 const VALIDATOR: &str = "validator";
@@ -293,6 +295,54 @@ fn misbehaving_validators_are_reported() {
                 "validate-settings exited with code 1 but listed no problems",
             )],
         ),
+        Case {
+            settings: Some(API_SETTINGS),
+            ..Case::new(
+                "declared names",
+                r#"echo '{"problems":[{"name":"API_URL","message":"set it"},{"name":"","message":"together"},{"message":"no name"}]}'; exit 1"#,
+                vec![],
+            )
+        },
+        Case {
+            settings: Some(API_SETTINGS),
+            ..Case::new(
+                "undeclared name",
+                r#"echo '{"problems":[{"name":"API_URL","message":"set it"},{"name":"","message":"together"},{"name":"NOT_DECLARED","message":"m"}]}'; exit 1"#,
+                vec![Want::Exact(
+                    r#"validate-settings answer is invalid: problem 2 names "NOT_DECLARED", which settings.json does not declare"#,
+                )],
+            )
+        },
+        Case {
+            settings: Some(API_SETTINGS),
+            ..Case::new(
+                "undeclared name with code 0",
+                r#"echo '{"problems":[{"name":"NOT_DECLARED","message":"m"}]}'"#,
+                vec![Want::Exact(
+                    "validate-settings exited with code 0 but listed problems",
+                )],
+            )
+        },
+        Case {
+            settings: Some(API_SETTINGS),
+            ..Case::new(
+                "undeclared name after an empty message",
+                r#"echo '{"problems":[{"name":"NOT_DECLARED","message":"m"},{"name":"API_URL","message":""}]}'; exit 1"#,
+                vec![Want::Exact(
+                    "validate-settings answer is invalid: problem 1 has an empty message",
+                )],
+            )
+        },
+        Case {
+            settings: Some(BAD_SETTINGS),
+            ..Case::new(
+                "undeclared name with a bad file",
+                r#"echo '{"problems":[{"name":"NOT_DECLARED","message":"m"}]}'; exit 1"#,
+                vec![Want::Exact(
+                    "settings.json: fields[0]: name \"events\" does not match ^[A-Z][A-Z0-9_]*$",
+                )],
+            )
+        },
         Case {
             settings: Some(BAD_SETTINGS),
             ..Case::new(
