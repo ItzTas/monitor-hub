@@ -205,7 +205,8 @@ The sei plugin reads `PATH` to find the password command, and it receives the hu
 | Old name | New name |
 |---|---|
 | `DATABASE_URL` | `DIARIO__DATABASE_URL`, as above |
-| `WATCH_TERMS`, `START_AFTER`, `CHECK_INTERVAL_MINUTES` | the same name with `DIARIO__` in front |
+| `WATCH_TERMS` | `DIARIO__WATCH_TERMS`, same value. See below for how the plugin matches. |
+| `START_AFTER`, `CHECK_INTERVAL_MINUTES` | the same name with `DIARIO__` in front |
 | `GAZETTE_API_URL` | `DIARIO__GAZETTE_API_URL`, optional. The plugin has a built-in default. |
 | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_TOKEN` |
 | `TELEGRAM_CHAT_ID` | unchanged |
@@ -214,6 +215,8 @@ The sei plugin reads `PATH` to find the password command, and it receives the hu
 | `TZ` (in the old compose file) | `TZ` in `.env`, optional |
 | `PUBLIC_HOST`, `PUBLIC_URL` | `PUBLIC_URL` is optional in the hub (the feed's link). `PUBLIC_HOST` is not used. |
 | `HTTP_PORT`, `TELEGRAM_API_URL`, `STATE_FILE`, `POSTGRES_PASSWORD` | gone. The hub has no equivalent. |
+
+The plugin matches `WATCH_TERMS` the way the Go image pinned in step 1 does. Matching ignores case, accents and repeated whitespace. A term with a digit is a registration number: leading zeros and one `.`, `-`, `/` or space between characters are ignored, so `0034712k` also matches `34.712-K` and `34712/K`, but not `134712-K`. Any other term is a name: its words match in order with up to four words of letters between them, so `Paulo Santos` also matches `PAULO HENRIQUE DE OLIVEIRA SANTOS`, but a number or a comma in between stops it. A term too long to match stops the plugin at start with `WATCH_TERMS term <n> (<size>) is too long to match: shorten it`, where `<n>` counts from 1. A name reaches that limit at 32 words.
 
 Compose settings changed too:
 
