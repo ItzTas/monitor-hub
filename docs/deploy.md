@@ -112,7 +112,7 @@ The SEI database is either on the shared Postgres too, or still in the sei-monit
    ```
 
 2. In `compose.yaml`, uncomment the two `<old-stack-network>` lines and put that network's name in both.
-3. That stack names its database service `postgres`, which is also the name of the shared server on the `postgres` network, so the host name `postgres` is ambiguous. In `SEI__DATABASE_URL` use the container name of the stack's Postgres, from `docker ps`, and use that container as `<postgres-container>` for every command on `sei_monitor`.
+3. That stack names its database service `postgres`, which is also the name of the shared server on the `postgres` network, so the host name `postgres` is ambiguous. In `SEI__DATABASE_URL` use the container name of the stack's Postgres, from `docker ps`, and use that container as `<postgres-container>` for every command on `sei_monitor`. In `DATABASE_URL` and `DIARIO__DATABASE_URL` use the shared Postgres container's name instead of `postgres` too: on both networks the name can resolve to the SEI stack's server, which has no `monitor_hub` or `diario_alerr` role.
 4. Do not use `docker compose down` on that stack in step 4: stop only its app service.
 
 ### Back up both databases
@@ -159,7 +159,7 @@ Both point at the existing databases, so nothing they already saw is announced a
 - `DIARIO__DATABASE_URL`: diario-alerr keeps `DATABASE_URL` in its `.env`. The example in its repository is
   `postgres://diario_alerr:<password>@postgres:5432/diario_alerr?sslmode=disable`.
 
-Take the real user, password, host and database from the running stack's own compose file and `.env` on the host. A password with special characters must be percent-encoded in the URL. The host is `postgres` on the shared network and the container name for a bundled database (see step 1).
+Take the real user, password, host and database from the running stack's own compose file and `.env` on the host. A password with special characters must be percent-encoded in the URL. The host is `postgres` on the shared network and the container name for a bundled database. If the hub also joins the sei-monitor stack's network, use container names for all three URLs, the hub's `DATABASE_URL` included (see step 1).
 
 Both plugins are stricter about their database than the Go programs were. A URL and a role that worked for Go can fail here:
 
