@@ -101,7 +101,7 @@ docker network ls --filter name=^postgres$
 docker network inspect postgres --format '{{range .Containers}}{{.Name}}{{"\n"}}{{end}}'
 ```
 
-Check: the first command lists a network named `postgres`, and the second lists the shared Postgres container (that name is your `<postgres-container>`), `diario-alerr`, and nothing else you did not expect. `docker compose config` does not catch a missing external network: the hub would fail at `up` with "network postgres not found".
+Check: the first command lists a network named `postgres`, and the second lists the shared Postgres container (that name is your `<postgres-container>`), `diario-alerr`, the sei-monitor app if its database is on the shared server, and nothing else you did not expect. `docker compose config` does not catch a missing external network: the hub would fail at `up` with "network postgres not found".
 
 The SEI database is either on the shared Postgres too, or still in the sei-monitor stack's own Postgres (the `v1.0.0` compose file bundles one). In the second case the hub must join that stack's network as well:
 
