@@ -2,6 +2,7 @@ package plugintest
 
 import (
 	"context"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -20,6 +21,7 @@ type fakeClient struct {
 	failures   int
 	calls      int
 	onLimitOne []*pluginpb.Event
+	watch      func(ctx context.Context) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error)
 }
 
 func (f *fakeClient) Describe(context.Context, *pluginpb.DescribeRequest, ...grpc.CallOption) (*pluginpb.DescribeResponse, error) {
@@ -38,7 +40,10 @@ func (f *fakeClient) Check(context.Context, *pluginpb.CheckRequest, ...grpc.Call
 	return &pluginpb.CheckResponse{Accepted: true}, nil
 }
 
-func (f *fakeClient) Watch(context.Context, *pluginpb.WatchRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+func (f *fakeClient) Watch(ctx context.Context, _ *pluginpb.WatchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+	if f.watch != nil {
+		return f.watch(ctx)
+	}
 	return nil, status.Error(codes.Unimplemented, "method Watch not implemented")
 }
 
@@ -168,6 +173,74 @@ func TestCheckNamesWhatLimitOneReturned(t *testing.T) {
 			c := &fakeClient{events: events, onLimitOne: tt.onLimitOne}
 			if got := check(t.Context(), c, Options{}); !slices.Equal(got, []string{tt.want}) {
 				t.Fatalf("violations = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+type watchStep struct {
+	signal *pluginpb.WatchResponse
+	err    error
+}
+
+type scriptedStream struct {
+	grpc.ClientStream
+	ctx   context.Context
+	steps []watchStep
+}
+
+func (s *scriptedStream) Recv() (*pluginpb.WatchResponse, error) {
+	if len(s.steps) == 0 {
+		<-s.ctx.Done()
+		return nil, status.FromContextError(s.ctx.Err()).Err()
+	}
+	step := s.steps[0]
+	s.steps = s.steps[1:]
+	return step.signal, step.err
+}
+
+func signal(seq int64) watchStep {
+	return watchStep{signal: &pluginpb.WatchResponse{LatestSeq: seq}}
+}
+
+func TestCheckWatch(t *testing.T) {
+	broken := status.Error(codes.Internal, "broken")
+	unimplemented := status.Error(codes.Unimplemented, "no")
+	const afterSignal = "Watch ended after its first signal; it must stay open while the plugin runs"
+	tests := map[string]struct {
+		steps   []watchStep
+		openErr error
+		want    []string
+	}{
+		"unimplemented on recv":  {steps: []watchStep{{err: unimplemented}}},
+		"unimplemented on open":  {openErr: unimplemented},
+		"one signal, stays open": {steps: []watchStep{signal(1)}},
+		"two signals":            {steps: []watchStep{signal(1), signal(2)}},
+		"fails at once":          {steps: []watchStep{{err: broken}}, want: []string{"Watch failed: rpc error: code = Internal desc = broken"}},
+		"fails on open":          {openErr: broken, want: []string{"Watch failed: rpc error: code = Internal desc = broken"}},
+		"ends at once":           {steps: []watchStep{{err: io.EOF}}, want: []string{"Watch ended without sending a signal"}},
+		"silent":                 {want: []string{"Watch sent no signal within 50ms"}},
+		"negative":               {steps: []watchStep{signal(-1)}, want: []string{"Watch signal latest_seq is -1, want 0 or more"}},
+		"negative second":        {steps: []watchStep{signal(3), signal(-2)}, want: []string{"Watch signal latest_seq is -2, want 0 or more"}},
+		"ends after the signal":  {steps: []watchStep{signal(1), {err: io.EOF}}, want: []string{afterSignal}},
+		"fails after the signal": {steps: []watchStep{signal(1), {err: broken}}, want: []string{"Watch failed after its first signal: rpc error: code = Internal desc = broken"}},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			var opened context.Context
+			c := &fakeClient{watch: func(ctx context.Context) (grpc.ServerStreamingClient[pluginpb.WatchResponse], error) {
+				opened = ctx
+				if tt.openErr != nil {
+					return nil, tt.openErr
+				}
+				return &scriptedStream{ctx: ctx, steps: tt.steps}, nil
+			}}
+			got := checkWatch(t.Context(), c, watchLimits{50 * time.Millisecond, 50 * time.Millisecond})
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("violations = %q, want %q", got, tt.want)
+			}
+			if opened.Err() == nil {
+				t.Fatal("the context given to Watch is still live after checkWatch returned")
 			}
 		})
 	}

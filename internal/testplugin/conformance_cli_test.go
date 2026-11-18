@@ -321,6 +321,37 @@ func TestConformancePasses(t *testing.T) {
 	}
 }
 
+func TestConformanceChecksWatch(t *testing.T) {
+	tests := map[string]struct {
+		code  int
+		want  []string
+		limit time.Duration
+	}{
+		"follow": {code: 0},
+		"silent": {code: 1, want: []string{"Watch sent no signal within 5s"}, limit: 20 * time.Second},
+		"close":  {code: 1, want: []string{"Watch ended after its first signal; it must stay open while the plugin runs"}},
+		"fail":   {code: 1, want: []string{"Watch failed: rpc error: code = Internal desc = watch failed"}},
+	}
+	for mode, tt := range tests {
+		t.Run(mode, func(t *testing.T) {
+			limit := cmp.Or(tt.limit, time.Minute)
+			code, stdout, stderr := conformanceWithin(t, limit, "-env", "EVENTS=3", "-env", "WATCH="+mode, "--", binary)
+			if code != tt.code {
+				t.Fatalf("exit code = %d, want %d; stderr: %s", code, tt.code, stderr)
+			}
+			if tt.code == 0 {
+				if strings.Count(stdout, "\n") != 1 {
+					t.Fatalf("stdout = %q, want one line", stdout)
+				}
+				return
+			}
+			if own := ownLines(stderr); !slices.Equal(own, tt.want) {
+				t.Fatalf("the command's own stderr lines = %q, want %q", own, tt.want)
+			}
+		})
+	}
+}
+
 func TestConformanceReportsPagingViolations(t *testing.T) {
 	tests := map[string]struct {
 		env  []string

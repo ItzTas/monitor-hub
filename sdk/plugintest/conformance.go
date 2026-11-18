@@ -35,6 +35,9 @@ const (
 	suiteTimeout  = 30 * time.Second
 	readyInterval = 200 * time.Millisecond
 	defaultLimit  = 100
+
+	watchFirstSignal = 5 * time.Second
+	watchStaysOpen   = time.Second
 )
 
 func start(ctx context.Context, cmd *exec.Cmd, stderr io.Writer) (*plugin.Client, pluginpb.PluginClient, error) {
@@ -105,7 +108,8 @@ func check(ctx context.Context, c pluginpb.PluginClient, opts Options) []string 
 	out = append(out, violations...)
 	out = append(out, checkPaging(ctx, c, events)...)
 	out = append(out, checkLimits(ctx, c, events)...)
-	return append(out, checkCheck(ctx, c)...)
+	out = append(out, checkCheck(ctx, c)...)
+	return append(out, checkWatch(ctx, c, watchLimits{watchFirstSignal, watchStaysOpen})...)
 }
 
 func validName(name string) bool {
@@ -303,4 +307,104 @@ func checkCheck(ctx context.Context, c pluginpb.PluginClient) []string {
 		return []string{fmt.Sprintf("Check failed: %v", err)}
 	}
 	return nil
+}
+
+type watchLimits struct{ firstSignal, staysOpen time.Duration }
+
+type watchResult struct {
+	signal *pluginpb.WatchResponse
+	err    error
+}
+
+func checkWatch(ctx context.Context, c pluginpb.PluginClient, limits watchLimits) []string {
+	wctx, cancel := context.WithCancel(ctx)
+	stream, err := c.Watch(wctx, &pluginpb.WatchRequest{})
+	if err != nil {
+		cancel()
+		return watchOpenFailure(err)
+	}
+	results := make(chan watchResult)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			signal, err := stream.Recv()
+			select {
+			case results <- watchResult{signal, err}:
+			case <-wctx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	return watchViolations(ctx, results, limits)
+}
+
+func watchOpenFailure(err error) []string {
+	if status.Code(err) == codes.Unimplemented {
+		return nil
+	}
+	return []string{fmt.Sprintf("Watch failed: %v", err)}
+}
+
+func watchViolations(ctx context.Context, results <-chan watchResult, limits watchLimits) []string {
+	first := time.NewTimer(limits.firstSignal)
+	defer first.Stop()
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-first.C:
+		return []string{fmt.Sprintf("Watch sent no signal within %s", limits.firstSignal)}
+	case r := <-results:
+		if r.err != nil {
+			return watchFirstFailure(r.err)
+		}
+		if violation := checkSignal(r.signal); violation != "" {
+			return []string{violation}
+		}
+	}
+	open := time.NewTimer(limits.staysOpen)
+	defer open.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-open.C:
+			return nil
+		case r := <-results:
+			if r.err != nil {
+				return watchLaterFailure(r.err)
+			}
+			if violation := checkSignal(r.signal); violation != "" {
+				return []string{violation}
+			}
+		}
+	}
+}
+
+func watchFirstFailure(err error) []string {
+	if errors.Is(err, io.EOF) {
+		return []string{"Watch ended without sending a signal"}
+	}
+	return watchOpenFailure(err)
+}
+
+func watchLaterFailure(err error) []string {
+	if errors.Is(err, io.EOF) {
+		return []string{"Watch ended after its first signal; it must stay open while the plugin runs"}
+	}
+	return []string{fmt.Sprintf("Watch failed after its first signal: %v", err)}
+}
+
+func checkSignal(signal *pluginpb.WatchResponse) string {
+	if signal.GetLatestSeq() < 0 {
+		return fmt.Sprintf("Watch signal latest_seq is %d, want 0 or more", signal.GetLatestSeq())
+	}
+	return ""
 }

@@ -214,6 +214,61 @@ func (*server) Check(context.Context, *pluginpb.CheckRequest) (*pluginpb.CheckRe
 	return &pluginpb.CheckResponse{Accepted: true}, nil
 }
 
+func (s *server) Watch(req *pluginpb.WatchRequest, stream grpc.ServerStreamingServer[pluginpb.WatchResponse]) error {
+	mode := os.Getenv("WATCH")
+	if mode == "" {
+		return s.UnimplementedPluginServer.Watch(req, stream)
+	}
+	modes := map[string]func(grpc.ServerStreamingServer[pluginpb.WatchResponse]) error{
+		"follow": watchFollow,
+		"silent": func(stream grpc.ServerStreamingServer[pluginpb.WatchResponse]) error {
+			<-stream.Context().Done()
+			return nil
+		},
+		"close": func(stream grpc.ServerStreamingServer[pluginpb.WatchResponse]) error {
+			return stream.Send(&pluginpb.WatchResponse{LatestSeq: eventCount()})
+		},
+		"fail": func(grpc.ServerStreamingServer[pluginpb.WatchResponse]) error {
+			return status.Error(codes.Internal, "watch failed")
+		},
+	}
+	watch, ok := modes[mode]
+	if !ok {
+		return status.Errorf(codes.InvalidArgument, "unknown WATCH mode %q", mode)
+	}
+	return watch(stream)
+}
+
+func watchFollow(stream grpc.ServerStreamingServer[pluginpb.WatchResponse]) error {
+	last := eventCount()
+	if err := stream.Send(&pluginpb.WatchResponse{LatestSeq: last}); err != nil {
+		return err
+	}
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	beat := time.NewTicker(30 * time.Second)
+	defer beat.Stop()
+	for {
+		select {
+		case <-stream.Context().Done():
+			return nil
+		case <-poll.C:
+			current := eventCount()
+			if current == last {
+				continue
+			}
+			last = current
+			if err := stream.Send(&pluginpb.WatchResponse{LatestSeq: current}); err != nil {
+				return err
+			}
+		case <-beat.C:
+			if err := stream.Send(&pluginpb.WatchResponse{LatestSeq: last}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
 func (*server) Events(_ context.Context, req *pluginpb.EventsRequest) (*pluginpb.EventsResponse, error) {
 	if unavailableFor, err := time.ParseDuration(os.Getenv("UNAVAILABLE_FOR")); err == nil && time.Since(started) < unavailableFor {
 		return nil, status.Error(codes.Unavailable, "not ready yet")
