@@ -36,10 +36,10 @@ func (unimplemented) watchEnd()  {}
 func (dropped) watchEnd()        {}
 
 type watchStream struct {
-	beat      chan struct{}
-	ended     chan error
-	done      chan struct{}
-	signalled bool
+	beat    chan struct{}
+	ended   chan error
+	done    chan struct{}
+	signals int
 }
 
 func (s *Service) subscribe(ctx context.Context, name string, sch *schedule) {
@@ -102,7 +102,7 @@ func (s *Service) follow(ctx context.Context, name string, client pluginpb.Plugi
 	end := s.await(ctx, changed, w)
 	cancel()
 	<-w.done
-	return settle(end, w.signalled, sch)
+	return settle(end, w.signals, sch)
 }
 
 func (s *Service) await(ctx context.Context, changed <-chan struct{}, w *watchStream) watchEnd {
@@ -118,7 +118,7 @@ func (s *Service) await(ctx context.Context, changed <-chan struct{}, w *watchSt
 		case <-silence:
 			return dropped{err: fmt.Errorf("no signal for %s", HeartbeatLimit)}
 		case err := <-w.ended:
-			return ended(ctx, changed, err, w.signalled)
+			return ended(ctx, changed, err, w.signals > 0)
 		}
 	}
 }
@@ -138,14 +138,14 @@ func ended(ctx context.Context, changed <-chan struct{}, err error, signalled bo
 	return dropped{err: err}
 }
 
-func settle(end watchEnd, signalled bool, sch *schedule) watchEnd {
-	if signalled {
+func settle(end watchEnd, signals int, sch *schedule) watchEnd {
+	if signals > 0 {
 		sch.setWatching(false)
 	}
 	switch end := end.(type) {
 	case dropped:
 		sch.request(pollRequest{full: true})
-		return dropped{established: signalled, err: end.err}
+		return dropped{established: signals >= 2, err: end.err}
 	case processChanged:
 		sch.request(pollRequest{full: true})
 	}
@@ -171,11 +171,11 @@ func (s *Service) read(ctx context.Context, name string, client pluginpb.PluginC
 }
 
 func (s *Service) signal(name string, sch *schedule, w *watchStream, sig *pluginpb.WatchResponse) {
-	if w.signalled {
+	w.signals++
+	if w.signals > 1 {
 		sch.request(pollRequest{latestSeq: sig.GetLatestSeq()})
 		return
 	}
-	w.signalled = true
 	sch.setWatching(true)
 	sch.request(pollRequest{full: true})
 	s.log.Info("watching a plugin", "plugin", name)

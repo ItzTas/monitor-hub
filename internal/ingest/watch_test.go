@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"io"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -152,6 +153,8 @@ func TestAFailedWatchIsRetriedWithBackOff(t *testing.T) {
 	second.signal(t, 3)
 	expectPoll(t, r, pollRequest{full: true})
 	r.clock.waitArmed(t, SafetyInterval)
+	second.signal(t, 3)
+	expectPoll(t, r, pollRequest{latestSeq: 3})
 
 	second.failWith(t, restarting())
 	expectPoll(t, r, pollRequest{full: true})
@@ -165,6 +168,46 @@ func TestAFailedWatchIsRetriedWithBackOff(t *testing.T) {
 	p.nextStream(t)
 	if calls := p.watchCalls.Load(); calls != 4 {
 		t.Errorf("Watch calls = %d, want 4", calls)
+	}
+}
+
+func TestAStreamThatSignalsOnceAndEndsWalksTheBackOff(t *testing.T) {
+	pool := coretest.Pool(t)
+	p := watched(plugin("sei", numbered(1, 3)...))
+	r := start(t, serviceOf(pool, newSwitchingClients(p)))
+
+	for _, delay := range []time.Duration{time.Second, 5 * time.Second, 30 * time.Second, 2 * time.Minute, 2 * time.Minute} {
+		stream := p.nextStream(t)
+		stream.signal(t, 3)
+		expectPoll(t, r, pollRequest{full: true})
+		stream.failWith(t, io.EOF)
+		expectPoll(t, r, pollRequest{full: true})
+		r.clock.fire(t, delay)
+	}
+	p.nextStream(t)
+	if calls := p.watchCalls.Load(); calls != 6 {
+		t.Errorf("Watch calls = %d, want 6", calls)
+	}
+}
+
+func TestAProcessChangeDuringTheBackOffStartsItAgain(t *testing.T) {
+	pool := coretest.Pool(t)
+	p1 := watched(plugin("sei", numbered(1, 3)...))
+	clients := newSwitchingClients(p1)
+	r := start(t, serviceOf(pool, clients))
+
+	p1.nextStream(t).failWith(t, restarting())
+	r.clock.fire(t, time.Second)
+	p1.nextStream(t).failWith(t, restarting())
+	r.clock.waitArmed(t, 5*time.Second)
+
+	p2 := watched(plugin("sei", numbered(1, 3)...))
+	clients.set("sei", p2)
+	p2.nextStream(t).failWith(t, restarting())
+	r.clock.fire(t, time.Second)
+	p2.nextStream(t)
+	if calls := p2.watchCalls.Load(); calls != 2 {
+		t.Errorf("Watch calls on the new process = %d, want 2", calls)
 	}
 }
 
