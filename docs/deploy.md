@@ -457,7 +457,7 @@ Coming forward again after a rollback is a new take-over. Before the hub starts,
 
 ## 8. Operating rules
 
-- **Resetting a plugin's database.** Do it only together with the hub's stored position for that plugin, and with the hub stopped. Reset alone, the plugin's numbering restarts below the hub's position, and its new alerts up to that position are never delivered. The gazette plugin tells you when this happens: it logs `the hub is ahead of this database: reset the hub's position for this plugin` at `error` level once per process, and `/api/plugins` shows `diario` as `failing` with the same text in `message`. Until the two agree it returns no events and confirms none, so it deletes none of them either. Reset the hub's side too. This deletes the hub's stored events for that plugin, so back up the hub's database first. The table and columns are from `sql/schema/00001_hub.sql`.
+- **Resetting a plugin's database.** Do it only together with the hub's stored position for that plugin, and with the hub stopped. Reset alone, the plugin's numbering restarts below the hub's position, and its new events up to that position are never delivered. Both plugins tell you when this happens. The gazette plugin logs `the hub is ahead of this database: reset the hub's position for this plugin` at `error` level once per process. The SEI plugin logs `the hub is ahead of this database: reset the hub's position for the sei plugin` at `error` level when it notices. `/api/plugins` then shows the plugin as `failing` with the same text in `message`. Until the two agree the plugin returns no events and confirms none, so it deletes none of them either. Reset the hub's side too. This deletes the hub's stored events for that plugin, so back up the hub's database first. The table and columns are from `sql/schema/00001_hub.sql`.
 
   ```bash
   docker exec -i <postgres-container> psql -U monitor_hub -d monitor_hub <<'SQL'
@@ -466,15 +466,52 @@ Coming forward again after a rollback is a new take-over. Before the hub starts,
   SQL
   ```
 
-  The delete is needed because the hub silently drops an event whose id it already stored for that plugin, and a new database reuses ids such as `welcome`. The next read is a new baseline: what the plugin held when it started is stored and not announced. On a new gazette database the welcome and the first cycle's alerts are announced on the hub's second read, about 15 seconds later. This statement was run on a throwaway copy of the hub's schema, not on a production database.
+  The delete is needed because the hub silently drops an event whose id it already stored for that plugin, and a new database reuses ids such as `welcome`. The next read is a new baseline: what the plugin held when it started is stored and not announced. On a new gazette database the welcome and the first cycle's alerts are announced on the hub's second read, about 15 seconds later. On a new SEI database the plugin's first check of the account only takes note of what is there, and reports start with its second check. This statement was run on a throwaway copy of the hub's schema, not on a production database.
 
 - **No retention in the hub.** The hub never deletes events or deliveries. Rows for a channel that is never paired or never works pile up. Prune them by hand if the database grows.
-- **Nobody is told when a plugin is failing.** The hub sends no notification about a plugin's state. A `failing` plugin shows only in `/api/plugins`, with the reason in `message`, and in the plugin's own lines in the hub log. Look at it now and then:
+- **Nobody is told when a plugin is failing.** The hub sends no notification about a plugin's state. A `failing` or `paused` plugin shows only in `/api/plugins`, with the reason in `message`, and in the plugin's own lines in the hub log. The one exception is a SEI login that SEI refused, which also records an event (next point). Look at the list after every hub restart and every configuration change, and now and then:
 
   ```bash
   curl -s -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/plugins
-  docker compose logs --since 24h monitor-hub | grep 'plugin=diario' | grep -E 'level=(WARN|ERROR)'
+  docker compose logs --since 24h monitor-hub | grep -E 'plugin=(diario|sei)' | grep -E 'level=(WARN|ERROR)'
   ```
+
+  A failing `sei` check retries on its own after 30 seconds, then a minute, doubling up to `POLL_INTERVAL`, and goes back to `idle` after the first check that works. If the message names an unknown agency or module and stays, fix `SEI__SEI_ORG` or set `SEI__SEI_API_URL`, then restart the hub.
+
+- **When SEI refuses the login.** The SEI plugin tries the login once. When SEI rejects it, the plugin stops logging in, because repeated failures can lock the account. It stays up and records one urgent `account_login_failed` event titled `sei-monitor could not log in to SEI`, with SEI's reason. `/api/plugins` shows `sei` as `paused`, with the reason followed by `restart the plugin with the configuration fixed, then request a check`, and the plugin refuses checks.
+
+  The plugin also stores the reason in its database, so the pause survives restarts. A plugin that starts with a reason on record is held: it does not log in at all, `/api/plugins` shows `paused` with the reason followed by `nothing is logging in: request a check once the configuration is fixed`, and it records one more `account_login_failed` event, at most once per UTC day. Restarting the hub is not a retry, on purpose: the hub also restarts the plugin by itself, for example after a lost database connection, and every rejected attempt counts toward SEI locking the account. Only a check you request tries the login again. To resume:
+
+  1. Fix the password: in SEI, or in `.env`, the secret file or the password command.
+  2. Restart the hub so the plugin starts held with the new configuration. After editing `.env`, run `docker compose up -d` in `/opt/stacks/monitor-hub` (a plain `restart` keeps the old environment); otherwise `docker compose restart monitor-hub`. You can skip this when `sei` already shows the held message and its configuration did not change: you fixed the password in SEI, or it comes from `SEI__SEI_PASSWORD_CMD`, which runs at every login.
+  3. Request a check:
+
+     ```bash
+     curl -s -X POST -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/plugins/sei/check
+     ```
+
+     Expected: `{"accepted":true,"message":""}`. `accepted:false` with `sei-monitor has not reached SEI yet` means the plugin is still connecting after the restart: ask again in a minute. `accepted:false` with `monitoring is paused because SEI rejected the login` means the plugin is paused, not held: do item 2 first.
+  4. Read `/api/plugins` after half a minute. `sei` should be `idle` with a `last_success_at` later than your request. If SEI rejected the password again, it is `paused` with the first message: start over from item 1.
+
+  Once SEI accepts the login of a requested check, the plugin erases the recorded reason, even when something later in that check fails, and then retries on its own as for any failing check. If the erase did not reach the database, a restart before the plugin's next good check finds the reason still recorded and holds the plugin again, without a login: request another check. A check whose login got no answer from SEI (an error page or a time-out) also leaves the plugin held: request another one later.
+
+- **SEI operator commands.** The SEI binary has three commands for you: `orgs` lists the acronym and id of every agency on the SEI login page and never logs in; `test-login` logs in and shows the SEI and module versions and your units; `diagnose` checks how the SEI API behaves and prints only counts and types. `test-login` and `diagnose` cost one login each run and do not look at a rejection the plugin recorded, so with a wrong password each run is one more rejected login. Run them inside the hub's container, where the binary lives. This copies the hub's `SEI__` variables to the plain names the command reads and removes every other variable except `PATH`, so no secret shows up on a command line and the command never sees the hub's other settings:
+
+  ```bash
+  cd /opt/stacks/monitor-hub
+  docker compose exec monitor-hub sh -c '
+  names="SEI_URL SEI_API_URL SEI_USERNAME SEI_PASSWORD SEI_PASSWORD_FILE SEI_PASSWORD_CMD SEI_ORG SEI_UNITS SEI_TIMEZONE SEI_CONCURRENCY"
+  for name in $names; do
+    eval "value=\${SEI__$name-}"
+    [ -z "$value" ] || export "$name=$value"
+  done
+  for name in $(env | sed -n "s/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p"); do
+    case " PATH $names " in *" $name "*) ;; *) unset "$name" ;; esac
+  done
+  exec /opt/monitor-hub/plugins/sei/sei-monitor "$@"' sei test-login
+  ```
+
+  Put `orgs` or `diagnose` in place of `test-login` at the end. They work while the plugin runs. Ctrl+C stops a command with exit code 130.
 
 - **Gazette client limits.** The plugin stops with a clear error on a gazette listing of more than 100 pages, a listing page over 4 MiB, a PDF over 256 MiB, or more than 64 MiB of text from one PDF.
 - **An edition that can never be read.** One edition the plugin cannot read, such as a broken PDF or one over the limits above, stops every later edition from being recorded, as in the Go program, and each cycle downloads them all again. `diario` stays `failing` with `could not read edition <title>: ...`. To get past it, read that edition yourself, then mark it as seen with its numeric id. The id is the `id` the gazette's media API gives for that title: the address is `DEFAULT_GAZETTE_API_URL` in `src/config.rs` of the diario-alerr repository, and adding `?mime_type=application/pdf&_fields=id,date_gmt,title&after=<day before>T00:00:00` lists the editions published after that time.
@@ -494,7 +531,15 @@ Coming forward again after a rollback is a new take-over. Before the hub starts,
 
   A `cursor_at` in the future means this happened. The other one: a PDF without a text layer, such as a scan saved as images, reads as "no match", with no alert and no error.
 - **A plugin that never starts.** If `running` stays false, the plugin's configuration error is in the hub log. A misspelled `SEI__` or `DIARIO__` name is not an error: the plugin never sees it and uses the default or reports the variable missing.
-- **Secrets from files.** `_FILE` variables need the file inside the container. The compose file mounts none, so add a volume before using one.
+- **Secrets from files.** `_FILE` variables need the file inside the container. The compose file mounts none, so add a volume before using one. The hub and its plugins run as user `65532`, which must be able to read the file. For the SEI password, for example, put it in `/opt/stacks/monitor-hub/secrets/sei_password`, then:
+
+  ```bash
+  sudo chown 65532:65532 /opt/stacks/monitor-hub/secrets/sei_password
+  sudo chmod 400 /opt/stacks/monitor-hub/secrets/sei_password
+  ```
+
+  Uncomment the matching `volumes` line in `compose.yaml`, which mounts the file read-only at `/run/secrets/sei_password`, set `SEI__SEI_PASSWORD_FILE=/run/secrets/sei_password` and leave `SEI__SEI_PASSWORD` out. The plugin reads the file once, at start, so restart the hub after you change it. `SEI__DATABASE_URL_FILE` works the same way. The gazette plugin has no `_FILE` form.
+- **The SEI password command.** `SEI__SEI_PASSWORD_CMD` runs at every login, without a shell, with a 30-second limit, and without the secret variables in its environment. Its program must exist inside the hub's image, which has no password manager. The plugin refuses to start when it cannot find the program on `PATH`.
 
 ## 9. What changed for you
 
@@ -502,6 +547,7 @@ Coming forward again after a rollback is a new take-over. Before the hub starts,
 - **The SEI web page and routes.** The SEI service's web page (`/ui/`) and its domain routes (`/processes`, `/status` with SEI details) have no replacement yet. The API is the hub's: `/api/plugins`, `/api/plugins/{name}/check`, `/api/events`, with a different response shape and the header `Authorization: Bearer <API_TOKEN>`.
 - **Feeds.** The old gazette service served its own public `/feed.xml`. The old SEI service served `/feed/<FEED_TOKEN>.xml`. The hub serves one feed for all plugins at `/feed.xml?token=<FEED_TOKEN>` (the token is needed when `FEED_TOKEN` is set), filtered with `&plugin=diario` or `&plugin=sei`. Subscribers of the old addresses must change them.
 - **The image.** `ghcr.io/itztas/monitor-hub` is public on the registry, so `docker compose pull` needs no login. It carries the plugins, so there is one image to pull instead of one per service.
+- **A refused SEI login.** The Go program tried the login again at every start. The plugin does not: after SEI refuses it, only a check you request tries again (section 8).
 - **The first minutes.** A new plugin's first read is stored and not announced (step 5). The gazette's welcome on a new database, and its first cycle's alerts, come on the hub's second read, about 15 seconds after the first, not at the moment the plugin starts.
 
 ## 10. Known issues
