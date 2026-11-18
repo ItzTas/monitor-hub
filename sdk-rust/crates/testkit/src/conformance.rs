@@ -12,7 +12,7 @@ use std::sync::{Mutex, Once, OnceLock, PoisonError};
 use std::time::Duration;
 
 use crate::ci;
-use crate::process::{Failure, Finished, execute};
+use crate::process::{Failure, Finished, Keep, STDERR_TAIL, execute};
 
 pub const SDK_GO_VERSION: &str = "sdk/v0.3.0";
 
@@ -110,7 +110,7 @@ fn run_from(source: Source, conformance: &Conformance) -> Outcome {
     let limit = conformance.ready_timeout + ALLOWANCE;
     let mut command = Command::new(&program);
     command.args(arguments(conformance));
-    match execute(&mut command, limit) {
+    match execute(&mut command, limit, Keep::Tail(STDERR_TAIL)) {
         Ok(finished) => outcome(finished),
         Err(Failure::Start(err)) => {
             Outcome::Failed(format!("cannot start {}: {err}", program.to_string_lossy()))
@@ -341,7 +341,7 @@ fn go_install(install: &Install, key: &str, staging: &Path) -> Result<(), String
         .args(["install", key])
         .env("GOBIN", staging)
         .envs(install.env.iter().map(|(name, value)| (name, value)));
-    match execute(&mut command, install.limit) {
+    match execute(&mut command, install.limit, Keep::Tail(STDERR_TAIL)) {
         Ok(finished) if finished.status.success() => Ok(()),
         Ok(finished) => Err(finished.stderr.trim().to_owned()),
         Err(Failure::Start(err)) => Err(format!("cannot run go: {err}")),

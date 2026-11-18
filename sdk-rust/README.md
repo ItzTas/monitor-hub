@@ -449,6 +449,8 @@ fn the_plugin_conforms() {
 - A message that starts with "the conformance command" and says it could not be fetched or built, followed by the Go tool's output. This happens in the `go` mode, before your plugin is started.
 - A message about an unexpected end: the command was called wrongly (a bug in the runner, not in your plugin), did not finish in time, could not be started, or was killed.
 
+Of the command's stderr, and of the Go tool's output, only the last 1 MiB is kept, cut at the start of a line. When anything was cut, the first line is `(earlier output dropped)`.
+
 ### Settings
 
 `monitor_hub_plugin_testkit::settings` has two checks for a plugin that ships `settings.json`. The first runs your built binary, so put it in `tests/`:
@@ -466,7 +468,7 @@ fn the_settings_contract_holds() {
 }
 ```
 
-`check(dir, program)` reads `dir/settings.json` with `parse`, then runs `program validate-settings` in `dir` with an empty environment. It returns one line per violation, and an empty list when both pass. It reports at most one problem with the file and one with the validator. The file must exist: without it, `check` reports that it cannot read it. A validator that runs longer than 5 seconds is stopped together with its process group.
+`check(dir, program)` reads `dir/settings.json` with `parse`, then runs `program validate-settings` in `dir` with an empty environment. It returns one line per violation, and an empty list when both pass. It reports at most one problem with the file and one with the validator. What the validator writes to stderr is read and thrown away. The file must exist: without it, `check` reports that it cannot read it. A validator that runs longer than 5 seconds is stopped together with its process group.
 
 `check` runs `program` exactly as given, made absolute against the current directory. A bare name such as `validator` becomes `<current directory>/validator` and is not looked up in `PATH`, so pass a full path, for example `env!("CARGO_BIN_EXE_<name>")`.
 

@@ -189,6 +189,19 @@ fn misbehaving_validators_are_reported() {
                 vec![Want::Exact("validate-settings did not finish within 5s")],
             )
         },
+        Case::new(
+            "loud stderr",
+            r#"head -c 50000000 /dev/zero >&2; echo '{"problems":[]}'"#,
+            vec![],
+        ),
+        Case {
+            bound: Duration::from_secs(12),
+            ..Case::new(
+                "hangs while logging",
+                "exec yes 'validating the settings, still validating the settings' >&2",
+                vec![Want::Exact("validate-settings did not finish within 5s")],
+            )
+        },
         Case {
             bound: Duration::from_secs(3),
             ..Case::new(

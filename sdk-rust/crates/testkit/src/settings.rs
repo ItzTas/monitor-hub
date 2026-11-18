@@ -12,7 +12,7 @@ use monitor_hub_plugin::settings::{
 };
 use serde_json::Value;
 
-use crate::process::{Failure, Finished, execute};
+use crate::process::{Failure, Finished, Keep, execute};
 
 pub fn check(dir: impl AsRef<Path>, program: impl AsRef<Path>) -> Vec<String> {
     let dir = dir.as_ref();
@@ -88,7 +88,7 @@ fn validator_violation(dir: &Path, program: &Path) -> Option<String> {
         .arg(VALIDATE_SETTINGS_ARG)
         .env_clear()
         .current_dir(dir);
-    match execute(&mut command, VALIDATE_SETTINGS_LIMIT) {
+    match execute(&mut command, VALIDATE_SETTINGS_LIMIT, Keep::Nothing) {
         Ok(finished) => answer_violation(&finished).err(),
         Err(Failure::Timeout(_)) => Some(format!(
             "validate-settings did not finish within {}s",
