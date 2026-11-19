@@ -137,7 +137,7 @@ func TestEnvironment(t *testing.T) {
 			environ: []string{"DIARIO__WATCH_TERMS=a,b", "TELEGRAM_TOKEN=s", "SEI__SEI_URL=u", "PATH=/bin", "TZ=America/Boa_Vista"},
 			want:    []string{"MONITOR_HUB_DATA_DIR=/data/monitors/diario", "PATH=/bin", "TMPDIR=/tmp", "TZ=America/Boa_Vista", "WATCH_TERMS=a,b"},
 		},
-		"related plugin names stay isolated": {
+		"related monitor names stay isolated": {
 			name:    "sei",
 			environ: []string{"SEI_EXTRA__TOKEN=a", "SEI__URL=u"},
 			want:    []string{"MONITOR_HUB_DATA_DIR=/data/monitors/sei", "TMPDIR=/tmp", "URL=u"},
