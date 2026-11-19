@@ -10,6 +10,8 @@ use crate::proto::WatchResponse;
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
 
+/// How a monitor signals the hub through `Watch`; keep a clone and pass one to
+/// [`serve`](crate::serve).
 #[derive(Clone, Debug)]
 pub struct Notifier {
     sender: watch::Sender<i64>,
@@ -27,11 +29,15 @@ impl Notifier {
             .send_modify(|current| *current = (*current).max(latest_seq));
     }
 
+    /// Call for a one-off change outside a cycle, such as a pause, a failure or a return to normal.
     pub fn status_changed(&self) {
         self.sender.send_modify(|_| {});
     }
 
     /// Call at the start of a cycle: signals now and again when the cycle ends, however it ends.
+    ///
+    /// `let _ = notifier.status_scope();` drops it at once and signals twice; bind it to a name
+    /// such as `_cycle`.
     pub fn status_scope(&self) -> StatusScope {
         self.status_changed();
         StatusScope {
@@ -39,6 +45,7 @@ impl Notifier {
         }
     }
 
+    /// Listens to this notifier's signals the way `Watch` does; useful in tests.
     pub fn subscribe(&self) -> Signals {
         Signals {
             receiver: self.sender.subscribe(),
@@ -53,6 +60,9 @@ impl Default for Notifier {
 }
 
 /// Keep it alive for the whole cycle; dropping it, by `?` or a panic too, signals the hub again.
+///
+/// `let _ = notifier.status_scope();` drops it at once and signals twice; bind it to a name such
+/// as `_cycle`.
 #[must_use = "bind the scope to a variable such as _cycle; it signals again when dropped"]
 #[derive(Debug)]
 pub struct StatusScope {
@@ -65,6 +75,7 @@ impl Drop for StatusScope {
     }
 }
 
+/// One listener's view of a [`Notifier`]: the latest seq, and a wait for the next signal.
 #[derive(Debug)]
 pub struct Signals {
     receiver: watch::Receiver<i64>,

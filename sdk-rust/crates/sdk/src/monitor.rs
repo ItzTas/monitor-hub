@@ -5,7 +5,8 @@ use crate::proto::{
     StatusRequest, StatusResponse,
 };
 
-/// Implement this for a monitor and pass it to [`serve`](crate::serve), which answers `Watch`.
+/// Implement this with `#[tonic::async_trait]` and pass it to [`serve`](crate::serve), which
+/// answers `Watch`.
 #[tonic::async_trait]
 pub trait Monitor: Send + Sync + 'static {
     async fn describe(
