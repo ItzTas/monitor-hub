@@ -1,42 +1,42 @@
-# Plugin protocol
+# Monitor protocol
 
-monitor-hub runs each monitor as a plugin: a separate process that the hub starts and talks to over gRPC. This document is enough to write a plugin in any language. You do not need to read the Go code. It describes two contracts: the one between the hub and its plugins, and, from [Consumers](#consumers), the one between the hub and the programs that receive its notifications.
+monitor-hub runs each monitor as a separate process that the hub starts and talks to over gRPC. This document is enough to write a monitor in any language. You do not need to read the Go code. It describes two contracts: the one between the hub and its monitors, and, from [Consumers](#consumers), the one between the hub and the programs that receive its notifications.
 
-The contract lives in [`proto/monitorhub/plugin/v1/plugin.proto`](../proto/monitorhub/plugin/v1/plugin.proto). Generate stubs for your language from that file. The Go stubs are in `sdk-go/pluginpb`.
+The contract lives in [`proto/monitorhub/monitor/v1/monitor.proto`](../proto/monitorhub/monitor/v1/monitor.proto). Generate stubs for your language from that file. The Go stubs are in `sdk-go/monitorpb`.
 
-The process model comes from [hashicorp/go-plugin](https://github.com/hashicorp/go-plugin) v1.8.0. The hub is the go-plugin client and your plugin is the go-plugin server. The sections below say exactly what that requires.
+The process model comes from [hashicorp/go-plugin](https://github.com/hashicorp/go-plugin) v1.8.0. The hub is the go-plugin client and your monitor is the go-plugin server. The sections below say exactly what that requires.
 
-## How a plugin runs
+## How a monitor runs
 
-1. The hub starts your command. Its working directory is the plugin directory.
+1. The hub starts your command. Its working directory is the monitor directory.
 2. Your process checks the magic cookie, opens a gRPC server on a Unix socket, and prints one handshake line on stdout.
 3. The hub reads the line, connects to the socket, and checks health.
 4. From then on the hub calls `Describe`, `Status`, `Check` and `Events` whenever it wants, and calls `Watch` to learn when to poll (see [`Watch`](#watch)).
 5. On shutdown the hub asks your process to exit and kills it if it does not.
 
-The plugin runs inside the hub's container. It must serve on a local socket only, never on a network interface.
+The monitor runs inside the hub's container. It must serve on a local socket only, never on a network interface.
 
 ## Startup
 
 ### 1. Check the magic cookie
 
-The hub sets this environment variable on every plugin it starts:
+The hub sets this environment variable on every monitor it starts:
 
 ```
-MONITOR_HUB_PLUGIN=7c0e5a52-monitor-hub
+MONITOR_HUB_MONITOR=7c0e5a52-monitor-hub
 ```
 
-If the variable is missing or has a different value, someone ran the plugin by hand. Print a short message to stderr and exit with a non-zero status. Do not open a socket.
+If the variable is missing or has a different value, someone ran the monitor by hand. Print a short message to stderr and exit with a non-zero status. Do not open a socket.
 
 ### 2. Listen on a Unix socket
 
 Create a socket path that does not exist yet and listen on it. The socket must be reachable by the hub, which runs as the same user.
 
 - If `PLUGIN_UNIX_SOCKET_DIR` is set, create the socket inside that directory. go-plugin only sets it when the host uses a custom runner, which the hub does not, so expect it to be unset.
-- Otherwise create it under `TMPDIR`, which the hub sets to `/tmp`. A fresh name such as `/tmp/plugin123456` is fine, as long as nothing exists at that path.
+- Otherwise create it under `TMPDIR`, which the hub sets to `/tmp`. A fresh name such as `/tmp/monitor123456` is fine, as long as nothing exists at that path.
 - Delete the socket file when you exit.
 
-The hub also passes `PLUGIN_MIN_PORT`, `PLUGIN_MAX_PORT` and `PLUGIN_PROTOCOL_VERSIONS`. The port variables only matter for TCP, which monitor-hub does not use. `PLUGIN_PROTOCOL_VERSIONS` lists the application protocol versions the hub accepts. Today that is `1`.
+The hub also passes `PLUGIN_MIN_PORT`, `PLUGIN_MAX_PORT` and `PLUGIN_PROTOCOL_VERSIONS`. The port variables only matter for TCP, which monitor-hub does not use. `PLUGIN_PROTOCOL_VERSIONS` lists the application protocol versions the hub accepts. Today that is `2`.
 
 Do not use TLS. monitor-hub runs without AutoMTLS, so the hub does not send `PLUGIN_CLIENT_CERT` and expects a plain gRPC connection.
 
@@ -44,8 +44,8 @@ Do not use TLS. monitor-hub runs without AutoMTLS, so the hub does not send `PLU
 
 Register two services on the server:
 
-- `monitorhub.plugin.v1.Plugin`, which you implement.
-- The standard [gRPC health service](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) (`grpc.health.v1.Health`), with the service name `plugin` set to `SERVING`. The hub calls `Check` with `service = "plugin"` and requires the call to succeed, which means the name must be registered. The hub does not read the status in the reply, but report `SERVING` anyway: that is the contract. On the wire, `HealthCheckRequest` has one field, `string service = 1`, and `HealthCheckResponse` has one field, `ServingStatus status = 1`, where `SERVING = 1`.
+- `monitorhub.monitor.v1.Monitor`, which you implement.
+- The standard [gRPC health service](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) (`grpc.health.v1.Health`), with the service name `plugin` set to `SERVING`. The name comes from go-plugin, not from monitor-hub. The hub calls `Check` with `service = "plugin"` and requires the call to succeed, which means the name must be registered. The hub does not read the status in the reply, but report `SERVING` anyway: that is the contract. On the wire, `HealthCheckRequest` has one field, `string service = 1`, and `HealthCheckResponse` has one field, `ServingStatus status = 1`, where `SERVING = 1`.
 
 Optionally register `plugin.GRPCController` (see [Shutdown](#shutdown)).
 
@@ -60,35 +60,35 @@ CORE-PROTOCOL-VERSION|APP-PROTOCOL-VERSION|NETWORK-TYPE|NETWORK-ADDR|PROTOCOL
 For monitor-hub the line looks like this:
 
 ```
-1|1|unix|/tmp/plugin123456|grpc
+1|2|unix|/tmp/monitor123456|grpc
 ```
 
 | Field | Value |
 |---|---|
 | `CORE-PROTOCOL-VERSION` | `1`. The hub rejects any other value. |
-| `APP-PROTOCOL-VERSION` | `1`. This is the monitor-hub protocol version and must match `protocol_version` in `plugin.json`. |
+| `APP-PROTOCOL-VERSION` | `2`. This is the monitor-hub protocol version and must match `protocol_version` in `monitor.json`. |
 | `NETWORK-TYPE` | `unix`. |
 | `NETWORK-ADDR` | The absolute path of the socket, with no `unix:` prefix. |
 | `PROTOCOL` | `grpc`. |
 
-Print the line only after the server is listening. The hub trims whitespace and splits on `|`, so the path cannot contain `|`. If the hub does not get a valid line within 60 seconds, it kills the plugin (see [Start-up time](#start-up-time)).
+Print the line only after the server is listening. The hub trims whitespace and splits on `|`, so the path cannot contain `|`. If the hub does not get a valid line within 60 seconds, it kills the monitor (see [Start-up time](#start-up-time)).
 
-Some gRPC libraries expect the address as `unix:/tmp/plugin123456`. Use that form when you bind, and print the bare path in the handshake.
+Some gRPC libraries expect the address as `unix:/tmp/monitor123456`. Use that form when you bind, and print the bare path in the handshake.
 
 ### Start-up time
 
-The hub waits 60 seconds for the handshake line. When the line has not arrived by then, the hub kills the plugin's whole process group and starts the plugin again later. The delay before each restart grows: 1 second, 5 seconds, 30 seconds, 2 minutes, then 5 minutes for every further attempt. It goes back to 1 second once the plugin has run for 10 minutes. A restart repeats everything the plugin does before the handshake, so a step that is too slow once stays too slow on every attempt.
+The hub waits 60 seconds for the handshake line. When the line has not arrived by then, the hub kills the monitor's whole process group and starts the monitor again later. The delay before each restart grows: 1 second, 5 seconds, 30 seconds, 2 minutes, then 5 minutes for every further attempt. It goes back to 1 second once the monitor has run for 10 minutes. A restart repeats everything the monitor does before the handshake, so a step that is too slow once stays too slow on every attempt.
 
-A plugin that needs slow preparation, such as connecting to a database or applying migrations, can do it in one of two ways:
+A monitor that needs slow preparation, such as connecting to a database or applying migrations, can do it in one of two ways:
 
 1. Prepare, then serve. Do each step before the handshake line, each under its own time limit, with a total well under 60 seconds. When a step fails or runs out of time, write one error line to stderr and exit with status 1.
-2. Serve, then prepare. Print the handshake line first and prepare in the background. Until preparation is done, fail `Events` with `UNAVAILABLE` and keep answering `Describe`, `Status` and `Check` (see [How the hub calls a plugin](#how-the-hub-calls-a-plugin)). Pick it when preparation can take longer than the budget allows.
+2. Serve, then prepare. Print the handshake line first and prepare in the background. Until preparation is done, fail `Events` with `UNAVAILABLE` and keep answering `Describe`, `Status` and `Check` (see [How the hub calls a monitor](#how-the-hub-calls-a-monitor)). Pick it when preparation can take longer than the budget allows.
 
 ### stdout and stderr
 
 stdout is for the handshake line and nothing else. The hub reads the first line from stdout as the handshake and discards the rest. A stray `print` before the handshake breaks startup.
 
-Send all logs to stderr, one line per entry. The hub writes each line to its own log, tagged with the plugin name, and the hub's `LOG_LEVEL` decides which lines show.
+Send all logs to stderr, one line per entry. The hub writes each line to its own log, tagged with the monitor name, and the hub's `LOG_LEVEL` decides which lines show.
 
 - A line that is a single JSON object with a string `@level` and a string `@message` is logged at that level. `trace` and `debug` map to debug, `info`, `warn` and `error` map to themselves, and any other value maps to debug. The object's other fields become attributes of the entry, with `@module` kept as `module`. `@timestamp` is optional, and the hub ignores it whatever its format.
 - Any other line is logged at debug as plain text. That includes JSON whose `@level` or `@message` is missing or is not a string.
@@ -100,13 +100,13 @@ The recommended format is the JSON that hclog writes, one object per line:
 {"@level":"info","@message":"fetched 3 items","@module":"diario","@timestamp":"2026-01-01T00:00:00.000000Z","items":3}
 ```
 
-`@level` and `@message` are required. `@module` becomes the `module` attribute, and `@timestamp` is ignored. Every other key becomes an attribute of the entry, except that the hub renames the keys `plugin`, `module`, `time`, `level`, `msg` and `source` to `field_plugin`, `field_module` and so on. Avoid those names. Keep each line under 64 KiB, or the hub cuts it and the level is lost.
+`@level` and `@message` are required. `@module` becomes the `module` attribute, and `@timestamp` is ignored. Every other key becomes an attribute of the entry, except that the hub renames the keys `monitor`, `module`, `time`, `level`, `msg` and `source` to `field_monitor`, `field_module` and so on. Avoid those names. Keep each line under 64 KiB, or the hub cuts it and the level is lost.
 
-The Rust SDK writes exactly this format to stderr: `monitor_hub_plugin::logging::init` installs a `tracing` subscriber, and a panic becomes one `error` line. It prefixes a field that would collide with the keys above with `field_` itself.
+The Rust SDK writes exactly this format to stderr: `monitor_hub_sdk::logging::init` installs a `tracing` subscriber, and a panic becomes one `error` line. It prefixes a field that would collide with the keys above with `field_` itself.
 
 ### Start-up errors
 
-When a plugin exits before its handshake line, its last `error` line on stderr should say why. The hub's settings page, which comes in a later release, will show that reason after a save restarts the plugin. The hub will keep the last JSON line with `@level` `error` that the plugin wrote before it exited and show the line's `error` attribute, cut to 500 characters. When the line has no `error` attribute, it will show `@message` instead.
+When a monitor exits before its handshake line, its last `error` line on stderr should say why. The hub's settings page, which comes in a later release, will show that reason after a save restarts the monitor. The hub will keep the last JSON line with `@level` `error` that the monitor wrote before it exited and show the line's `error` attribute, cut to 500 characters. When the line has no `error` attribute, it will show `@message` instead.
 
 So write the reason in the `error` attribute of an `error` line, and exit. Never put a secret value in it, such as a password, a token or a database URL that holds a password.
 
@@ -122,7 +122,7 @@ tracing::error!(error = &err as &dyn std::error::Error, "fatal");
 
 ## Shutdown
 
-To stop a plugin, the hub:
+To stop a monitor, the hub:
 
 1. Calls `plugin.GRPCController/Shutdown` with an empty message and ignores the result.
 2. Closes the gRPC connection.
@@ -133,50 +133,50 @@ To stop a plugin, the hub:
 
 The clean way is to implement `Shutdown`: stop the gRPC server, delete the socket file, and exit.
 
-The hub starts each plugin in its own process group and kills that whole group once the plugin exits or is killed, so child processes the plugin started do not outlive it.
+The hub starts each monitor in its own process group and kills that whole group once the monitor exits or is killed, so child processes the monitor started do not outlive it.
 
-## The `Plugin` service
+## The `Monitor` service
 
-### How the hub calls a plugin
+### How the hub calls a monitor
 
-The hub polls each plugin on its own, one poll at a time, so a slow plugin does not delay the others. Each poll calls `Describe` first. When `Describe` fails, or returns a `name` other than the plugin's name in `plugin.json`, the hub logs a warning and skips the rest of that poll. Otherwise it calls `Status` and reads `Events` at the same time, or calls only `Status` when the poll does not need events (see the list below). Each of these calls has a 30-second time limit.
+The hub polls each monitor on its own, one poll at a time, so a slow monitor does not delay the others. Each poll calls `Describe` first. When `Describe` fails, or returns a `name` other than the monitor's name in `monitor.json`, the hub logs a warning and skips the rest of that poll. Otherwise it calls `Status` and reads `Events` at the same time, or calls only `Status` when the poll does not need events (see the list below). Each of these calls has a 30-second time limit.
 
-The hub polls a plugin:
+The hub polls a monitor:
 
-- Right after the plugin's process starts: when the first [`Watch`](#watch) signal arrives, or when `Watch` answers `UNIMPLEMENTED` or fails. When the `Watch` call is open but has not sent a signal yet, the first poll comes 15 seconds after the hub starts, or 15 seconds after its last full poll of the plugin, and the hub keeps polling every 15 seconds until the first signal.
-- On every `Watch` signal. It calls `Status` every time. It reads `Events` only on the first signal of a `Watch` call, while the plugin's baseline is not complete (see [The first read is the baseline](#the-first-read-is-the-baseline)), or when the signal's `latest_seq` is greater than the highest `seq` the hub has stored for the plugin.
-- 15 seconds after the previous poll ends, when the plugin does not implement `Watch` or its `Watch` call is down.
+- Right after the monitor's process starts: when the first [`Watch`](#watch) signal arrives, or when `Watch` fails. When the `Watch` call is open but has not sent a signal yet, the first poll comes 15 seconds after the hub starts, or 15 seconds after its last full poll of the monitor, and the hub keeps polling every 15 seconds until the first signal.
+- On every `Watch` signal. It calls `Status` every time. It reads `Events` only on the first signal of a `Watch` call, while the monitor's baseline is not complete (see [The first read is the baseline](#the-first-read-is-the-baseline)), or when the signal's `latest_seq` is greater than the highest `seq` the hub has stored for the monitor.
+- 15 seconds after the previous poll ends, while the monitor's `Watch` call is down.
 - Every 5 minutes while `Watch` is up, counted from the end of the last full poll. A full poll reads `Events` whatever `latest_seq` says: the poll after the first signal of a call is one, and so is this 5-minute poll. The polls that follow later signals, heartbeats included, follow the rule of the previous item and do not postpone the 5-minute poll.
 
 Requests that arrive while a poll runs, for example a burst of signals, become one more poll. It starts 250 ms after the running poll ends, and it reads `Events` when any of the merged requests needed them.
 
-The hub calls `Plugin.Check` (the `Check` of `monitorhub.plugin.v1.Plugin`, not the health service's `Check` from [Startup](#3-serve-the-grpc-services)) only when someone asks it, through the hub's API, to run a cycle now. That call has a 10-second time limit.
+The hub calls `Monitor.Check` (the `Check` of `monitorhub.monitor.v1.Monitor`, not the health service's `Check` from [Startup](#3-serve-the-grpc-services)) only when someone asks it, through the hub's API, to run a cycle now. That call has a 10-second time limit.
 
-`Describe`, `Status` and `Check` must succeed at all times, including while `Events` still answers `UNAVAILABLE`. A plugin that is not ready reports it through `Status` (`STATE_FAILING` with a reason in `message`) and through `Check` (`accepted = false`), not by failing those calls.
+`Describe`, `Status` and `Check` must succeed at all times, including while `Events` still answers `UNAVAILABLE`. A monitor that is not ready reports it through `Status` (`STATE_FAILING` with a reason in `message`) and through `Check` (`accepted = false`), not by failing those calls.
 
 ### `Describe`
 
 The hub calls it on every poll. Return:
 
-- `name`: the plugin name, identical to `name` in `plugin.json`.
+- `name`: the monitor name, identical to `name` in `monitor.json`.
 - `display_name`: a human-readable name.
-- `version`: the plugin version.
-- `kinds`: every kind of event the plugin can produce. Each has an `id` and a `description`. The `kind` field of every event must be one of these ids.
+- `version`: the monitor version.
+- `kinds`: every kind of event the monitor can produce. Each has an `id` and a `description`. The `kind` field of every event must be one of these ids.
 
 ### `Status`
 
-Report what the plugin is doing. The hub polls it.
+Report what the monitor is doing. The hub polls it.
 
 - `state`: one of `STATE_IDLE`, `STATE_CHECKING`, `STATE_PAUSED` or `STATE_FAILING`. Never send `STATE_UNSPECIFIED`.
-- `message`: a short explanation, for example why the plugin is failing.
+- `message`: a short explanation, for example why the monitor is failing.
 - `last_check_started_at`, `last_success_at`, `next_check_at`: leave a timestamp unset when it is unknown.
 
 ### `Check`
 
-Ask the plugin to run a cycle now. It must return immediately and not wait for the cycle to finish.
+Ask the monitor to run a cycle now. It must return immediately and not wait for the cycle to finish.
 
 - `accepted = true` means a cycle was started or queued.
-- `accepted = false` means the plugin refused. It may be running one already, or the request came too early. Put the reason in `message`.
+- `accepted = false` means the monitor refused. It may be running one already, or the request came too early. Put the reason in `message`.
 
 ### `Events`
 
@@ -184,50 +184,51 @@ Return events the hub has not stored yet. See the next section for the rules.
 
 ### `Watch`
 
-`Watch` is optional. It lets the plugin ask the hub to poll now, so a notification goes out as soon as the plugin records an event instead of up to 15 seconds later. The hub sends an empty `WatchRequest` and reads a stream of `WatchResponse` messages. Each message is a signal. It carries `latest_seq` and nothing else: no state and no event. The hub reads those through its usual poll (see [How the hub calls a plugin](#how-the-hub-calls-a-plugin)).
+Every monitor implements `Watch`. Through it the monitor asks the hub to poll now, so a notification goes out as soon as the monitor records an event instead of up to 15 seconds later. The hub sends an empty `WatchRequest` and reads a stream of `WatchResponse` messages. Each message is a signal. It carries `latest_seq` and nothing else: no state and no event. The hub reads those through its usual poll (see [How the hub calls a monitor](#how-the-hub-calls-a-monitor)).
 
-A plugin that implements `Watch` follows these rules:
+A monitor's `Watch` follows these rules:
 
-- Send a signal as soon as the call starts, with the highest `seq` the plugin has issued, or 0 when it has issued none.
+- Send a signal as soon as the call starts, with the highest `seq` the monitor has issued, or 0 when it has issued none.
 - Send a signal after every write of events, with the highest `seq` written. Send it once the write is committed, never before the commit.
-- Send a signal when the answer `Status` would give changes, for example when the plugin pauses, resumes or starts failing.
+- Send a signal when the answer `Status` would give changes, for example when the monitor pauses, resumes or starts failing.
 - Send a signal at least every 30 seconds, with the same `latest_seq` when nothing changed. This heartbeat tells the hub that the call is alive.
 - Signals may be merged. When several are due before the previous one has gone out, send one, with the newest `latest_seq`.
-- `latest_seq` is a hint. The hub uses it only to decide whether to read `Events`, and it may be greater than what `Events` returns at that moment, for example while the plugin holds events back during the first read (see [Events recorded before the first read ends](#events-recorded-before-the-first-read-ends)).
-- Keep the call open for as long as the process runs. It ends when the hub cancels it or the plugin shuts down.
+- `latest_seq` is a hint. The hub uses it only to decide whether to read `Events`, and it may be greater than what `Events` returns at that moment, for example while the monitor holds events back during the first read (see [Events recorded before the first read ends](#events-recorded-before-the-first-read-ends)).
+- Keep the call open for as long as the process runs. It ends when the hub cancels it or the monitor shuts down.
 
-The first signal of a call always makes the hub read `Events`, and so does every signal until the hub's first read of the plugin is complete. After that, the hub reads `Events` only when a signal's `latest_seq` is greater than the position the hub has stored. So after recording events, signal with their `seq`. A signal that repeats the old `latest_seq` only makes the hub read `Status` again.
+The first signal of a call always makes the hub read `Events`, and so does every signal until the hub's first read of the monitor is complete. After that, the hub reads `Events` only when a signal's `latest_seq` is greater than the position the hub has stored. So after recording events, signal with their `seq`. A signal that repeats the old `latest_seq` only makes the hub read `Status` again.
 
-A plugin that does not implement `Watch` answers `UNIMPLEMENTED`, and nothing else changes for it: the hub polls it every 15 seconds. `protocol_version` stays `1` in both cases.
+A monitor whose `Watch` answers `UNIMPLEMENTED` violates the protocol, and the [conformance suite](#checks) fails it. The hub logs it as an error, `the monitor violates the protocol: its Watch answered UNIMPLEMENTED; polling it every 15s`, and otherwise treats it like any other failed call (below).
+
+Polling every 15 seconds stays as the hub's fallback, for the times a signal cannot be relied on: while the call is open and has not sent its first signal, after 90 seconds without a signal, and while the call is down.
 
 What the hub does with the call:
 
-- When `Watch` answers `UNIMPLEMENTED` before its first signal, the hub logs `the plugin has no Watch; polling it every 15s`, polls at once and then every 15 seconds. It does not call `Watch` again until the plugin's process restarts.
-- On the first signal of a call, the hub logs `watching a plugin` and polls.
+- On the first signal of a call, the hub logs `watching a monitor` and polls.
 - When 90 seconds pass without a signal, the hub cancels the call, polls at once, goes back to polling every 15 seconds, and opens `Watch` again after a delay.
-- Any other error, and the end of the call, are handled the same way. For these and for the 90 seconds of silence, the hub logs a warning, `the plugin's Watch stopped; polling it every 15s`, with the error and the delay.
-- The delay before the hub opens `Watch` again grows: 1 second, 5 seconds, 30 seconds, then 2 minutes for every further attempt. It goes back to 1 second after a call that stayed open at least 30 seconds and sent at least two signals, or when the plugin's process changes.
-- When the plugin's process restarts, the hub cancels the old call and opens `Watch` on the new process.
+- An error, `UNIMPLEMENTED` included, and the end of the call are handled the same way. For these and for the 90 seconds of silence, the hub logs `the monitor's Watch stopped; polling it every 15s` as a warning, with the error and the delay. `UNIMPLEMENTED` gets the error line above instead.
+- The delay before the hub opens `Watch` again grows: 1 second, 5 seconds, 30 seconds, then 2 minutes for every further attempt. It goes back to 1 second after a call that stayed open at least 30 seconds and sent at least two signals, or when the monitor's process changes.
+- When the monitor's process restarts, the hub cancels the old call and opens `Watch` on the new process.
 - A signal that comes early, twice or never changes only when the hub polls, never what it stores. When a signal announces a `seq` that `Events` does not return yet, the hub reads `Events`, stores nothing and keeps its position. The next signal, or the 5-minute poll, reads again.
 
-With the Rust SDK, use `Notifier` and `serve_with_notifier` (see [Signalling the hub](../sdk-rust/README.md#signalling-the-hub)). In Go, implement `Watch(*pluginpb.WatchRequest, grpc.ServerStreamingServer[pluginpb.WatchResponse]) error` on the server type that embeds `pluginpb.UnimplementedPluginServer`. Without it, the embedded method answers `UNIMPLEMENTED`. Return when `stream.Context()` is done.
+With the Rust SDK, `serve(monitor, notifier)` answers `Watch` from a `Notifier` (see [Signalling the hub](../sdk-rust/README.md#signalling-the-hub)). In Go, implement `Watch(*monitorpb.WatchRequest, grpc.ServerStreamingServer[monitorpb.WatchResponse]) error` on the server type that embeds `monitorpb.UnimplementedMonitorServer`, because the embedded method answers `UNIMPLEMENTED`. Return when `stream.Context()` is done.
 
 ## Scheduling
 
-The plugin schedules its own cycles. The hub never tells it when to run, except through `Check`. The hub only pulls events and status, and a plugin can ask it to pull now through [`Watch`](#watch).
+The monitor schedules its own cycles. The hub never tells it when to run, except through `Check`. The hub only pulls events and status, and the monitor asks it to pull now through [`Watch`](#watch).
 
-State that belongs to the monitor, such as the processes already seen or the editions already read, stays inside the plugin. The hub stores events, deliveries and status.
+State that belongs to the monitor, such as the processes already seen or the editions already read, stays inside the monitor. The hub stores events, deliveries and status.
 
 ## Events: `seq`, `after` and `id`
 
-`Events(after, limit)` returns the events whose `seq` is greater than `after`, in increasing `seq` order. It returns exactly `min(limit, available)` of them, where `available` is the number of events after `after` that the plugin holds.
+`Events(after, limit)` returns the events whose `seq` is greater than `after`, in increasing `seq` order. It returns exactly `min(limit, available)` of them, where `available` is the number of events after `after` that the monitor holds.
 
-- `limit <= 0` means 100. The plugin must apply that default. Never return more than the effective limit.
-- Never return fewer than the effective limit while more events exist. The hub asks for pages of 500 and keeps reading while a page is full. It treats a shorter page as the end of the read, and during the first read that short page also completes the baseline (see [The first read is the baseline](#the-first-read-is-the-baseline)). A plugin that caps its pages below `limit`, for example at 100, completes the baseline after its first page, and every older event it held back is notified on the next poll.
-- `seq` is an integer that strictly increases per plugin. Every new event gets a `seq` greater than every earlier one. Never reuse a value and never go backwards, including after a restart. Persist the counter, or derive it from something that only grows.
-- The hub stores the highest `seq` it has saved and sends it back as `after`. Receiving `after = X` is the hub's confirmation that everything up to `X` is saved. The plugin may delete those events then, and only then.
+- `limit <= 0` means 100. The monitor must apply that default. Never return more than the effective limit.
+- Never return fewer than the effective limit while more events exist. The hub asks for pages of 500 and keeps reading while a page is full. It treats a shorter page as the end of the read, and during the first read that short page also completes the baseline (see [The first read is the baseline](#the-first-read-is-the-baseline)). A monitor that caps its pages below `limit`, for example at 100, completes the baseline after its first page, and every older event it held back is notified on the next poll.
+- `seq` is an integer that strictly increases per monitor. Every new event gets a `seq` greater than every earlier one. Never reuse a value and never go backwards, including after a restart. Persist the counter, or derive it from something that only grows.
+- The hub stores the highest `seq` it has saved and sends it back as `after`. Receiving `after = X` is the hub's confirmation that everything up to `X` is saved. The monitor may delete those events then, and only then.
 - Until the hub confirms, keep the events and keep returning them. If the hub asks again with the same `after`, return the same events again.
-- `id` is stable and unique per plugin. It identifies the thing that happened, not the delivery. Sending the same event twice is allowed: the hub deduplicates on `(plugin, id)`, so a second copy is dropped. An event that is re-sent with a new `seq` must keep its old `id`.
+- `id` is stable and unique per monitor. It identifies the thing that happened, not the delivery. Sending the same event twice is allowed: the hub deduplicates on `(monitor, id)`, so a second copy is dropped. An event that is re-sent with a new `seq` must keep its old `id`.
 
 The other `Event` fields. Two are required, and different parts enforce them: the hub rejects the whole page when an event has no valid `occurred_at`, and the [conformance suite](#conformance) fails an event with an empty `title`. The hub does not check `title`.
 
@@ -243,72 +244,72 @@ The other `Event` fields. Two are required, and different parts enforce them: th
 
 ### The first read is the baseline
 
-The baseline is the hub's whole first read of a plugin it has not read to the end before: a new plugin, or one whose stored position was reset. It covers every `Events` page from `after = 0` up to the first page shorter than 500. The events of that read are stored for history and are never notified. The baseline ends when a read reaches its short page without an error; if a read fails halfway, the next poll goes on reading as part of the baseline. Everything stored after that is a candidate for a notification.
+The baseline is the hub's whole first read of a monitor it has not read to the end before: a new monitor, or one whose stored position was reset. It covers every `Events` page from `after = 0` up to the first page shorter than 500. The events of that read are stored for history and are never notified. The baseline ends when a read reaches its short page without an error; if a read fails halfway, the next poll goes on reading as part of the baseline. Everything stored after that is a candidate for a notification.
 
-The first read happens on the hub's first poll after the plugin is up. That poll comes right after the plugin's process starts: when the first `Watch` signal arrives, or when `Watch` answers `UNIMPLEMENTED` (see [How the hub calls a plugin](#how-the-hub-calls-a-plugin)). The hub polls each plugin on its own, so a slow poll of another plugin does not delay it. Each call the poll makes may take up to 30 seconds.
+The first read happens on the hub's first poll after the monitor is up. That poll comes right after the monitor's process starts: when the first `Watch` signal arrives, or when `Watch` fails (see [How the hub calls a monitor](#how-the-hub-calls-a-monitor)). The hub polls each monitor on its own, so a slow poll of another monitor does not delay it. Each call the poll makes may take up to 30 seconds.
 
-This has one consequence for plugins. If your plugin cannot read its events yet, because it is not logged in or its database is not ready, **fail the `Events` call with gRPC status `UNAVAILABLE`**. Do not answer with an empty list. An empty answer is a success, so it completes the baseline, and every event that shows up later gets notified as if it were new.
+This has one consequence for monitors. If your monitor cannot read its events yet, because it is not logged in or its database is not ready, **fail the `Events` call with gRPC status `UNAVAILABLE`**. Do not answer with an empty list. An empty answer is a success, so it completes the baseline, and every event that shows up later gets notified as if it were new.
 
-When the plugin is working and there is simply nothing new, return an empty list with an OK status.
+When the monitor is working and there is simply nothing new, return an empty list with an OK status.
 
 ### Events recorded before the first read ends
 
-Every event the plugin records between its own start and the end of the first read is part of the baseline, unless the plugin holds it back. A plugin that runs a cycle as soon as it starts can record new events in those seconds, and the hub then stores them as history and never announces them.
+Every event the monitor records between its own start and the end of the first read is part of the baseline, unless the monitor holds it back. A monitor that runs a cycle as soon as it starts can record new events in those seconds, and the hub then stores them as history and never announces them.
 
-The recommended behavior, which both first-party plugins, `diario` and `sei`, follow:
+The recommended behavior, which the first-party monitors `diario`, `sei` and `anhanguera` follow:
 
-1. At start-up, before the handshake, remember the highest `seq` the plugin has issued so far.
+1. At start-up, before the handshake, remember the highest `seq` the monitor has issued so far.
 2. Until one `Events` call has answered OK with a page shorter than its `limit`, return only events with a `seq` at or below that value. The newer ones do not count as available yet, so the page rule above still holds.
 3. After that call, return every event as usual.
 
-The first read then holds only what existed before the plugin started. Events recorded after the start reach the hub on the next poll, and are announced. That poll comes right after the plugin's next `Watch` signal, a heartbeat included, so within 30 seconds; without `Watch`, within 15 seconds. On a new database, where nothing was issued before the start, everything the plugin records, a welcome event included, is announced on that second read. When the hub already knows the plugin, holding back costs one poll.
+The first read then holds only what existed before the monitor started. Events recorded after the start reach the hub on the next poll, and are announced. That poll comes right after the monitor's next `Watch` signal, a heartbeat included, so within 30 seconds; while the `Watch` call is down, within 15 seconds. On a new database, where nothing was issued before the start, everything the monitor records, a welcome event included, is announced on that second read. When the hub already knows the monitor, holding back costs one poll.
 
 What this does not cover:
 
-- A restart of the plugin, or of the hub, which restarts its plugins, after the plugin recorded new events and before the first read ended. The new process counts those events as issued before its start, so the baseline takes them in.
-- A hub that received the short page and then failed to store it, or failed to record the baseline as complete. The plugin has already stopped holding back, so the hub's next poll, still part of the baseline, reads the held-back events too and takes them in.
+- A restart of the monitor, or of the hub, which restarts its monitors, after the monitor recorded new events and before the first read ended. The new process counts those events as issued before its start, so the baseline takes them in.
+- A hub that received the short page and then failed to store it, or failed to record the baseline as complete. The monitor has already stopped holding back, so the hub's next poll, still part of the baseline, reads the held-back events too and takes them in.
 
-## `plugin.json`
+## `monitor.json`
 
-Every plugin ships a manifest named `plugin.json`:
+Every monitor ships a manifest named `monitor.json`:
 
 ```json
-{ "protocol_version": 1, "name": "diario", "command": ["diario-alerr", "plugin"], "apk": ["poppler-utils"] }
+{ "protocol_version": 2, "name": "diario", "command": ["diario-alerr", "monitor"], "apk": ["poppler-utils"] }
 ```
 
 | Field | Type | Meaning |
 |---|---|---|
-| `protocol_version` | number | Must be `1`. |
-| `name` | string | Matches `^[a-z][a-z0-9-]{1,30}$`: lowercase letters, digits and single hyphens, starting with a letter, 2 to 31 characters. It must not end with a hyphen or contain two hyphens in a row, because one plugin's environment prefix must never be the beginning of another's. It must equal the name of the plugin's directory. |
+| `protocol_version` | number | Must be `2`. A manifest with `1`, from before the gRPC service was renamed, is refused with a message saying so. |
+| `name` | string | Matches `^[a-z][a-z0-9-]{1,30}$`: lowercase letters, digits and single hyphens, starting with a letter, 2 to 31 characters. It must not end with a hyphen or contain two hyphens in a row, because one monitor's environment prefix must never be the beginning of another's. It must equal the name of the monitor's directory. |
 | `command` | string array | The command to run. It must not be empty. |
-| `apk` | string array | Alpine packages the plugin needs. The image build installs them. |
+| `apk` | string array | Alpine packages the monitor needs. The image build installs them. |
 
 Unknown fields are rejected.
 
-The hub resolves `command[0]` first as a file inside the plugin directory, then through `PATH`. Use the second form for interpreters such as `python3`. The plugin runs with the plugin directory as its working directory.
+The hub resolves `command[0]` first as a file inside the monitor directory, then through `PATH`. Use the second form for interpreters such as `python3`. The monitor runs with the monitor directory as its working directory.
 
 ## Environment
 
-A plugin receives only these variables:
+A monitor receives only these variables:
 
-- Every hub variable that starts with the plugin's prefix, with the prefix removed. The prefix is the plugin name in upper case, with `-` replaced by `_`, followed by `__`. For a plugin named `diario-alerr` the prefix is `DIARIO_ALERR__`, so `DIARIO_ALERR__WATCH_TERMS=a,b` arrives as `WATCH_TERMS=a,b`.
+- Every hub variable that starts with the monitor's prefix, with the prefix removed. The prefix is the monitor name in upper case, with `-` replaced by `_`, followed by `__`. For a monitor named `diario-alerr` the prefix is `DIARIO_ALERR__`, so `DIARIO_ALERR__WATCH_TERMS=a,b` arrives as `WATCH_TERMS=a,b`.
 - `PATH` and `TZ`, copied from the hub.
 - `TMPDIR=/tmp`.
-- `MONITOR_HUB_DATA_DIR=<DATA_DIR>/plugins/<name>`. This is the only place the plugin should write persistent data. The hub does not create other directories for it.
+- `MONITOR_HUB_DATA_DIR=<DATA_DIR>/monitors/<name>`. This is the only place the monitor should write persistent data. The hub does not create other directories for it.
 
-On top of that, go-plugin adds `MONITOR_HUB_PLUGIN` and the `PLUGIN_*` variables described above.
+On top of that, go-plugin adds `MONITOR_HUB_MONITOR` and the `PLUGIN_*` variables described above.
 
-Nothing else from the hub's environment is passed. A plugin cannot read the hub's database URL, notification tokens or another plugin's settings.
+Nothing else from the hub's environment is passed. A monitor cannot read the hub's database URL, notification tokens or another monitor's settings.
 
 ## Settings
 
-A plugin can declare its settings in two parts that go together: a `settings.json` file and a `validate-settings` argument. The hub's settings page will draw the plugin's form from the file, and run the plugin with the argument to check new values before it saves them.
+A monitor can declare its settings in two parts that go together: a `settings.json` file and a `validate-settings` argument. The hub's settings page will draw the monitor's form from the file, and run the monitor with the argument to check new values before it saves them.
 
-That page comes in a later release. The hub in this release does not read `settings.json`, and neither does an older hub, so a plugin can ship the file now. Both parts are optional. A plugin without the file keeps working as before, but nothing about it will be editable from the page.
+That page comes in a later release. The hub in this release does not read `settings.json`, and neither does an older hub, so a monitor can ship the file now. Both parts are optional. A monitor without the file keeps working as before, but nothing about it will be editable from the page.
 
 ### `settings.json`
 
-The file sits next to `plugin.json`, in the plugin directory. An example:
+The file sits next to `monitor.json`, in the monitor directory. An example:
 
 ```json
 {
@@ -347,13 +348,13 @@ Each field has these attributes:
 
 | Attribute | Type | Required | Meaning |
 |---|---|---|---|
-| `name` | string | yes | The environment variable the plugin reads, without the hub's prefix. |
+| `name` | string | yes | The environment variable the monitor reads, without the hub's prefix. |
 | `label` | string | yes | The field's label. |
 | `help` | string | no | One or two sentences shown under the field. |
-| `type` | string | yes | `string`, `list`, `integer`, `number`, `duration` or `choice`. A `choice` field becomes a list of options. The other types become a text box, and the type only hints at the keyboard and the example. A `list` is the comma-separated text the plugin reads. |
+| `type` | string | yes | `string`, `list`, `integer`, `number`, `duration` or `choice`. A `choice` field becomes a list of options. The other types become a text box, and the type only hints at the keyboard and the example. A `list` is the comma-separated text the monitor reads. |
 | `secret` | boolean | no | `true`: the hub never shows or returns the value. It works with any type. |
-| `required` | boolean | no | Only marks the field on the page. The plugin's validation decides whether something is missing. |
-| `default` | string | no | The value the plugin uses when the field is empty. The page only shows it. |
+| `required` | boolean | no | Only marks the field on the page. The monitor's validation decides whether something is missing. |
+| `default` | string | no | The value the monitor uses when the field is empty. The page only shows it. |
 | `options` | string array | for `choice` | The accepted values. |
 | `group` | string | no | A section title. Fields with the same `group` are shown together. |
 | `editable` | boolean | no | `false`: the page shows the field and where its value comes from, but cannot change it. The default is `true`. |
@@ -383,17 +384,17 @@ Each field must follow these rules. A broken rule is reported as `settings.json:
 
 Options are compared exactly, character by character. `"a"` and `"A"`, or `"a"` and `"a "`, are two different options, and a `default` must be equal to one of them. Only the first broken rule of a field is reported.
 
-The Rust SDK and the conformance command reject an unknown attribute and an unknown `type`, so that a typo such as `secert` cannot leave a secret on show. The hub's reader will ignore them instead and treat an unknown `type` as `string`, so that a new optional attribute does not break an older hub. A change that an older hub cannot safely ignore raises `settings_version`. The hub will treat a plugin whose `settings_version` it does not know as one that declares nothing.
+The Rust SDK and the conformance command reject an unknown attribute and an unknown `type`, so that a typo such as `secert` cannot leave a secret on show. The hub's reader will ignore them instead and treat an unknown `type` as `string`, so that a new optional attribute does not break an older hub. A change that an older hub cannot safely ignore raises `settings_version`. The hub will treat a monitor whose `settings_version` it does not know as one that declares nothing.
 
 The hub will apply the `options` rules only to the types it knows. For a `type` it does not know, it reads the field as `string` and ignores `options`, so a later type can carry options without raising `settings_version`.
 
 An older Rust SDK or conformance command rejects a file that uses an attribute or a type added later, so check such a file with the release that added it. A new optional attribute does not affect a file written for an older release.
 
-The hub does not check values against these attributes, beyond what the form control allows: a `choice` field offers only its options. Rules such as "set exactly one of these three" belong in the plugin's `validate-settings`.
+The hub does not check values against these attributes, beyond what the form control allows: a `choice` field offers only its options. Rules such as "set exactly one of these three" belong in the monitor's `validate-settings`.
 
-Every value is text, the same text the plugin reads from its environment. A `list` value is separated by commas. An empty value means "not set": the page can save an empty value to hide one that comes from `.env`, so read an empty variable as a missing one.
+Every value is text, the same text the monitor reads from its environment. A `list` value is separated by commas. An empty value means "not set": the page can save an empty value to hide one that comes from `.env`, so read an empty variable as a missing one.
 
-A `settings.json` that cannot be read, or that breaks a rule, will not stop the hub or the plugin. The hub will log the error and treat the plugin as if it declared nothing.
+A `settings.json` that cannot be read, or that breaks a rule, will not stop the hub or the monitor. The hub will log the error and treat the monitor as if it declared nothing.
 
 The Rust SDK's reader and the conformance command apply the same rules and give the same text for every rule in the table above. They differ in a few places, and the Rust reader is the stricter one. Write the file so that both accept it.
 
@@ -403,13 +404,13 @@ The Rust SDK's reader and the conformance command apply the same rules and give 
 
 ### `validate-settings`
 
-A plugin that ships `settings.json` must also accept `<command[0]> validate-settings`. The hub finds `command[0]` the way it finds the plugin's command: first in the plugin directory, then through `PATH`. It runs it in the plugin directory with `validate-settings` as its only argument. The rest of `command` is not passed, and no field can name another program.
+A monitor that ships `settings.json` must also accept `<command[0]> validate-settings`. The hub finds `command[0]` the way it finds the monitor's command: first in the monitor directory, then through `PATH`. It runs it in the monitor directory with `validate-settings` as its only argument. The rest of `command` is not passed, and no field can name another program.
 
-So `command[0]` must be the plugin's own program. A plugin started through an interpreter, such as [`examples/python-plugin`](../examples/python-plugin) with `["python3", "main.py"]`, would get `python3 validate-settings`. Before such a plugin ships `settings.json`, it needs an executable of its own, for example a script with a shebang line.
+So `command[0]` must be the monitor's own program. A monitor started through an interpreter, such as [`examples/python-monitor`](../examples/python-monitor) with `["python3", "main.py"]`, would get `python3 validate-settings`. Before such a monitor ships `settings.json`, it needs an executable of its own, for example a script with a shebang line.
 
-The values to check arrive in the environment, under the names the plugin reads when it starts. The hub will build that environment the same way it builds the one the plugin runs with. The magic cookie may be missing, so look for `validate-settings` before anything checks the cookie.
+The values to check arrive in the environment, under the names the monitor reads when it starts. The hub will build that environment the same way it builds the one the monitor runs with. The magic cookie may be missing, so look for `validate-settings` before anything checks the cookie.
 
-The plugin writes one JSON object on stdout and exits:
+The monitor writes one JSON object on stdout and exits:
 
 ```json
 {"problems": [{"name": "WATCH_TERMS", "message": "set at least one name or registration number"}]}
@@ -421,7 +422,7 @@ The plugin writes one JSON object on stdout and exits:
 | `1` | at least one | The values are invalid. |
 | anything else | | The validator failed. |
 
-A validator that exits with `0` but lists problems, exits with `1` but lists none, prints something other than one JSON object, names a field the file does not declare, or runs for more than 5 seconds has failed too. When the validator fails, the hub will save nothing and say that the plugin could not validate the values.
+A validator that exits with `0` but lists problems, exits with `1` but lists none, prints something other than one JSON object, names a field the file does not declare, or runs for more than 5 seconds has failed too. When the validator fails, the hub will save nothing and say that the monitor could not validate the values.
 
 - `problems` is required. Each problem has a `message` that is not empty or only spaces, and a `name` that is either a field the file declares or empty, for a problem with several fields together. `name` may be left out. Other keys are ignored.
 - List every problem at once, not only the first.
@@ -430,76 +431,74 @@ A validator that exits with `0` but lists problems, exits with `1` but lists non
 - Do not require the magic cookie, open a database, use the network, run a program named in the settings (a password command, for example) or write to disk.
 - Never put the value of a `secret` field in a message.
 
-Validation cannot prove everything. A wrong password or an unreachable database only shows when the plugin starts, which is what [Start-up errors](#start-up-errors) are for.
+Validation cannot prove everything. A wrong password or an unreachable database only shows when the monitor starts, which is what [Start-up errors](#start-up-errors) are for.
 
-With the Rust SDK, `monitor_hub_plugin::settings::answer` writes the answer and returns the exit code. See [`sdk-rust/README.md`](../sdk-rust/README.md).
+With the Rust SDK, `monitor_hub_sdk::settings::answer` writes the answer and returns the exit code. See [`sdk-rust/README.md`](../sdk-rust/README.md).
 
 The Rust testkit and the conformance command read the answer with the same checks, and they differ in a few cases. The conformance command accepts keys in any letter case, such as `"Problems"`, and a `null` `name`; the Rust testkit rejects both. Inside a problem, the conformance command also reads `Name` or `NAME` as `name` and checks it against the declared names, while the Rust testkit ignores such a key. Write the keys in lower case, and leave `name` out or empty instead of `null`. The Rust testkit also rejects bytes that are not UTF-8 and a lone surrogate escape, such as `"\ud800"`, anywhere in the answer, while the conformance command accepts them. When the answer is not valid JSON, or a value has the wrong type, each side quotes its own decoder's message or names the problem that is not an object.
 
 ### Variables the file does not declare
 
-The page will also let its user set variables the file does not declare, such as a proxy variable that a library reads. Only plugins that ship `settings.json` get them. Without the file, the hub cannot tell which names are dangerous, so nothing is editable. Such a name must match `^[A-Z][A-Z0-9_]*$`, must not be reserved, and must not be a field the file declares with `editable: false`.
+The page will also let its user set variables the file does not declare, such as a proxy variable that a library reads. Only monitors that ship `settings.json` get them. Without the file, the hub cannot tell which names are dangerous, so nothing is editable. Such a name must match `^[A-Z][A-Z0-9_]*$`, must not be reserved, and must not be a field the file declares with `editable: false`.
 
-Declare every variable that makes the plugin run a program or read a file as `editable: false`, with a `reason`. Examples are a command that prints a password and the path of a password file. If the page could change them, anyone who can use the page could run a program inside the hub's container. Those variables stay in `.env`.
+Declare every variable that makes the monitor run a program or read a file as `editable: false`, with a `reason`. Examples are a command that prints a password and the path of a password file. If the page could change them, anyone who can use the page could run a program inside the hub's container. Those variables stay in `.env`.
 
-When a new version of the plugin declares a variable that was saved as an undeclared one, it becomes that field and keeps the saved value. When a version stops declaring a field, its saved value becomes an undeclared variable.
+When a new version of the monitor declares a variable that was saved as an undeclared one, it becomes that field and keeps the saved value. When a version stops declaring a field, its saved value becomes an undeclared variable.
 
 ### Keeping the file and the code in step
 
 Add a test that fails when the code reads a variable that `settings.json` does not declare, or when the file declares one the code does not read. Keep the names your configuration code reads in one list, so the test can compare that list with the file.
 
-In Rust, `monitor_hub_plugin_testkit::settings::assert_no_drift` makes that comparison, and `monitor_hub_plugin_testkit::settings::check` checks the file and runs the validator with an empty environment. See [`sdk-rust/README.md`](../sdk-rust/README.md). In other languages, run `plugin-conformance` with `-plugin-dir` (see [Conformance](#conformance)). It checks the file and the validator, and the comparison with the code is a test you write yourself.
+In Rust, `monitor_hub_sdk_testkit::settings::assert_no_drift` makes that comparison, and `monitor_hub_sdk_testkit::settings::check` checks the file and runs the validator with an empty environment. See [`sdk-rust/README.md`](../sdk-rust/README.md). In other languages, run `monitor-conformance` with `-monitor-dir` (see [Conformance](#conformance)). It checks the file and the validator, and the comparison with the code is a test you write yourself.
 
 ## Image layout
 
-A plugin image puts the manifest and every file the plugin needs under `/plugin/`:
+A monitor image puts the manifest and every file the monitor needs under `/monitor/`:
 
 ```
-/plugin/plugin.json
-/plugin/settings.json (optional, see Settings)
-/plugin/<executable or script>
-/plugin/<other files>
+/monitor/monitor.json
+/monitor/settings.json (optional, see Settings)
+/monitor/<executable or script>
+/monitor/<other files>
 ```
 
-The hub image build copies that directory to `/opt/monitor-hub/plugins/<name>/`. The plugin runs from there, as user `65532`, on a read-only root filesystem. It can write to `TMPDIR` and `MONITOR_HUB_DATA_DIR` only.
+The hub image build copies that directory to `/opt/monitor-hub/monitors/<name>/`. The monitor runs from there, as user `65532`, on a read-only root filesystem. It can write to `TMPDIR` and `MONITOR_HUB_DATA_DIR` only.
 
 ## Conformance
 
-The `plugin-conformance` command starts your plugin through go-plugin, as the hub does, calls it over gRPC, and reports every rule it breaks. The start is not identical to the hub's: [What the plugin receives](#what-the-plugin-receives) lists the differences. Build the command from this repository, or run it at a released version:
+The `monitor-conformance` command starts your monitor through go-plugin, as the hub does, calls it over gRPC, and reports every rule it breaks. The start is not identical to the hub's: [What the monitor receives](#what-the-monitor-receives) lists the differences. Build the command from this repository, or run it at a released version:
 
 ```
-go run github.com/ItzTas/monitor-hub/sdk-go/cmd/plugin-conformance@v0.4.0 \
-  -min-events 2 -ready-timeout 10s -plugin-dir . -env EVENTS=2 -- ./my-plugin
+go run github.com/ItzTas/monitor-hub/sdk-go/cmd/monitor-conformance@v0.6.0 \
+  -min-events 2 -ready-timeout 10s -monitor-dir . -env EVENTS=2 -- ./my-monitor
 ```
 
-Releases up to v0.3.0 were published as `github.com/ItzTas/monitor-hub/sdk` and still install from that path.
-
-Everything after `--` is the plugin's command line. The flags go before it:
+Everything after `--` is the monitor's command line. The flags go before it:
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `-min-events N` | `0` | The first page of events must hold at least `N` events. |
 | `-ready-timeout D` | `0` | How long to wait while the first `Events` call answers `UNAVAILABLE`, for example `10s`. The call is retried every 200 ms, and only for that status. With `0` it is not retried. |
-| `-plugin-dir DIR` | none | The plugin directory. When it holds `settings.json`, the command checks the file and runs the plugin's `validate-settings` in `DIR` before it starts the plugin (see [Settings](#settings)). |
-| `-env NAME=value` | none | An environment variable for the plugin. Repeat the flag for more. |
+| `-monitor-dir DIR` | none | The monitor directory. When it holds `settings.json`, the command checks the file and runs the monitor's `validate-settings` in `DIR` before it starts the monitor (see [Settings](#settings)). |
+| `-env NAME=value` | none | An environment variable for the monitor. Repeat the flag for more. |
 
 `-env` puts the value in the command's argument list, where other users of the same machine can read it (with `ps`, or in `/proc/<pid>/cmdline`). Pass only throwaway test credentials this way, such as the URL of a test database.
 
-### What the plugin receives
+### What the monitor receives
 
 - The `-env` variables.
-- The variables go-plugin adds for the handshake: `MONITOR_HUB_PLUGIN`, `PLUGIN_MIN_PORT`, `PLUGIN_MAX_PORT` and `PLUGIN_PROTOCOL_VERSIONS`.
-- Nothing else. The hub passes `PATH`, `TZ`, `TMPDIR` and `MONITOR_HUB_DATA_DIR`, but the command does not: pass the ones your plugin needs with `-env`. Without `TMPDIR`, the plugin creates its socket in its own default directory, which is `/tmp` for the SDKs.
-- The working directory of the command, not the plugin directory.
-- The command's process group. The hub gives each plugin a process group of its own; the command does not.
+- The variables go-plugin adds for the handshake: `MONITOR_HUB_MONITOR`, `PLUGIN_MIN_PORT`, `PLUGIN_MAX_PORT` and `PLUGIN_PROTOCOL_VERSIONS`.
+- Nothing else. The hub passes `PATH`, `TZ`, `TMPDIR` and `MONITOR_HUB_DATA_DIR`, but the command does not: pass the ones your monitor needs with `-env`. Without `TMPDIR`, the monitor creates its socket in its own default directory, which is `/tmp` for the SDKs.
+- The working directory of the command, not the monitor directory.
+- The command's process group. The hub gives each monitor a process group of its own; the command does not.
 
-Pass whatever configuration the plugin requires to produce events.
+Pass whatever configuration the monitor requires to produce events.
 
-With `-plugin-dir`, the command first runs the validator, which receives:
+With `-monitor-dir`, the command first runs the validator, which receives:
 
 - No environment variables at all: no `PATH`, no magic cookie and none of the `-env` variables.
 - `DIR` as its working directory.
-- The first word after `--`, with `validate-settings` as its only argument. The command finds that program as it finds the plugin: a path counts from the current directory, and a bare name is looked up in the command's own `PATH`, never in `DIR`. The hub looks in the plugin directory first, so pass the program as a path.
+- The first word after `--`, with `validate-settings` as its only argument. The command finds that program as it finds the monitor: a path counts from the current directory, and a bare name is looked up in the command's own `PATH`, never in `DIR`. The hub looks in the monitor directory first, so pass the program as a path.
 
 The command checks `settings.json` on every system, but runs `validate-settings` on Unix systems only (Linux and macOS). Elsewhere it reports one violation saying that the validator check needs a Unix system.
 
@@ -509,34 +508,34 @@ Exit codes:
 
 | Code | Meaning |
 |---|---|
-| `0` | The plugin passed. A line on stdout says so. |
-| `1` | The plugin broke a rule, or could not be started and reached. Each violation is one line on stderr. |
-| `2` | The command was called wrongly, for example with a `-plugin-dir` that is not a directory. A line on stderr says what is wrong. |
+| `0` | The monitor passed. A line on stdout says so. |
+| `1` | The monitor broke a rule, or could not be started and reached. Each violation is one line on stderr. |
+| `2` | The command was called wrongly, for example with a `-monitor-dir` that is not a directory. A line on stderr says what is wrong. |
 
-The command copies everything the plugin writes to stderr onto its own stderr, with `plugin: ` in front of each line. The plugin's lines come out as the plugin writes them. The command writes its own lines (violations, or a line starting with `plugin-conformance: ` when the plugin could not be started or reached) only after it has stopped the plugin and read the plugin's stderr to the end. So every plugin line comes before them, and when a plugin dies during start-up, its last error is just above the command's line.
+The command copies everything the monitor writes to stderr onto its own stderr, with `monitor: ` in front of each line. The monitor's lines come out as the monitor writes them. The command writes its own lines (violations, or a line starting with `monitor-conformance: ` when the monitor could not be started or reached) only after it has stopped the monitor and read the monitor's stderr to the end. So every monitor line comes before them, and when a monitor dies during start-up, its last error is just above the command's line.
 
-The validator's stderr is copied the same way, with the same prefix. It runs before the plugin starts, so its lines come first. Among the command's own lines, the settings violations come first.
+The validator's stderr is copied the same way, with the same prefix. It runs before the monitor starts, so its lines come first. Among the command's own lines, the settings violations come first.
 
 ### Checks
 
 The suite checks that:
 
-- `Describe` returns a valid `name` (see [`plugin.json`](#pluginjson)), a non-empty `display_name`, and kind ids that are non-empty and unique.
+- `Describe` returns a valid `name` (see [`monitor.json`](#monitorjson)), a non-empty `display_name`, and kind ids that are non-empty and unique.
 - `Status` returns a state other than `STATE_UNSPECIFIED`.
 - The first `Events(after = 0, limit = 1000)` succeeds and returns at least `-min-events` events. Each event has a positive `seq` that increases strictly, a unique non-empty `id`, a non-empty `title`, a `kind` declared by `Describe`, a `severity` other than `SEVERITY_UNSPECIFIED`, and an `occurred_at`.
 - `Events` after the last `seq` is empty, and `Events` after the first `seq` equals the first list without its first event.
 - When the first list holds at least two events, `Events(after = 0, limit = 1)` returns exactly the first event, and `Events(after = 0, limit = 0)` returns at most 100 events.
 - `Check` succeeds.
-- When the plugin implements `Watch`, the first signal arrives within 5 seconds, no signal has a negative `latest_seq`, and the call is still open 1 second after the first signal. A plugin that answers `UNIMPLEMENTED` passes without this check. The suite does not check the 30-second heartbeat, the signal after each write, or a call that ends more than 1 second after its first signal. Without the heartbeat, or when the call ends, the hub falls back to polling every 15 seconds. Without the signal after a write, the hub reads the event when a later signal announces its `seq`, or at the 5-minute poll.
+- `Watch` sends its first signal within 5 seconds, no signal has a negative `latest_seq`, and the call is still open 1 second after the first signal. A monitor whose `Watch` answers `UNIMPLEMENTED` fails with `Watch answered UNIMPLEMENTED; every monitor must implement Watch`. The suite does not check the 30-second heartbeat, the signal after each write, or a call that ends more than 1 second after its first signal. Without the heartbeat, or when the call ends, the hub falls back to polling every 15 seconds. Without the signal after a write, the hub reads the event when a later signal announces its `seq`, or at the 5-minute poll.
 
-With `-plugin-dir`, when `DIR` holds `settings.json`, the suite also checks that:
+With `-monitor-dir`, when `DIR` holds `settings.json`, the suite also checks that:
 
 - The file can be read and follows every rule in [`settings.json`](#settingsjson). Each broken field is one violation, for its first broken rule, except that a field without `name`, `label` or `type` gives one line for each attribute it lacks.
-- `validate-settings`, run as described in [What the plugin receives](#what-the-plugin-receives), finishes within 5 seconds, exits with `0` or `1`, writes at most 64 KiB on stdout, and prints one JSON object whose `problems` agree with its exit code, each with a `message` that is not empty or only spaces. An answer with exit code `1` that lists problems passes: a plugin with required settings is expected to answer that way to the empty environment. When the file follows every rule, each problem's `name` must also be empty or a field the file declares; that check comes last. A validator that waits for the magic cookie prints nothing and fails. Only the first problem with the validator is reported.
+- `validate-settings`, run as described in [What the monitor receives](#what-the-monitor-receives), finishes within 5 seconds, exits with `0` or `1`, writes at most 64 KiB on stdout, and prints one JSON object whose `problems` agree with its exit code, each with a `message` that is not empty or only spaces. An answer with exit code `1` that lists problems passes: a monitor with required settings is expected to answer that way to the empty environment. When the file follows every rule, each problem's `name` must also be empty or a field the file declares; that check comes last. A validator that waits for the magic cookie prints nothing and fails. Only the first problem with the validator is reported.
 
 When `DIR` has no `settings.json`, the suite checks nothing more and does not run the validator.
 
-The checks are limited to 30 seconds plus `-ready-timeout`. The `Watch` check runs last, inside that limit. It takes at most 6 seconds, 5 for the first signal and 1 for the call to stay open. When the earlier checks leave it less than that and the limit runs out during it, the check reports `Watch` as failed. Starting the plugin and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. The validator runs earlier still, under its own 5-second limit. Because the suite reads the events more than once and compares the answers, the plugin must keep its events stable while the suite runs: no new events and no changes between the calls.
+The checks are limited to 30 seconds plus `-ready-timeout`. The `Watch` check runs last, inside that limit. It takes at most 6 seconds, 5 for the first signal and 1 for the call to stay open. When the earlier checks leave it less than that and the limit runs out during it, the check reports `Watch` as failed. Starting the monitor and its handshake come before that limit, and go-plugin's default start timeout of one minute applies to them. The validator runs earlier still, under its own 5-second limit. Because the suite reads the events more than once and compares the answers, the monitor must keep its events stable while the suite runs: no new events and no changes between the calls.
 
 The Rust SDK's testkit runs this command from `cargo test`. See [`sdk-rust/README.md`](../sdk-rust/README.md).
 
@@ -578,7 +577,7 @@ Authorization: Bearer <consumer token>
 
 The response is `text/event-stream`. The hub sends, in this order:
 
-1. Every event after the consumer's stored position, oldest first, in pages of 500. Events recorded as a plugin's baseline are never sent.
+1. Every event after the consumer's stored position, oldest first, in pages of 500. Events recorded as a monitor's baseline are never sent.
 2. One `caught_up` message.
 3. Each new event as the hub stores it.
 
@@ -683,27 +682,27 @@ The fake hub never sends the `: ping` comment. The check starts your consumer tw
 
 The deadlines are options: `-start-within` (30 s, to open the stream), `-ack-within` (10 s), `-reconnect-within` (30 s) and `-quiet-after` (10 s, the watch after a `401` or `replaced`). Each must be greater than zero. The 1 second minimum before reconnecting is part of the contract and has no option. A consumer that exits at once still takes the whole `-start-within` to be reported, so pass a short one while you test.
 
-Output follows [the plugin check](#output). Exit `0` means the consumer passed, and `consumer conformance passed` goes to stdout. Exit `1` means it broke a rule or could not be started, with one line per problem on stderr. Exit `2` means the command was called wrongly, and the usage line goes to stderr. Everything the consumer writes to stdout or stderr comes out on the command's stderr, line by line, with `consumer: ` in front. The command's own lines come after the consumer has stopped, so when a consumer dies at start-up its last words sit just above the report. When a signal (`SIGINT`, `SIGTERM` or `SIGHUP`) interrupts a run, or the reader of its output goes away, as with `| head -1`, the command stops the consumer, deletes the token file and exits `1` with `consumer-conformance: context canceled`. A signal that was ignored when the command started, as `SIGHUP` is under `nohup`, stays ignored.
+Output follows [the monitor check](#output). Exit `0` means the consumer passed, and `consumer conformance passed` goes to stdout. Exit `1` means it broke a rule or could not be started, with one line per problem on stderr. Exit `2` means the command was called wrongly, and the usage line goes to stderr. Everything the consumer writes to stdout or stderr comes out on the command's stderr, line by line, with `consumer: ` in front. The command's own lines come after the consumer has stopped, so when a consumer dies at start-up its last words sit just above the report. When a signal (`SIGINT`, `SIGTERM` or `SIGHUP`) interrupts a run, or the reader of its output goes away, as with `| head -1`, the command stops the consumer, deletes the token file and exits `1` with `consumer-conformance: context canceled`. A signal that was ignored when the command started, as `SIGHUP` is under `nohup`, stays ignored.
 
-## Writing a plugin without an SDK
+## Writing a monitor without an SDK
 
-Generate the stubs from `plugin.proto` with your language's protoc plugin. Pin the generator to a version no newer than the protobuf and gRPC runtimes the plugin ships with, because protobuf refuses to import generated code that is newer than its runtime. [`examples/python-plugin`](../examples/python-plugin) shows this for Python.
+Generate the stubs from `monitor.proto` with your language's protoc plugin. Pin the generator to a version no newer than the protobuf and gRPC runtimes the monitor ships with, because protobuf refuses to import generated code that is newer than its runtime. [`examples/python-monitor`](../examples/python-monitor) shows this for Python.
 
-`Watch` is a server-streaming call. To implement it, your language's gRPC generator has to support those; otherwise leave `Watch` out. A server that does not implement the method answers `UNIMPLEMENTED`, which the hub accepts: the Python example's stubs come from a `plugin.proto` without `Watch`, and it passes the conformance suite.
+`Watch` is a server-streaming call, and every monitor implements it, so your language's gRPC generator has to support server-streaming calls. The Python example implements `Watch` with the stubs `make generate-python` writes, and passes the conformance suite.
 
 ## Checklist
 
-- Exit with an error if `MONITOR_HUB_PLUGIN` is not `7c0e5a52-monitor-hub`.
+- Exit with an error if `MONITOR_HUB_MONITOR` is not `7c0e5a52-monitor-hub`.
 - Listen on a Unix socket, without TLS.
-- Register `monitorhub.plugin.v1.Plugin` and the health service with `plugin` set to `SERVING`.
-- Print `1|1|unix|<socket path>|grpc` as the only line on stdout, within 60 seconds of starting.
+- Register `monitorhub.monitor.v1.Monitor` and the health service with `plugin` set to `SERVING`.
+- Print `1|2|unix|<socket path>|grpc` as the only line on stdout, within 60 seconds of starting.
 - Log to stderr, preferably as hclog JSON.
 - Keep `seq` strictly increasing, and delete events only after the hub confirms them through `after`.
 - Return exactly `min(limit, available)` events from `Events`, with 100 as the default limit.
-- Fail `Events` with `UNAVAILABLE` while the plugin cannot read yet, and keep answering `Describe`, `Status` and `Check`.
-- Recommended: until the first short page, return only events issued before the plugin started (see [Events recorded before the first read ends](#events-recorded-before-the-first-read-ends)).
-- Optional: implement `Watch`: a signal at once, after every committed write and every status change, and at least every 30 seconds; never before the commit.
+- Fail `Events` with `UNAVAILABLE` while the monitor cannot read yet, and keep answering `Describe`, `Status` and `Check`.
+- Recommended: until the first short page, return only events issued before the monitor started (see [Events recorded before the first read ends](#events-recorded-before-the-first-read-ends)).
+- Implement `Watch`: a signal at once, after every committed write and every status change, and at least every 30 seconds; never before the commit.
 - Implement `plugin.GRPCController/Shutdown`, or be ready to be killed after 2 seconds.
-- Give every event a non-empty `title` and an `occurred_at`, and pass `plugin-conformance`.
+- Give every event a non-empty `title` and an `occurred_at`, and pass `monitor-conformance`.
 - If you ship `settings.json`, answer `validate-settings` and keep both in step with the code.
 - Write the reason for a failed start as the `error` attribute of an `error` line, with no secret in it.

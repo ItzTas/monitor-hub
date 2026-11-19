@@ -1,9 +1,9 @@
-# monitor-hub Rust plugin SDK
+# monitor-hub Rust SDK
 
-Two crates for writing monitor-hub plugins in Rust. The plugin protocol itself is described in [`docs/protocol.md`](../docs/protocol.md).
+Two crates for writing monitor-hub monitors in Rust. The monitor protocol itself is described in [`docs/protocol.md`](../docs/protocol.md).
 
-- `monitor-hub-plugin` runs the plugin side of the protocol: the magic cookie check, the Unix socket, the handshake line, the gRPC health service and shutdown. It also writes logs in the format the hub reads, and answers `validate-settings` for plugins that declare their settings.
-- `monitor-hub-plugin-testkit` is for your tests: a runner for the hub's conformance suite, and checks for `settings.json` and `validate-settings`.
+- `monitor-hub-sdk` runs the monitor side of the protocol: the magic cookie check, the Unix socket, the handshake line, the gRPC health service, `Watch` and shutdown. It also writes logs in the format the hub reads, and answers `validate-settings` for monitors that declare their settings.
+- `monitor-hub-sdk-testkit` is for your tests: a runner for the hub's conformance suite, and checks for `settings.json` and `validate-settings`.
 
 ## Setup
 
@@ -11,43 +11,41 @@ Both crates are versioned together and published as git tags of this repository.
 
 ```toml
 [dependencies]
-monitor-hub-plugin = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.3.0" }
+monitor-hub-sdk = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.4.0" }
 prost-types = "0.14.4"
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
 tonic = { version = "0.14.8", default-features = false, features = ["codegen"] }
 tracing = "0.1.44"
 
 [dev-dependencies]
-monitor-hub-plugin-testkit = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.3.0" }
+monitor-hub-sdk-testkit = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.4.0" }
 ```
 
-Your crate implements the `Plugin` trait the SDK generates with tonic and builds messages with prost, so it needs its own `tonic` and `prost-types` dependencies, in the same 0.14 series as the SDK. This workspace uses `tonic` 0.14.8 and `prost-types` 0.14.4. `tracing` is what you log with.
+Your crate implements the SDK's `Monitor` trait with `#[tonic::async_trait]` and builds messages with prost, so it needs its own `tonic` and `prost-types` dependencies, in the same 0.14 series as the SDK. This workspace uses `tonic` 0.14.8 and `prost-types` 0.14.4. `tracing` is what you log with.
 
 Both crates build on Unix systems only.
 
-The SDK pins its toolchain in [`rust-toolchain.toml`](rust-toolchain.toml): Rust 1.99.1 with `rustfmt` and `clippy`, edition 2024. Pin the same version in your plugin's repository so both build with the same compiler.
+The SDK pins its toolchain in [`rust-toolchain.toml`](rust-toolchain.toml): Rust 1.99.1 with `rustfmt` and `clippy`, edition 2024. Pin the same version in your monitor's repository so both build with the same compiler.
 
-## A minimal plugin
+## A minimal monitor
 
-A complete plugin that reports one fixed event. It is the `fixed` example in [`crates/plugin/examples/fixed.rs`](crates/plugin/examples/fixed.rs), cut down to one event.
+A complete monitor that reports one fixed event. It is the `fixed` example in [`crates/sdk/examples/fixed.rs`](crates/sdk/examples/fixed.rs), cut down to one event.
 
 ```rust
 use std::process::ExitCode;
 
-use monitor_hub_plugin::logging;
-use monitor_hub_plugin::proto::plugin_server::Plugin;
-use monitor_hub_plugin::proto::{
+use monitor_hub_sdk::proto::{
     CheckRequest, CheckResponse, DescribeRequest, DescribeResponse, Event, EventKind,
     EventsRequest, EventsResponse, Severity, State, StatusRequest, StatusResponse,
 };
-use monitor_hub_plugin::{ServeError, serve};
+use monitor_hub_sdk::{Monitor, Notifier, ServeError, logging, serve};
 use prost_types::Timestamp;
 use tonic::{Request, Response, Status};
 
 struct Ping;
 
 #[tonic::async_trait]
-impl Plugin for Ping {
+impl Monitor for Ping {
     async fn describe(
         &self,
         _: Request<DescribeRequest>,
@@ -107,7 +105,9 @@ async fn main() -> ExitCode {
         eprintln!("cannot start logging: {err}");
         return ExitCode::FAILURE;
     }
-    match serve(Ping).await {
+    let notifier = Notifier::new();
+    notifier.events_recorded(1);
+    match serve(Ping, notifier).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,
         Err(err) => {
@@ -118,7 +118,7 @@ async fn main() -> ExitCode {
 }
 ```
 
-`serve` does the whole startup described in the protocol, then runs until the hub asks the plugin to stop or the process receives SIGTERM or SIGINT. Nothing but the handshake line may go to stdout, so never `println!` in a plugin.
+`serve` takes the monitor and a `Notifier`. It does the whole startup described in the protocol, answers `Watch` from the notifier (see [Signalling the hub](#signalling-the-hub)), and runs until the hub asks the monitor to stop or the process receives SIGTERM or SIGINT. `Ping` holds one event with `seq` 1, so `main` reports 1 as the highest `seq` before it serves. Nothing but the handshake line may go to stdout, so never `println!` in a monitor.
 
 `serve` returns a `ServeError` when it stops without a clean shutdown. In every case `main` should exit with a failure code:
 
@@ -130,33 +130,33 @@ async fn main() -> ExitCode {
 
 Log every variant except `NotLaunchedByHub`, as the example does. The enum is `#[non_exhaustive]`, so a `match` on it needs a final `Err(err)` arm, and a later patch release may add variants.
 
-The `Plugin` trait and its messages are in `monitor_hub_plugin::proto`. The rules for `Events`, `seq`, `after` and `UNAVAILABLE` are in the protocol document.
+The trait is `monitor_hub_sdk::Monitor`, and its messages are in `monitor_hub_sdk::proto`. Implement it with `#[tonic::async_trait]` on the `impl` block, as the example does. It has four methods, `describe`, `status`, `check` and `events`; `serve` answers `Watch` itself. The rules for `Events`, `seq`, `after` and `UNAVAILABLE` are in the protocol document.
 
 ### `launched_by_hub`
 
 `serve` checks the cookie itself. Call `launched_by_hub()` yourself only when your `main` does work before `serve` that must not happen on a manual run, such as opening a database or applying migrations. Check it first. When it returns `false`, print `NOT_LAUNCHED_BY_HUB` on stderr and exit with code 1, as `serve` would:
 
 ```rust
-if !monitor_hub_plugin::launched_by_hub() {
-    eprintln!("{}", monitor_hub_plugin::NOT_LAUNCHED_BY_HUB);
+if !monitor_hub_sdk::launched_by_hub() {
+    eprintln!("{}", monitor_hub_sdk::NOT_LAUNCHED_BY_HUB);
     return ExitCode::FAILURE;
 }
 ```
 
 ## Start-up time
 
-The hub waits 60 seconds for the handshake line, which `serve` prints. When the line has not arrived by then, the hub kills the plugin's process group and starts the plugin again after a delay that grows from 1 second to 5 minutes. Each restart repeats everything `main` does before `serve`. A plugin that connects to a database or applies migrations has two ways to stay inside that budget.
+The hub waits 60 seconds for the handshake line, which `serve` prints. When the line has not arrived by then, the hub kills the monitor's process group and starts the monitor again after a delay that grows from 1 second to 5 minutes. Each restart repeats everything `main` does before `serve`. A monitor that connects to a database or applies migrations has two ways to stay inside that budget.
 
 ### Prepare, then serve
 
-This is the simple default. `main` calls a `prepare` function before `serve`, with a limit on the whole call, and exits on failure. `prepare` is your own function: it connects to the database and applies your migrations with the library you chose.
+This is the simple default. `main` calls a `prepare` function before `serve`, with a limit on the whole call, and exits on failure. `prepare` is your own function: it connects to the database, applies your migrations with the library you chose, and reads the highest `seq` the monitor has issued.
 
 ```rust
 use std::error::Error;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use monitor_hub_plugin::{NOT_LAUNCHED_BY_HUB, ServeError, launched_by_hub, logging, serve};
+use monitor_hub_sdk::{NOT_LAUNCHED_BY_HUB, Notifier, ServeError, launched_by_hub, logging, serve};
 use tokio::time::timeout;
 
 const PREPARE_LIMIT: Duration = Duration::from_secs(45);
@@ -172,8 +172,8 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let url = std::env::var("DATABASE_URL").unwrap_or_default();
-    let client = match timeout(PREPARE_LIMIT, prepare(&url)).await {
-        Ok(Ok(client)) => client,
+    let (client, latest_seq) = match timeout(PREPARE_LIMIT, prepare(&url)).await {
+        Ok(Ok(prepared)) => prepared,
         Ok(Err(err)) => {
             tracing::error!(error = &*err as &dyn Error, "cannot prepare the database");
             return ExitCode::FAILURE;
@@ -183,7 +183,9 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match serve(Items { client }).await {
+    let notifier = Notifier::new();
+    notifier.events_recorded(latest_seq);
+    match serve(Items { client }, notifier).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,
         Err(err) => {
@@ -193,49 +195,54 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn prepare(url: &str) -> Result<Client, Box<dyn Error + Send + Sync>> {
-    // Connect and apply your migrations here.
+async fn prepare(url: &str) -> Result<(Client, i64), Box<dyn Error + Send + Sync>> {
+    // Connect, apply your migrations and read the highest seq issued so far.
     todo!()
 }
 ```
 
-`Items` stands for your type that implements `Plugin`, and `Client` for the database client it holds. Nothing else bounds these steps, so:
+`Items` stands for your type that implements `Monitor`, and `Client` for the database client it holds. Nothing else bounds these steps, so:
 
-- Give each connection its own time limit, because many drivers have none by default. Against a server that does not answer, such a connect waits until the hub kills the plugin.
+- Give each connection its own time limit, because many drivers have none by default. Against a server that does not answer, such a connect waits until the hub kills the monitor.
 - A migration lock taken by a preparation that the limit cut stays held while its connection is open. Exiting the process closes the connection and releases it.
 
 ### Serve, then prepare
 
-Pick this shape when preparation can take longer than the budget, for example a migration that rebuilds a large index. `main` spawns a task that connects and migrates, then calls `serve` at once, so the handshake goes out within milliseconds. The task hands its result to the plugin, for example through a `tokio::sync::watch` channel or a `tokio::sync::OnceCell`. Until the result is there:
+Pick this shape when preparation can take longer than the budget, for example a migration that rebuilds a large index. `main` spawns a task that connects and migrates, then calls `serve` at once, so the handshake goes out within milliseconds. The task hands its result to the monitor, for example through a `tokio::sync::watch` channel or a `tokio::sync::OnceCell`. Until the result is there:
 
 - `events` returns `Err(Status::unavailable(...))`, so the hub does not take an empty answer as its baseline.
 - `status` returns `STATE_FAILING` with the reason in `message`.
 - `check` returns `accepted: false` with the reason in `message`.
 - `describe` answers as usual. The hub calls it on every poll and skips the poll when it fails.
 
-When preparation fails, log the error, keep reporting it through `status`, and retry in the task if retrying can help. In the conformance test, set `ready_timeout` long enough to cover preparation.
+When preparation is done, the task calls `events_recorded` with the highest `seq` the monitor has issued, and the signal that goes out tells the hub about any events it has not stored yet. When preparation fails, log the error, keep reporting it through `status`, and retry in the task if retrying can help. In the conformance test, set `ready_timeout` long enough to cover preparation.
 
 ## Signalling the hub
 
-A plugin started with `serve` answers [`Watch`](../docs/protocol.md#watch) with `UNIMPLEMENTED`, and the hub polls it every 15 seconds. A plugin started with `serve_with_notifier` tells the hub when to poll, so a notification goes out as soon as the plugin records an event:
+`serve` answers [`Watch`](../docs/protocol.md#watch) from the `Notifier` you pass it. The rest of the monitor uses clones of that notifier to tell the hub when to poll, so a notification goes out as soon as the monitor records an event:
 
 ```rust
+use std::error::Error;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use monitor_hub_plugin::{
-    NOT_LAUNCHED_BY_HUB, Notifier, ServeError, launched_by_hub, logging, serve_with_notifier,
-};
+use monitor_hub_sdk::{NOT_LAUNCHED_BY_HUB, Notifier, ServeError, launched_by_hub, logging, serve};
 
 async fn run_cycles(notifier: Notifier) {
     loop {
-        notifier.status_changed();
-        if let Some(seq) = check_and_record().await {
-            notifier.notify(seq);
+        if let Err(err) = cycle(&notifier).await {
+            tracing::error!(error = &*err as &dyn Error, "cycle failed");
         }
-        notifier.status_changed();
         tokio::time::sleep(Duration::from_secs(30 * 60)).await;
     }
+}
+
+async fn cycle(notifier: &Notifier) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let _cycle = notifier.status_scope();
+    if let Some(seq) = check_and_record().await? {
+        notifier.events_recorded(seq);
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -249,39 +256,37 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let notifier = Notifier::new();
-    notifier.notify(highest_issued_seq().await);
+    notifier.events_recorded(highest_issued_seq().await);
     tokio::spawn(run_cycles(notifier.clone()));
-    match serve_with_notifier(Ping, notifier).await {
+    match serve(Ping, notifier).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,
         Err(err) => {
-            tracing::error!(error = &err as &dyn std::error::Error, "serve failed");
+            tracing::error!(error = &err as &dyn Error, "serve failed");
             ExitCode::FAILURE
         }
     }
 }
 ```
 
-`Ping` is the plugin from [A minimal plugin](#a-minimal-plugin). `check_and_record` and `highest_issued_seq` stand for your own code. The first runs a cycle and returns the highest `seq` it committed, or `None` when it recorded nothing. The second returns the highest `seq` the plugin has issued so far, or 0. The cycles start only after the cookie check, so a manual run does no work (see [`launched_by_hub`](#launched_by_hub)).
+`Ping` is the monitor from [A minimal monitor](#a-minimal-monitor). `check_and_record` and `highest_issued_seq` stand for your own code. The first runs a cycle and returns the highest `seq` it committed, or `None` when it recorded nothing. The second returns the highest `seq` the monitor has issued so far, or 0. The cycles start only after the cookie check, so a manual run does no work (see [`launched_by_hub`](#launched_by_hub)).
 
-- `Notifier::new()` creates the notifier. Give a clone to every part of the plugin that records events or changes what `status` answers. All clones share one value.
-- Call `notify(seq)` once before `serve_with_notifier`, with the highest `seq` the plugin has issued. The first signal of every `Watch` call carries the current value.
-- Call `notify(seq)` after each write of events is committed, with the highest `seq` written. Never call it before the commit. The notifier keeps the highest value it was given, so a lower `seq` does not lower it, and every call sends a signal.
-- Call `status_changed()` when what `status` answers changes, for example when a cycle starts or ends, fails, or recovers. It sends a signal with the same `latest_seq`.
-- After recording events, call `notify(seq)`, not `status_changed()`. After the first signal of a call, the hub reads `Events` only when `latest_seq` is greater than the position it has stored, so a signal with the old value only refreshes the status.
+- `Notifier::new()` creates the notifier. Give a clone to every part of the monitor that records events or changes what `status` answers. All clones share one value.
+- Call `events_recorded(seq)` once before `serve`, with the highest `seq` the monitor has issued. The first signal of every `Watch` call carries the current value.
+- Call `events_recorded(seq)` after each write of events is committed, with the highest `seq` written. Never call it before the commit. The notifier keeps the highest value it was given, so a lower `seq` does not lower it, and every call sends a signal.
+- Call `status_scope()` at the start of a cycle and keep what it returns until the cycle ends. It signals when it is created and again when it is dropped, however the cycle ends: normally, through `?`, or in a panic. Bind it to a name such as `_cycle`, as the example does. `let _ = notifier.status_scope();` drops the scope at once, so both signals go out right there and none when the cycle ends. A bare `notifier.status_scope();` gets a compiler warning, because `StatusScope` is `#[must_use]`; `let _ =` gets none.
+- Call `status_changed()` for a one-off change outside a cycle, such as a pause, a failure or a return to normal. It sends a signal with the same `latest_seq`.
 
-`serve_with_notifier(plugin, notifier)` does everything `serve` does and answers `Watch` from the notifier. The SDK sends the first signal as soon as the hub opens the call. While the hub reads slowly, signals that pile up are merged: at most one waits to be read, and the one sent after it carries the newest `latest_seq`. When 30 seconds pass without a signal, the SDK sends a heartbeat. When the plugin shuts down, it ends every open `Watch` call.
+The SDK sends the first signal as soon as the hub opens the call. While the hub reads slowly, signals that pile up are merged: at most one waits to be read, and the one sent after it carries the newest `latest_seq`. When 30 seconds pass without a signal, the SDK sends a heartbeat. When the monitor shuts down, it ends every open `Watch` call.
 
-`notify` and `status_changed` never block and never fail, even when no one is watching. A plugin built with this SDK therefore runs on an older hub, which never calls `Watch` and polls every 15 seconds.
+`events_recorded`, `status_scope` and `status_changed` never block and never fail, even when no one is watching.
 
-You can also implement `watch` on your `Plugin` yourself, returning a `tonic::codegen::BoxStream<WatchResponse>`, and call `serve`. The rules in the [protocol document](../docs/protocol.md#watch) then apply to your code.
-
-In tests, `notifier.subscribe()` returns `Signals`. `latest_seq()` returns the current value and marks it seen. `changed().await` waits for a signal not yet seen and returns the `latest_seq` at that moment. Wrap it in a `timeout`, because it never returns once every clone of the `Notifier` is gone. In this test, `record_one_event` stands for the code under test, which commits the event with `seq` 1 and calls `notify(1)`:
+In tests, `notifier.subscribe()` returns `Signals`. `latest_seq()` returns the current value and marks it seen. `changed().await` waits for a signal not yet seen and returns the `latest_seq` at that moment. Wrap it in a `timeout`, because it never returns once every clone of the `Notifier` is gone. In this test, `record_one_event` stands for the code under test, which commits the event with `seq` 1 and calls `events_recorded(1)`:
 
 ```rust
 use std::time::Duration;
 
-use monitor_hub_plugin::Notifier;
+use monitor_hub_sdk::Notifier;
 use tokio::time::timeout;
 
 #[tokio::test]
@@ -299,10 +304,10 @@ async fn recording_an_event_signals_the_hub() {
 ## Logging
 
 ```rust
-monitor_hub_plugin::logging::init("info")?;
+monitor_hub_sdk::logging::init("info")?;
 ```
 
-`init` installs a global `tracing` subscriber that writes one JSON object per line to stderr, in the format the hub parses: `@level`, `@message`, `@module` and `@timestamp`, plus one key per event field. The level is `trace`, `debug`, `info`, `warn` or `error`, in any letter case. A field named like one of those keys, or like one of the names the hub renames (`plugin`, `module`, `time`, `level`, `msg`, `source`), is written as `field_<name>`. A line is at most 64 KiB: a longer message is cut and marked `[truncated]`.
+`init` installs a global `tracing` subscriber that writes one JSON object per line to stderr, in the format the hub parses: `@level`, `@message`, `@module` and `@timestamp`, plus one key per event field. The level is `trace`, `debug`, `info`, `warn` or `error`, in any letter case. A field named like one of those keys, or like one of the names the hub renames (`monitor`, `module`, `time`, `level`, `msg`, `source`), is written as `field_<name>`. A line is at most 64 KiB: a longer message is cut and marked `[truncated]`.
 
 `init` also installs a panic hook, which replaces any hook installed before it. A panic in any thread or task is reported as one `error` line whose `@message` is `panic: <payload>`, with the panic's location in a `location` field. The hook changes nothing else: a panic in `main` still ends the process, and one in a spawned task or thread does not by itself.
 
@@ -312,26 +317,26 @@ Log an error as a field cast to `&dyn std::error::Error`:
 tracing::error!(error = &err as &dyn std::error::Error, "serve failed");
 ```
 
-The field then holds the error's whole `source()` chain, joined with `": "`, for example `cannot create the plugin socket: <cause>`. A cause whose text the line already ends with is written once. Logging the error with `%err` or `"{err}"` writes only the first link of that chain. For `ServeError` the first link leaves out the reason: `"{err}"` on a `ServeError::Socket` prints only `cannot create the plugin socket`.
+The field then holds the error's whole `source()` chain, joined with `": "`, for example `cannot create the monitor socket: <cause>`. A cause whose text the line already ends with is written once. Logging the error with `%err` or `"{err}"` writes only the first link of that chain. For `ServeError` the first link leaves out the reason: `"{err}"` on a `ServeError::Socket` prints only `cannot create the monitor socket`.
 
-`init` returns `LoggingError::UnknownLevel` for any other level and `LoggingError::AlreadyInitialized` when a global subscriber already exists. When it fails nothing is installed, so a `tracing::error!` at that point goes nowhere. A plugin that reads its level from configuration should print the error to stderr itself and exit, as the example above does.
+`init` returns `LoggingError::UnknownLevel` for any other level and `LoggingError::AlreadyInitialized` when a global subscriber already exists. When it fails nothing is installed, so a `tracing::error!` at that point goes nowhere. A monitor that reads its level from configuration should print the error to stderr itself and exit, as the example above does.
 
-Only `tracing` events are captured. Crates that log through the `log` crate write nothing unless your plugin bridges them to `tracing` itself.
+Only `tracing` events are captured. Crates that log through the `log` crate write nothing unless your monitor bridges them to `tracing` itself.
 
 ## Settings
 
-A plugin can declare its settings in a `settings.json` file next to `plugin.json` and check a set of values when it is run with the `validate-settings` argument. [Settings](../docs/protocol.md#settings) in the protocol document has the file's format and the rules for the answer. The `monitor_hub_plugin::settings` module covers the Rust side.
+A monitor can declare its settings in a `settings.json` file next to `monitor.json` and check a set of values when it is run with the `validate-settings` argument. [Settings](../docs/protocol.md#settings) in the protocol document has the file's format and the rules for the answer. The `monitor_hub_sdk::settings` module covers the Rust side.
 
 ### Answering `validate-settings`
 
-Look for the argument first in `main`, before logging starts and before anything checks the magic cookie, because the validator runs without the cookie. The [`fixed`](crates/plugin/examples/fixed.rs) example does the same:
+Look for the argument first in `main`, before logging starts and before anything checks the magic cookie, because the validator runs without the cookie. The [`fixed`](crates/sdk/examples/fixed.rs) example does the same:
 
 ```rust
 use std::env;
 use std::process::ExitCode;
 
-use monitor_hub_plugin::settings::{self, Problem, VALIDATE_SETTINGS_ARG};
-use monitor_hub_plugin::{ServeError, logging, serve};
+use monitor_hub_sdk::settings::{self, Problem, VALIDATE_SETTINGS_ARG};
+use monitor_hub_sdk::{Notifier, ServeError, logging, serve};
 
 fn problems() -> Vec<Problem> {
     let mut problems = Vec::new();
@@ -355,7 +360,9 @@ async fn main() -> ExitCode {
         eprintln!("cannot start logging: {err}");
         return ExitCode::FAILURE;
     }
-    match serve(Ping).await {
+    let notifier = Notifier::new();
+    notifier.events_recorded(1);
+    match serve(Ping, notifier).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,
         Err(err) => {
@@ -366,7 +373,7 @@ async fn main() -> ExitCode {
 }
 ```
 
-`Ping` is the plugin from [A minimal plugin](#a-minimal-plugin). `Problem::new(name, message)` builds one problem: `name` is the declared field it is about, or `""` for a problem with several fields together. Collect every problem before you answer, and never put the value of a secret field in a message.
+`Ping` is the monitor from [A minimal monitor](#a-minimal-monitor). `Problem::new(name, message)` builds one problem: `name` is the declared field it is about, or `""` for a problem with several fields together. Collect every problem before you answer, and never put the value of a secret field in a message.
 
 `answer` writes `{"problems":[...]}` and a newline on stdout, flushes it, and returns the exit code: `0` when the list is empty, `1` when it is not, and `2` when stdout cannot be written. Write nothing else on stdout. `write_answer(out, problems)` does the same into any `Write` and returns the code as a `u8`. `VALIDATE_SETTINGS_LIMIT` (5 seconds) and `ANSWER_LIMIT` (65536 bytes) hold the protocol's limits.
 
@@ -379,7 +386,7 @@ async fn main() -> ExitCode {
 - `UnsupportedVersion(version)`: `settings_version` is not 1.
 - `Field { index, problem }`: field `index` breaks a rule, described by a `FieldProblem`.
 
-`is_reserved(name)` says whether the hub reserves a name. A plugin does not need `parse` at run time, because the file is for the hub. The testkit uses it.
+`is_reserved(name)` says whether the hub reserves a name. A monitor does not need `parse` at run time, because the file is for the hub. The testkit uses it.
 
 `Settings`, `Field`, `FieldType`, `SettingsError`, `FieldProblem`, `Problem` and `Answer` are `#[non_exhaustive]`. A `match` on `FieldType`, `SettingsError` or `FieldProblem` needs a wildcard arm, a pattern on `SettingsError::Field` needs `..`, and other crates build a `Problem` with `Problem::new`.
 
@@ -387,16 +394,16 @@ async fn main() -> ExitCode {
 
 ### The conformance suite
 
-`monitor_hub_plugin_testkit::conformance::run` runs the hub's `plugin-conformance` command against your built binary. [Conformance](../docs/protocol.md#conformance) lists what it checks. Put the test in `tests/`, so Cargo builds the binary first:
+`monitor_hub_sdk_testkit::conformance::run` runs the hub's `monitor-conformance` command against your built binary. [Conformance](../docs/protocol.md#conformance) lists what it checks. Put the test in `tests/`, so Cargo builds the binary first:
 
 ```rust
 use std::time::Duration;
 
-use monitor_hub_plugin_testkit::conformance::{Conformance, Outcome, run};
+use monitor_hub_sdk_testkit::conformance::{Conformance, Outcome, run};
 
 #[test]
-fn the_plugin_conforms() {
-    let mut conformance = Conformance::new(env!("CARGO_BIN_EXE_my-plugin"));
+fn the_monitor_conforms() {
+    let mut conformance = Conformance::new(env!("CARGO_BIN_EXE_my-monitor"));
     conformance.env.push(("EVENTS".into(), "2".into()));
     conformance.min_events = 1;
     conformance.ready_timeout = Duration::from_secs(10);
@@ -409,18 +416,18 @@ fn the_plugin_conforms() {
 }
 ```
 
-`Conformance::new(program)` sets `command` to `[program]`, with no environment, `min_events` 0, `ready_timeout` 0 and no `plugin_dir`. Change the public fields by assignment: `Conformance` is `#[non_exhaustive]`, so other crates cannot build it with a struct literal, and `Outcome` is `#[non_exhaustive]` too, so a `match` on it needs a wildcard arm.
+`Conformance::new(program)` sets `command` to `[program]`, with no environment, `min_events` 0, `ready_timeout` 0 and no `monitor_dir`. Change the public fields by assignment: `Conformance` is `#[non_exhaustive]`, so other crates cannot build it with a struct literal, and `Outcome` is `#[non_exhaustive]` too, so a `match` on it needs a wildcard arm.
 
-`command` is the plugin's command line, and arguments are pushed onto it. `min_events` and `ready_timeout` become the `-min-events` and `-ready-timeout` flags. The run is stopped after `ready_timeout` plus two minutes, and no plugin process is left behind.
+`command` is the monitor's command line, and arguments are pushed onto it. `min_events` and `ready_timeout` become the `-min-events` and `-ready-timeout` flags. The run is stopped after `ready_timeout` plus two minutes, and no monitor process is left behind.
 
-`plugin_dir` becomes the `-plugin-dir` flag. Set it to the directory that holds your `settings.json`, for example `Some(env!("CARGO_MANIFEST_DIR").into())`. The command then reads that file by its own Go rules and runs the plugin's `validate-settings` in that directory. A plugin in any other language gets the same check from `plugin-conformance -plugin-dir`; for a Rust plugin it comes on top of `settings::check`.
+`monitor_dir` becomes the `-monitor-dir` flag. Set it to the directory that holds your `settings.json`, for example `Some(env!("CARGO_MANIFEST_DIR").into())`. The command then reads that file by its own Go rules and runs the monitor's `validate-settings` in that directory. A monitor in any other language gets the same check from `monitor-conformance -monitor-dir`; for a Rust monitor it comes on top of `settings::check`.
 
-`env` holds the plugin's environment. Besides it, the plugin gets only the handshake variables go-plugin sets (`MONITOR_HUB_PLUGIN`, `PLUGIN_MIN_PORT`, `PLUGIN_MAX_PORT`, `PLUGIN_PROTOCOL_VERSIONS`). The hub would also pass `PATH`, `TZ`, `TMPDIR` and `MONITOR_HUB_DATA_DIR`; the conformance command does not, so add the ones the plugin needs to `env`. The plugin runs in the test's working directory, not in a plugin directory, and shares the conformance command's process group. Each entry of `env` reaches the command as a `-env NAME=value` argument, which other users of the same machine can read (with `ps`, or in `/proc/<pid>/cmdline`). Pass only throwaway test credentials, such as the URL of a test database.
+`env` holds the monitor's environment. Besides it, the monitor gets only the handshake variables go-plugin sets (`MONITOR_HUB_MONITOR`, `PLUGIN_MIN_PORT`, `PLUGIN_MAX_PORT`, `PLUGIN_PROTOCOL_VERSIONS`). The hub would also pass `PATH`, `TZ`, `TMPDIR` and `MONITOR_HUB_DATA_DIR`; the conformance command does not, so add the ones the monitor needs to `env`. The monitor runs in the test's working directory, not in a monitor directory, and shares the conformance command's process group. Each entry of `env` reaches the command as a `-env NAME=value` argument, which other users of the same machine can read (with `ps`, or in `/proc/<pid>/cmdline`). Pass only throwaway test credentials, such as the URL of a test database.
 
 `run` finds the command in this order:
 
-1. The `PLUGIN_CONFORMANCE` environment variable: the path of an already built `plugin-conformance` binary.
-2. `go install github.com/ItzTas/monitor-hub/sdk-go/cmd/plugin-conformance@v0.4.0`, when `go` is on `PATH`. The Go tag is `sdk-go/v0.4.0`, and the constant `SDK_GO_VERSION` holds it. The binary goes to `monitor-hub/plugin-conformance/v0.4.0/` under a cache base: `$XDG_CACHE_HOME` when it is an absolute path, otherwise `$HOME/.cache` when `HOME` is absolute.
+1. The `MONITOR_CONFORMANCE` environment variable: the path of an already built `monitor-conformance` binary.
+2. `go install github.com/ItzTas/monitor-hub/sdk-go/cmd/monitor-conformance@v0.6.0`, when `go` is on `PATH`. The Go tag is `sdk-go/v0.6.0`, and the constant `SDK_GO_VERSION` holds it. The binary goes to `monitor-hub/monitor-conformance/v0.6.0/` under a cache base: `$XDG_CACHE_HOME` when it is an absolute path, otherwise `$HOME/.cache` when `HOME` is absolute.
    - `run` uses the base only when it exists or can be created, is a real directory and not a symbolic link, belongs to you, and is not writable by group or others. It creates a missing base with mode 0700. Each directory below the base must belong to you too, and `run` sets it to mode 0700. `run` checks the base itself but not its parents: a base inside a directory that other users can rename is your responsibility.
    - The binary is installed once per version. Later test runs reuse it while it is a regular file that you own and can execute; otherwise `run` installs it again. `go install` writes to a staging directory next to the binary, which is then renamed into place, so test processes that install at the same time do not corrupt each other. `go install` is stopped after ten minutes, and the next install removes staging directories older than that, such as those left by a killed run.
    - In every other case the binary goes to a private temporary directory, one per test process, which stays behind after the process ends: when neither variable gives an absolute path, or when the base or a directory below it fails the checks above, for example `HOME=/` in a container started with `--user`. `run` then says once on stderr why it did not use the cache. Unsetting both `XDG_CACHE_HOME` and `HOME` always selects the temporary directory; `go` itself then needs `GOCACHE` and `GOPATH` set.
@@ -428,31 +435,31 @@ fn the_plugin_conforms() {
 
 `Outcome::Failed` carries one of four things:
 
-- A message that starts with `Conformance.` when a field of your `Conformance` is wrong: `command` is empty, a name in `env` is empty or holds `=`, or `plugin_dir` is not a directory. The command is not run.
-- The conformance command's stderr: one line per violation, preceded by every line the plugin wrote to its stderr, each prefixed with `plugin: `. When the plugin cannot start, for example because its configuration is wrong or its database refuses the connection, its own error lines come just before the command's `plugin-conformance: ` line.
-- A message that starts with "the conformance command" and says it could not be fetched or built, followed by the Go tool's output. This happens in the `go` mode, before your plugin is started.
-- A message about an unexpected end: the command did not finish in time, could not be started, was killed, or rejected its arguments with exit code 2. The runner checks the arguments before it starts the command, so that last case is a bug in the runner, not in your plugin.
+- A message that starts with `Conformance.` when a field of your `Conformance` is wrong: `command` is empty, a name in `env` is empty or holds `=`, or `monitor_dir` is not a directory. The command is not run.
+- The conformance command's stderr: one line per violation, preceded by every line the monitor wrote to its stderr, each prefixed with `monitor: `. When the monitor cannot start, for example because its configuration is wrong or its database refuses the connection, its own error lines come just before the command's `monitor-conformance: ` line.
+- A message that starts with "the conformance command" and says it could not be fetched or built, followed by the Go tool's output. This happens in the `go` mode, before your monitor is started.
+- A message about an unexpected end: the command did not finish in time, could not be started, was killed, or rejected its arguments with exit code 2. The runner checks the arguments before it starts the command, so that last case is a bug in the runner, not in your monitor.
 
 Of the command's stderr, and of the Go tool's output, only the last 1 MiB is kept. It starts at the beginning of a line whenever that last part holds a line break. When anything was cut, the first line is `(earlier output dropped)`.
 
 ### Settings
 
-`monitor_hub_plugin_testkit::settings` has two checks for a plugin that ships `settings.json`. The first runs your built binary, so put it in `tests/`:
+`monitor_hub_sdk_testkit::settings` has two checks for a monitor that ships `settings.json`. The first runs your built binary, so put it in `tests/`:
 
 ```rust
-use monitor_hub_plugin_testkit::settings::check;
+use monitor_hub_sdk_testkit::settings::check;
 
 #[test]
 fn the_settings_contract_holds() {
     let violations = check(
         env!("CARGO_MANIFEST_DIR"),
-        env!("CARGO_BIN_EXE_my-plugin"),
+        env!("CARGO_BIN_EXE_my-monitor"),
     );
     assert!(violations.is_empty(), "{violations:#?}");
 }
 ```
 
-`check(dir, program)` reads `dir/settings.json` with `parse`, then runs `program validate-settings` in `dir` with an empty environment. It returns one line per violation, and an empty list when both pass. It reports at most one problem with the file and one with the validator. A validator that exits with code 1 and lists problems passes: with an empty environment, that is the expected answer of a plugin with required settings. What the validator writes to stderr is read and thrown away. The file must exist: without it, `check` reports that it cannot read it. `check` stops a validator that runs longer than 5 seconds, together with its process group: it sends SIGTERM, then SIGKILL five seconds later, so a validator that ignores SIGTERM makes `check` take about 11 seconds.
+`check(dir, program)` reads `dir/settings.json` with `parse`, then runs `program validate-settings` in `dir` with an empty environment. It returns one line per violation, and an empty list when both pass. It reports at most one problem with the file and one with the validator. A validator that exits with code 1 and lists problems passes: with an empty environment, that is the expected answer of a monitor with required settings. What the validator writes to stderr is read and thrown away. The file must exist: without it, `check` reports that it cannot read it. `check` stops a validator that runs longer than 5 seconds, together with its process group: it sends SIGTERM, then SIGKILL five seconds later, so a validator that ignores SIGTERM makes `check` take about 11 seconds.
 
 `check` runs `program` exactly as given, made absolute against the current directory. A bare name such as `validator` becomes `<current directory>/validator` and is not looked up in `PATH`, so pass a full path, for example `env!("CARGO_BIN_EXE_<name>")`.
 
@@ -466,14 +473,14 @@ mod tests {
     #[test]
     fn settings_json_declares_what_the_configuration_reads() {
         let settings = include_str!("../settings.json");
-        monitor_hub_plugin_testkit::settings::assert_no_drift(settings, super::NAMES);
+        monitor_hub_sdk_testkit::settings::assert_no_drift(settings, super::NAMES);
     }
 }
 ```
 
 `include_str!` takes a path relative to the source file, so `../settings.json` fits a module in `src/` and a file at the crate root.
 
-The conformance command reads the file with its own rules, which accept a few things `parse` rejects (see [Settings](../docs/protocol.md#settings)). To run that check too, set `plugin_dir` on the conformance run.
+The conformance command reads the file with its own rules, which accept a few things `parse` rejects (see [Settings](../docs/protocol.md#settings)). To run that check too, set `monitor_dir` on the conformance run.
 
 ## Working on the SDK
 
@@ -484,7 +491,7 @@ make generate-rust
 make check-rust
 ```
 
-`make generate-rust` regenerates `crates/plugin/src/generated/` from `proto/monitorhub/plugin/v1/plugin.proto` and `crates/plugin/proto/controller.proto`. It needs `protoc`. Never edit the generated files by hand.
+`make generate-rust` regenerates `crates/sdk/src/generated/` from `proto/monitorhub/monitor/v1/monitor.proto` and `crates/sdk/proto/controller.proto`. It needs `protoc`. Never edit the generated files by hand.
 
 `make check-rust` runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` and `cargo test --workspace --all-features`. The tests need `protoc` and Go. Locally they skip what is missing. Under `CI` they fail.
 
@@ -509,4 +516,4 @@ To add or bump a dependency, update only what it needs and pin each new crate to
 cargo update -p <crate> --precise <version>
 ```
 
-Then check every new or changed entry in `Cargo.lock` against its publish date on crates.io. A plugin repository that copies this lock as its starting point follows the same rule.
+Then check every new or changed entry in `Cargo.lock` against its publish date on crates.io. A monitor repository that copies this lock as its starting point follows the same rule.
