@@ -8,7 +8,7 @@ import (
 )
 
 func TestRustExampleSettings(t *testing.T) {
-	dir, err := filepath.Abs(filepath.Join("..", "..", "..", "sdk-rust", "crates", "plugin", "examples", "fixed-plugin"))
+	dir, err := filepath.Abs(filepath.Join("..", "..", "..", "sdk-rust", "crates", "sdk", "examples", "fixed-monitor"))
 	if err != nil {
 		t.Fatal(err)
 	}

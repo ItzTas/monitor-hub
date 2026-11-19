@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::io::{self, Write};
 
-use monitor_hub_plugin::settings::{
+use monitor_hub_sdk::settings::{
     Answer, FieldProblem, FieldType, Problem, Settings, SettingsError, is_reserved, parse,
     write_answer,
 };

@@ -2,14 +2,14 @@ use std::env;
 use std::error::Error;
 use std::process::ExitCode;
 
-use monitor_hub_plugin::logging::{self, LoggingError};
-use monitor_hub_plugin::proto::monitor_server::Monitor;
-use monitor_hub_plugin::proto::{
+use monitor_hub_sdk::logging::{self, LoggingError};
+use monitor_hub_sdk::proto::monitor_server::Monitor;
+use monitor_hub_sdk::proto::{
     CheckRequest, CheckResponse, DescribeRequest, DescribeResponse, Event, EventKind,
     EventsRequest, EventsResponse, Severity, State, StatusRequest, StatusResponse,
 };
-use monitor_hub_plugin::settings::{self, Problem, VALIDATE_SETTINGS_ARG};
-use monitor_hub_plugin::{Notifier, ServeError, serve_with_notifier};
+use monitor_hub_sdk::settings::{self, Problem, VALIDATE_SETTINGS_ARG};
+use monitor_hub_sdk::{Notifier, ServeError, serve_with_notifier};
 use prost_types::Timestamp;
 use tonic::{Request, Response, Status};
 

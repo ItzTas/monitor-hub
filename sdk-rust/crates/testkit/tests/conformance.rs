@@ -4,12 +4,12 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::{env, fs};
 
-use monitor_hub_plugin_testkit::conformance::{Conformance, Outcome, run};
+use monitor_hub_sdk_testkit::conformance::{Conformance, Outcome, run};
 use tempfile::TempDir;
 
 #[path = "../src/ci.rs"]
 mod ci;
-#[path = "../../plugin/tests/support/example.rs"]
+#[path = "../../sdk/tests/support/example.rs"]
 mod example;
 
 struct Setup {
@@ -102,7 +102,7 @@ fn a_monitor_that_fails_before_the_handshake_shows_its_stderr_first() {
 
     let lines: Vec<&str> = output.lines().collect();
     let monitor = lines.iter().position(|line| {
-        line.starts_with("monitor: {") && line.contains("cannot create the plugin socket")
+        line.starts_with("monitor: {") && line.contains("cannot create the monitor socket")
     });
     let own = lines
         .iter()
@@ -118,7 +118,7 @@ fn a_monitor_directory_with_valid_settings_passes() {
     let Some(setup) = setup() else { return };
     let mut conformance = conformance(setup, 2);
     conformance.monitor_dir =
-        Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugin/examples/fixed-plugin"));
+        Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../sdk/examples/fixed-monitor"));
 
     assert_eq!(run(&conformance), Outcome::Passed);
 }

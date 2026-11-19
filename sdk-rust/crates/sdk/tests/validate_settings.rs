@@ -4,7 +4,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use monitor_hub_plugin::settings::VALIDATE_SETTINGS_ARG;
+use monitor_hub_sdk::settings::VALIDATE_SETTINGS_ARG;
 
 #[path = "support/example.rs"]
 mod example;
@@ -12,7 +12,7 @@ mod example;
 const EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn monitor_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/fixed-plugin")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/fixed-monitor")
 }
 
 fn validate(vars: &[(&str, &str)]) -> Output {
@@ -25,7 +25,7 @@ fn validate(vars: &[(&str, &str)]) -> Output {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("start example plugin");
+        .expect("start example monitor");
     let id = child.id();
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
@@ -37,7 +37,7 @@ fn validate(vars: &[(&str, &str)]) -> Output {
             .status();
         panic!("validate-settings did not exit within {EXIT_TIMEOUT:?}");
     };
-    output.expect("wait for example plugin")
+    output.expect("wait for example monitor")
 }
 
 #[test]

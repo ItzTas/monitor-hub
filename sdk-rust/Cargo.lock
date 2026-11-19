@@ -439,11 +439,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "monitor-hub-plugin"
+name = "monitor-hub-sdk"
 version = "0.3.0"
 dependencies = [
  "chrono",
- "monitor-hub-plugin-testkit",
+ "monitor-hub-sdk-testkit",
  "prost",
  "prost-types",
  "serde",
@@ -460,10 +460,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "monitor-hub-plugin-testkit"
+name = "monitor-hub-sdk-testkit"
 version = "0.3.0"
 dependencies = [
- "monitor-hub-plugin",
+ "monitor-hub-sdk",
  "serde_json",
  "tempfile",
  "tokio",

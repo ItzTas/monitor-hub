@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/codegen", "crates/plugin", "crates/testkit"]
+members = ["crates/codegen", "crates/sdk", "crates/testkit"]
 
 [workspace.package]
 edition = "2024"

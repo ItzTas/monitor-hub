@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use monitor_hub_plugin::{MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE, NOT_LAUNCHED_BY_HUB};
+use monitor_hub_sdk::{MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE, NOT_LAUNCHED_BY_HUB};
 use tempfile::TempDir;
 use tonic::codegen::http::uri::PathAndQuery;
 use tonic::transport::{Channel, Endpoint};
@@ -22,9 +22,9 @@ mod example;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-struct Plugin(Child);
+struct Example(Child);
 
-impl Deref for Plugin {
+impl Deref for Example {
     type Target = Child;
 
     fn deref(&self) -> &Child {
@@ -32,13 +32,13 @@ impl Deref for Plugin {
     }
 }
 
-impl DerefMut for Plugin {
+impl DerefMut for Example {
     fn deref_mut(&mut self) -> &mut Child {
         &mut self.0
     }
 }
 
-impl Drop for Plugin {
+impl Drop for Example {
     fn drop(&mut self) {
         if matches!(self.0.try_wait(), Ok(None)) {
             let _ = self.0.kill();
@@ -63,31 +63,31 @@ fn hub_command(socket_dir: &Path) -> Command {
     cmd
 }
 
-fn spawn(mut cmd: Command) -> Plugin {
-    Plugin(cmd.spawn().expect("start example plugin"))
+fn spawn(mut cmd: Command) -> Example {
+    Example(cmd.spawn().expect("start example monitor"))
 }
 
-fn wait_exit(plugin: &mut Plugin, limit: Duration) -> ExitStatus {
+fn wait_exit(monitor: &mut Example, limit: Duration) -> ExitStatus {
     let deadline = Instant::now() + limit;
     loop {
-        if let Some(status) = plugin.try_wait().expect("poll plugin") {
+        if let Some(status) = monitor.try_wait().expect("poll monitor") {
             return status;
         }
         assert!(
             Instant::now() < deadline,
-            "plugin still running after {limit:?}"
+            "monitor still running after {limit:?}"
         );
         thread::sleep(Duration::from_millis(20));
     }
 }
 
 fn run_to_exit(cmd: Command) -> (ExitStatus, String, String) {
-    let mut plugin = spawn(cmd);
-    let status = wait_exit(&mut plugin, HANDSHAKE_TIMEOUT);
+    let mut monitor = spawn(cmd);
+    let status = wait_exit(&mut monitor, HANDSHAKE_TIMEOUT);
     (
         status,
-        read_all(plugin.stdout.take()),
-        read_all(plugin.stderr.take()),
+        read_all(monitor.stdout.take()),
+        read_all(monitor.stderr.take()),
     )
 }
 
@@ -99,8 +99,8 @@ fn read_all(pipe: Option<impl Read>) -> String {
     text
 }
 
-fn handshake(plugin: &mut Plugin) -> PathBuf {
-    let stdout = plugin.stdout.take().expect("piped stdout");
+fn handshake(monitor: &mut Example) -> PathBuf {
+    let stdout = monitor.stdout.take().expect("piped stdout");
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let mut line = String::new();
@@ -125,7 +125,7 @@ async fn connect(socket: &Path) -> Channel {
         .expect("socket endpoint")
         .connect()
         .await
-        .expect("connect to plugin")
+        .expect("connect to monitor")
 }
 
 fn entries(dir: &Path) -> Vec<PathBuf> {
@@ -185,9 +185,9 @@ fn serve_with_a_too_long_socket_path_prints_nothing_on_stdout() {
 #[test]
 fn handshake_line_names_a_listening_socket() {
     let dir = TempDir::new().expect("create temp dir");
-    let mut plugin = spawn(hub_command(dir.path()));
+    let mut monitor = spawn(hub_command(dir.path()));
 
-    let socket = handshake(&mut plugin);
+    let socket = handshake(&mut monitor);
 
     assert!(
         socket.is_absolute(),
@@ -199,12 +199,12 @@ fn handshake_line_names_a_listening_socket() {
     UnixStream::connect(&socket).expect("connect to socket");
 
     let kill = Command::new("kill")
-        .args(["-TERM", &plugin.id().to_string()])
+        .args(["-TERM", &monitor.id().to_string()])
         .status()
         .expect("send SIGTERM");
     assert!(kill.success());
     assert_eq!(
-        wait_exit(&mut plugin, Duration::from_secs(5)).code(),
+        wait_exit(&mut monitor, Duration::from_secs(5)).code(),
         Some(0)
     );
     assert!(!socket.exists(), "socket {socket:?} left behind");
@@ -222,9 +222,9 @@ fn the_socket_is_readable_and_writable_by_its_owner_only() {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut plugin = spawn(cmd);
+    let mut monitor = spawn(cmd);
 
-    let socket = handshake(&mut plugin);
+    let socket = handshake(&mut monitor);
 
     let mode = fs::metadata(&socket)
         .expect("stat socket")
@@ -234,10 +234,10 @@ fn the_socket_is_readable_and_writable_by_its_owner_only() {
 }
 
 #[tokio::test]
-async fn health_reports_the_plugin_service_as_serving() {
+async fn health_reports_serving_for_go_plugin() {
     let dir = TempDir::new().expect("create temp dir");
-    let mut plugin = spawn(hub_command(dir.path()));
-    let socket = handshake(&mut plugin);
+    let mut monitor = spawn(hub_command(dir.path()));
+    let socket = handshake(&mut monitor);
 
     let reply = HealthClient::new(connect(&socket).await)
         .check(HealthCheckRequest {
@@ -250,10 +250,10 @@ async fn health_reports_the_plugin_service_as_serving() {
 }
 
 #[tokio::test]
-async fn shutdown_rpc_stops_the_plugin() {
+async fn shutdown_rpc_stops_the_monitor() {
     let dir = TempDir::new().expect("create temp dir");
-    let mut plugin = spawn(hub_command(dir.path()));
-    let socket = handshake(&mut plugin);
+    let mut monitor = spawn(hub_command(dir.path()));
+    let socket = handshake(&mut monitor);
     let mut grpc = tonic::client::Grpc::new(connect(&socket).await);
     grpc.ready().await.expect("channel ready");
 
@@ -266,7 +266,7 @@ async fn shutdown_rpc_stops_the_plugin() {
     .expect("call Shutdown");
 
     assert_eq!(
-        wait_exit(&mut plugin, Duration::from_secs(2)).code(),
+        wait_exit(&mut monitor, Duration::from_secs(2)).code(),
         Some(0)
     );
     assert!(!socket.exists(), "socket {socket:?} left behind");

@@ -7,8 +7,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::DateTime;
-use monitor_hub_plugin::logging::{LoggingError, init};
-use monitor_hub_plugin::{MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE};
+use monitor_hub_sdk::logging::{LoggingError, init};
+use monitor_hub_sdk::{MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE};
 use serde_json::{Map, Value};
 use tempfile::TempDir;
 
@@ -34,7 +34,7 @@ fn spawn(switches: &[&str], socket_dir: &Path) -> Child {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("start example plugin")
+        .expect("start example monitor")
 }
 
 fn read_stdout(child: &mut Child) -> (mpsc::Receiver<String>, thread::JoinHandle<String>) {
@@ -181,7 +181,7 @@ fn a_panic_is_one_error_line_on_stderr() {
     assert_eq!(text(line, "@module"), "panic");
     let location = text(line, "location");
     assert!(
-        location.starts_with("crates/plugin/examples/fixed.rs:"),
+        location.starts_with("crates/sdk/examples/fixed.rs:"),
         "location: {location}"
     );
     let mut keys: Vec<&str> = line.keys().map(String::as_str).collect();
@@ -221,7 +221,7 @@ fn a_socket_cleanup_failure_is_a_json_line() {
     assert_eq!(lines.len(), 1, "stderr: {:?}", run.stderr);
     let line = &lines[0];
     assert_eq!(text(line, "@level"), "warn");
-    assert_eq!(text(line, "@message"), "cannot remove the plugin socket");
+    assert_eq!(text(line, "@message"), "cannot remove the monitor socket");
     assert_eq!(text(line, "socket"), socket.to_str().expect("UTF-8 path"));
     text(line, "error");
 }
@@ -239,7 +239,7 @@ fn a_serve_failure_is_a_json_error_line() {
     assert_eq!(run.stdout, "");
     let error = serve_error(&run.stderr);
     let want = format!(
-        "cannot create the plugin socket: listen on {}/plugin-",
+        "cannot create the monitor socket: listen on {}/monitor-",
         missing.display()
     );
     assert!(error.starts_with(&want), "error: {error}");
@@ -258,7 +258,7 @@ fn a_handshake_write_failure_is_a_json_error_line_and_leaves_no_socket() {
         .stdout(full)
         .stderr(Stdio::piped())
         .spawn()
-        .expect("start example plugin");
+        .expect("start example monitor");
 
     let run = finish(child, thread::spawn(String::new));
 

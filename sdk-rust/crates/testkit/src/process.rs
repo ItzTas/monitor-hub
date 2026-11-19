@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use monitor_hub_plugin::settings::ANSWER_LIMIT;
+use monitor_hub_sdk::settings::ANSWER_LIMIT;
 
 pub(crate) const GRACE: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(20);

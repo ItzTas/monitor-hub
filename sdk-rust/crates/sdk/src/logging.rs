@@ -23,7 +23,7 @@ const MODULE: &str = "@module";
 const TIMESTAMP: &str = "@timestamp";
 const HEAD: [&str; 4] = [LEVEL, MESSAGE, MODULE, TIMESTAMP];
 const RESERVED: [&str; 10] = [
-    LEVEL, MESSAGE, MODULE, TIMESTAMP, "plugin", "module", "time", "level", "msg", "source",
+    LEVEL, MESSAGE, MODULE, TIMESTAMP, "monitor", "module", "time", "level", "msg", "source",
 ];
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -356,13 +356,13 @@ mod tests {
                     "@message" = 1,
                     "@module" = 2,
                     "@timestamp" = 3,
-                    plugin = "other",
+                    monitor = "other",
                     module = 4,
                     time = 5,
                     level = 6,
                     msg = 7,
                     source = 8,
-                    field_plugin = 9,
+                    field_monitor = 9,
                 },
                 "real"
             )
@@ -377,8 +377,8 @@ mod tests {
             "field_@message": 1,
             "field_@module": 2,
             "field_@timestamp": 3,
-            "field_plugin": "other",
-            "field_field_plugin": 9,
+            "field_monitor": "other",
+            "field_field_monitor": 9,
             "field_module": 4,
             "field_time": 5,
             "field_level": 6,
@@ -445,9 +445,9 @@ mod tests {
 
         let line = event_line(
             Level::TRACE,
-            "monitor_hub_plugin::handshake",
+            "monitor_hub_sdk::handshake",
             "said \"bye\"\nthen left",
-            &[("socket", json!("/tmp/plugin-1")), ("plugin", json!("x"))],
+            &[("socket", json!("/tmp/monitor-1")), ("monitor", json!("x"))],
         );
 
         let text = String::from_utf8(line).expect("UTF-8 line");
@@ -457,10 +457,10 @@ mod tests {
         let want = json!({
             "@level": "trace",
             "@message": "said \"bye\"\nthen left",
-            "@module": "monitor_hub_plugin::handshake",
+            "@module": "monitor_hub_sdk::handshake",
             "@timestamp": parsed["@timestamp"],
-            "socket": "/tmp/plugin-1",
-            "field_plugin": "x",
+            "socket": "/tmp/monitor-1",
+            "field_monitor": "x",
         });
         assert_eq!(Value::Object(parsed), want);
     }

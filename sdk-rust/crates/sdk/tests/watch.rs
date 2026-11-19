@@ -6,9 +6,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use monitor_hub_plugin::proto::monitor_server::Monitor;
-use monitor_hub_plugin::proto::{WatchRequest, WatchResponse};
-use monitor_hub_plugin::{MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE};
+use monitor_hub_sdk::proto::monitor_server::Monitor;
+use monitor_hub_sdk::proto::{WatchRequest, WatchResponse};
+use monitor_hub_sdk::{MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE};
 use tempfile::TempDir;
 use tonic::codec::Streaming;
 use tonic::codegen::http::uri::PathAndQuery;
@@ -26,7 +26,7 @@ struct Bare;
 impl Monitor for Bare {}
 
 #[tokio::test]
-async fn a_plugin_without_the_notifier_answers_unimplemented() {
+async fn a_monitor_without_the_notifier_answers_unimplemented() {
     let result = Bare.watch(Request::new(WatchRequest {})).await;
     let status = result.err().expect("watch must fail");
     assert_eq!(status.code(), Code::Unimplemented);
@@ -67,12 +67,12 @@ fn start(socket_dir: &Path, events: &str) -> Example {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .expect("start example plugin");
+        .expect("start example monitor");
     Example(child)
 }
 
-fn handshake(plugin: &mut Example) -> PathBuf {
-    let stdout = plugin.stdout.take().expect("piped stdout");
+fn handshake(monitor: &mut Example) -> PathBuf {
+    let stdout = monitor.stdout.take().expect("piped stdout");
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let mut line = String::new();
@@ -92,15 +92,15 @@ fn handshake(plugin: &mut Example) -> PathBuf {
     PathBuf::from(path)
 }
 
-fn wait_exit(plugin: &mut Example, limit: Duration) -> ExitStatus {
+fn wait_exit(monitor: &mut Example, limit: Duration) -> ExitStatus {
     let deadline = Instant::now() + limit;
     loop {
-        if let Some(status) = plugin.try_wait().expect("poll plugin") {
+        if let Some(status) = monitor.try_wait().expect("poll monitor") {
             return status;
         }
         assert!(
             Instant::now() < deadline,
-            "plugin still running after {limit:?}"
+            "monitor still running after {limit:?}"
         );
         thread::sleep(Duration::from_millis(20));
     }
@@ -111,7 +111,7 @@ async fn connect(socket: &Path) -> tonic::client::Grpc<Channel> {
         .expect("socket endpoint")
         .connect()
         .await
-        .expect("connect to plugin");
+        .expect("connect to monitor");
     let mut grpc = tonic::client::Grpc::new(channel);
     grpc.ready().await.expect("channel ready");
     grpc
@@ -139,8 +139,8 @@ async fn first_signal(stream: &mut Streaming<WatchResponse>) -> WatchResponse {
 #[tokio::test]
 async fn the_example_signals_at_once_and_keeps_watch_open() {
     let dir = TempDir::new().expect("create temp dir");
-    let mut plugin = start(dir.path(), "3");
-    let socket = handshake(&mut plugin);
+    let mut monitor = start(dir.path(), "3");
+    let socket = handshake(&mut monitor);
     let mut grpc = connect(&socket).await;
 
     let mut stream = watch(&mut grpc).await;
@@ -153,8 +153,8 @@ async fn the_example_signals_at_once_and_keeps_watch_open() {
 #[tokio::test]
 async fn shutdown_ends_open_watch_streams() {
     let dir = TempDir::new().expect("create temp dir");
-    let mut plugin = start(dir.path(), "3");
-    let socket = handshake(&mut plugin);
+    let mut monitor = start(dir.path(), "3");
+    let socket = handshake(&mut monitor);
     let mut grpc = connect(&socket).await;
     let mut stream = watch(&mut grpc).await;
     first_signal(&mut stream).await;
@@ -182,7 +182,7 @@ async fn shutdown_ends_open_watch_streams() {
         started.elapsed()
     );
     assert_eq!(
-        wait_exit(&mut plugin, Duration::from_secs(2)).code(),
+        wait_exit(&mut monitor, Duration::from_secs(2)).code(),
         Some(0)
     );
 }

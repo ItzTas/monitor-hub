@@ -31,32 +31,32 @@ pub enum ServeError {
     NotLaunchedByHub,
     #[error("cannot register the signal handlers")]
     Signals(#[source] io::Error),
-    #[error("cannot create the plugin socket")]
+    #[error("cannot create the monitor socket")]
     Socket(#[source] io::Error),
     #[error("cannot write the handshake line")]
     Handshake(#[source] io::Error),
-    #[error("the plugin gRPC server failed")]
+    #[error("the monitor gRPC server failed")]
     Transport(#[source] tonic::transport::Error),
 }
 
-pub async fn serve<P: Monitor>(plugin: P) -> Result<(), ServeError> {
-    run(|_| plugin).await
+pub async fn serve<M: Monitor>(monitor: M) -> Result<(), ServeError> {
+    run(|_| monitor).await
 }
 
-pub async fn serve_with_notifier<P: Monitor>(
-    plugin: P,
+pub async fn serve_with_notifier<M: Monitor>(
+    monitor: M,
     notifier: Notifier,
 ) -> Result<(), ServeError> {
     run(|closing| Watched {
-        plugin,
+        monitor,
         notifier,
         closing,
     })
     .await
 }
 
-async fn run<P: Monitor>(
-    build_plugin: impl FnOnce(watch::Receiver<bool>) -> P,
+async fn run<M: Monitor>(
+    build_monitor: impl FnOnce(watch::Receiver<bool>) -> M,
 ) -> Result<(), ServeError> {
     if !launched_by_hub() {
         eprintln!("{NOT_LAUNCHED_BY_HUB}");
@@ -74,7 +74,7 @@ async fn run<P: Monitor>(
     let router = Server::builder()
         .add_service(health_service)
         .add_service(GrpcControllerServer::new(Controller { stop }))
-        .add_service(MonitorServer::new(build_plugin(closed)));
+        .add_service(MonitorServer::new(build_monitor(closed)));
 
     socket.announce().map_err(ServeError::Handshake)?;
 
@@ -132,40 +132,40 @@ impl GrpcController for Controller {
     }
 }
 
-struct Watched<P> {
-    plugin: P,
+struct Watched<M> {
+    monitor: M,
     notifier: Notifier,
     closing: watch::Receiver<bool>,
 }
 
 #[tonic::async_trait]
-impl<P: Monitor> Monitor for Watched<P> {
+impl<M: Monitor> Monitor for Watched<M> {
     async fn describe(
         &self,
         request: Request<DescribeRequest>,
     ) -> Result<Response<DescribeResponse>, Status> {
-        self.plugin.describe(request).await
+        self.monitor.describe(request).await
     }
 
     async fn status(
         &self,
         request: Request<StatusRequest>,
     ) -> Result<Response<StatusResponse>, Status> {
-        self.plugin.status(request).await
+        self.monitor.status(request).await
     }
 
     async fn check(
         &self,
         request: Request<CheckRequest>,
     ) -> Result<Response<CheckResponse>, Status> {
-        self.plugin.check(request).await
+        self.monitor.check(request).await
     }
 
     async fn events(
         &self,
         request: Request<EventsRequest>,
     ) -> Result<Response<EventsResponse>, Status> {
-        self.plugin.events(request).await
+        self.monitor.events(request).await
     }
 
     async fn watch(

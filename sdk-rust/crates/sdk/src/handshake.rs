@@ -15,7 +15,7 @@ pub const MAGIC_COOKIE_KEY: &str = "MONITOR_HUB_MONITOR";
 pub const MAGIC_COOKIE_VALUE: &str = "7c0e5a52-monitor-hub";
 pub const DATA_DIR_ENV: &str = "MONITOR_HUB_DATA_DIR";
 pub const NOT_LAUNCHED_BY_HUB: &str =
-    "this binary is a monitor-hub plugin and must be started by the hub";
+    "this binary is a monitor for monitor-hub and must be started by the hub";
 
 const SOCKET_DIR_ENVS: [&str; 2] = ["PLUGIN_UNIX_SOCKET_DIR", "TMPDIR"];
 const DEFAULT_SOCKET_DIR: &str = "/tmp";
@@ -59,7 +59,7 @@ impl Drop for Socket {
             logging::write_event(
                 Level::WARN,
                 module_path!(),
-                "cannot remove the plugin socket",
+                "cannot remove the monitor socket",
                 &[
                     ("socket", self.path.as_str().into()),
                     ("error", err.to_string().into()),
@@ -98,7 +98,7 @@ fn socket_name() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.subsec_nanos());
-    format!("plugin-{}-{nanos}", process::id())
+    format!("monitor-{}-{nanos}", process::id())
 }
 
 fn invalid(message: String) -> io::Error {

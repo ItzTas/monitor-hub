@@ -16,7 +16,7 @@ fn build(name: &str) -> PathBuf {
             "--quiet",
             "--message-format=json-render-diagnostics",
             "-p",
-            "monitor-hub-plugin",
+            "monitor-hub-sdk",
             "--example",
             name,
         ])

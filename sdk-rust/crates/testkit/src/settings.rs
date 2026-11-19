@@ -6,7 +6,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{self, Path};
 use std::process::{Command, ExitStatus};
 
-use monitor_hub_plugin::settings::{
+use monitor_hub_sdk::settings::{
     ANSWER_LIMIT, Answer, SETTINGS_FILE, Settings, VALIDATE_SETTINGS_ARG, VALIDATE_SETTINGS_LIMIT,
     is_reserved, parse,
 };

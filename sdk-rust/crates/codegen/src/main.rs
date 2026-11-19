@@ -8,7 +8,7 @@ fn main() -> ExitCode {
     let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let out = env::args_os()
         .nth(1)
-        .map_or_else(|| sdk.join("crates/plugin/src/generated"), PathBuf::from);
+        .map_or_else(|| sdk.join("crates/sdk/src/generated"), PathBuf::from);
     if let Err(err) = generate(&sdk, &out) {
         eprintln!("codegen: {err}");
         return ExitCode::FAILURE;
@@ -18,7 +18,7 @@ fn main() -> ExitCode {
 
 fn generate(sdk: &Path, out: &Path) -> io::Result<()> {
     let contract = sdk.join("../proto").canonicalize()?;
-    let controller = sdk.join("crates/plugin/proto").canonicalize()?;
+    let controller = sdk.join("crates/sdk/proto").canonicalize()?;
     fs::create_dir_all(out)?;
     tonic_prost_build::configure()
         .build_client(false)

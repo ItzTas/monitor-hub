@@ -6,15 +6,15 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
-use monitor_hub_plugin_testkit::settings::{assert_no_drift, check};
+use monitor_hub_sdk_testkit::settings::{assert_no_drift, check};
 use tempfile::TempDir;
 
-#[path = "../../plugin/tests/support/example.rs"]
+#[path = "../../sdk/tests/support/example.rs"]
 mod example;
 #[path = "support/leftovers.rs"]
 mod leftovers;
 
-const FIXED_SETTINGS: &str = include_str!("../../plugin/examples/fixed-plugin/settings.json");
+const FIXED_SETTINGS: &str = include_str!("../../sdk/examples/fixed-monitor/settings.json");
 const EMPTY_SETTINGS: &str = r#"{"settings_version":1,"fields":[]}"#;
 const BAD_SETTINGS: &str =
     r#"{"settings_version":1,"fields":[{"name":"events","label":"Events","type":"integer"}]}"#;
@@ -52,13 +52,13 @@ impl Case {
     }
 }
 
-struct Plugin {
+struct FakeMonitor {
     dir: TempDir,
     detached: Option<&'static str>,
 }
 
-impl Plugin {
-    fn new(case: &Case) -> Plugin {
+impl FakeMonitor {
+    fn new(case: &Case) -> FakeMonitor {
         let dir = TempDir::new().expect("create temp dir");
         if let Some(settings) = case.settings {
             fs::write(dir.path().join("settings.json"), settings).expect("write settings.json");
@@ -67,7 +67,7 @@ impl Plugin {
         fs::write(&validator, format!("#!/bin/sh\n{}\n", case.script))
             .expect("write the validator");
         fs::set_permissions(&validator, Permissions::from_mode(0o755)).expect("chmod");
-        Plugin {
+        FakeMonitor {
             dir,
             detached: case.detached,
         }
@@ -93,7 +93,7 @@ impl Plugin {
     }
 }
 
-impl Drop for Plugin {
+impl Drop for FakeMonitor {
     fn drop(&mut self) {
         let Ok(dir) = fs::canonicalize(self.dir.path()) else {
             return;
@@ -108,7 +108,7 @@ impl Drop for Plugin {
 }
 
 fn fixed_monitor_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugin/examples/fixed-plugin")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../sdk/examples/fixed-monitor")
 }
 
 fn matches(got: &[String], want: &[Want]) -> bool {
@@ -170,7 +170,7 @@ fn misbehaving_validators_are_reported() {
         ),
         Case::new(
             "needs the cookie",
-            "echo 'this binary is a monitor-hub plugin' >&2; exit 1",
+            "echo 'this binary is a monitor for monitor-hub' >&2; exit 1",
             vec![Want::Exact(
                 "validate-settings printed nothing on stdout; it runs with an empty environment and without MONITOR_HUB_MONITOR",
             )],
@@ -372,10 +372,10 @@ fn misbehaving_validators_are_reported() {
             )
         },
     ];
-    let plugins: Vec<Plugin> = cases.iter().map(Plugin::new).collect();
+    let monitors: Vec<FakeMonitor> = cases.iter().map(FakeMonitor::new).collect();
 
-    for (case, plugin) in cases.iter().zip(&plugins) {
-        let got = plugin.check(case);
+    for (case, monitor) in cases.iter().zip(&monitors) {
+        let got = monitor.check(case);
 
         assert!(matches(&got, &case.want), "{}: {got:?}", case.name);
     }
