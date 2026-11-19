@@ -181,7 +181,7 @@ class MonitorService(pb_grpc.MonitorServicer):
     def _signal(self, seq: int = 0) -> None:
         with self._changes:
             self._version += 1
-            # Checks run in parallel and can commit out of order, so the largest seq is the latest.
+            # Checks run in parallel and can signal out of order, so keep the largest seq.
             self._latest_seq = max(self._latest_seq, seq)
             self._changes.notify_all()
 
