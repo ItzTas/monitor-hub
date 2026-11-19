@@ -31,7 +31,7 @@ func Environment(name string, environ []string, dataRoot string) []string {
 		}
 	}
 	vars["TMPDIR"] = "/tmp"
-	vars["MONITOR_HUB_DATA_DIR"] = dataRoot + "/plugins/" + name
+	vars["MONITOR_HUB_DATA_DIR"] = dataRoot + "/monitors/" + name
 
 	out := make([]string, 0, len(vars))
 	for key, value := range vars {

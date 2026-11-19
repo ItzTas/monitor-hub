@@ -47,9 +47,12 @@ func ReadManifest(r io.Reader) (Manifest, error) {
 	return m, nil
 }
 
+// ManifestFile is the manifest name inside each monitor directory and image.
+const ManifestFile = "monitor.json"
+
 func ValidateName(name string) error {
 	if !namePattern.MatchString(name) || strings.HasSuffix(name, "-") || strings.Contains(name, "--") {
-		return fmt.Errorf("invalid plugin name %q", name)
+		return fmt.Errorf("invalid monitor name %q", name)
 	}
 	return nil
 }
@@ -78,7 +81,7 @@ func (m Manifest) Validate() error {
 func Load(root string) ([]Entry, error) {
 	dirs, err := os.ReadDir(root)
 	if err != nil {
-		return nil, fmt.Errorf("read plugins root: %w", err)
+		return nil, fmt.Errorf("read monitors root: %w", err)
 	}
 	var entries []Entry
 	for _, d := range dirs {
@@ -98,20 +101,20 @@ func Load(root string) ([]Entry, error) {
 func loadEntry(dir string) (Entry, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return Entry{}, fmt.Errorf("plugin directory %s: %w", dir, err)
+		return Entry{}, fmt.Errorf("monitor directory %s: %w", dir, err)
 	}
 	defer func() { _ = root.Close() }()
-	f, err := root.Open("plugin.json")
+	f, err := root.Open(ManifestFile)
 	if err != nil {
-		return Entry{}, fmt.Errorf("plugin directory %s: %w", dir, err)
+		return Entry{}, fmt.Errorf("monitor directory %s: %w", dir, err)
 	}
 	defer func() { _ = f.Close() }()
 	m, err := ReadManifest(f)
 	if err != nil {
-		return Entry{}, fmt.Errorf("plugin directory %s: %w", dir, err)
+		return Entry{}, fmt.Errorf("monitor directory %s: %w", dir, err)
 	}
 	if m.Name != filepath.Base(dir) {
-		return Entry{}, fmt.Errorf("plugin directory %s: manifest name %q does not match directory", dir, m.Name)
+		return Entry{}, fmt.Errorf("monitor directory %s: manifest name %q does not match directory", dir, m.Name)
 	}
 	return Entry{Manifest: m, Dir: dir}, nil
 }

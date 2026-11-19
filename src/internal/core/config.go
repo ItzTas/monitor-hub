@@ -13,7 +13,7 @@ type Config struct {
 	PublicURL   string
 	APIToken    string
 	FeedToken   string
-	PluginsDir  string
+	MonitorsDir string
 	DataDir     string
 	LogLevel    slog.Level
 	Channels    Channels
@@ -51,12 +51,12 @@ func Load(environ []string, readFile func(string) ([]byte, error)) (Config, erro
 		PublicURL:   strings.TrimRight(env["PUBLIC_URL"], "/"),
 		APIToken:    secrets["API_TOKEN"].Reveal(),
 		FeedToken:   secrets["FEED_TOKEN"].Reveal(),
-		PluginsDir:  filepath.Clean(envOr(env, "PLUGINS_DIR", "/opt/monitor-hub/plugins")),
+		MonitorsDir: filepath.Clean(envOr(env, "MONITORS_DIR", "/opt/monitor-hub/monitors")),
 		DataDir:     filepath.Clean(envOr(env, "DATA_DIR", "/data")),
 		LogLevel:    level,
 		Channels:    channels,
 	}
-	for key, dir := range map[string]string{"PLUGINS_DIR": cfg.PluginsDir, "DATA_DIR": cfg.DataDir} {
+	for key, dir := range map[string]string{"MONITORS_DIR": cfg.MonitorsDir, "DATA_DIR": cfg.DataDir} {
 		if !filepath.IsAbs(dir) {
 			return Config{}, fmt.Errorf("%s must be an absolute path: %q", key, dir)
 		}

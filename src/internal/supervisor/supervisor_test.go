@@ -121,7 +121,7 @@ func TestMonitorSeesOnlyItsEnvironment(t *testing.T) {
 
 	t.Run("data dir", func(t *testing.T) {
 		s, dataRoot, _ := startSupervisor(t, []string{"TELEGRAM_TOKEN=secret", "TESTMONITOR__ECHO=MONITOR_HUB_DATA_DIR"})
-		want := dataRoot + "/plugins/testmonitor"
+		want := dataRoot + "/monitors/testmonitor"
 		if got := statusMessage(t, waitDescribe(t, s, 10*time.Second)); got != want {
 			t.Fatalf("MONITOR_HUB_DATA_DIR = %q, want %q", got, want)
 		}

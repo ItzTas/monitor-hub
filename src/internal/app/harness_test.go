@@ -71,8 +71,8 @@ type bench struct {
 
 func newBench(t *testing.T, extra ...string) *bench {
 	t.Helper()
-	pluginsDir := t.TempDir()
-	installTestmonitor(t, filepath.Join(pluginsDir, "testmonitor"))
+	monitorsDir := t.TempDir()
+	installTestmonitor(t, filepath.Join(monitorsDir, "testmonitor"))
 	b := &bench{t: t, dataDir: t.TempDir(), ntfy: &ntfyInbox{arrived: make(chan notification, 16)}}
 	ntfy := httptest.NewServer(b.ntfy)
 	t.Cleanup(ntfy.Close)
@@ -80,7 +80,7 @@ func newBench(t *testing.T, extra ...string) *bench {
 		"DATABASE_URL=" + coretest.Database(t),
 		"API_TOKEN=" + apiToken,
 		"FEED_TOKEN=" + feedToken,
-		"PLUGINS_DIR=" + pluginsDir,
+		"MONITORS_DIR=" + monitorsDir,
 		"DATA_DIR=" + b.dataDir,
 		"HTTP_ADDRESS=127.0.0.1:0",
 		"NTFY_URL=" + ntfy.URL + "/hub",
@@ -101,7 +101,7 @@ func installTestmonitor(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	manifest := `{"protocol_version": 2, "name": "testmonitor", "command": ["testmonitor"]}`
-	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "monitor.json"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "testmonitor"), binary, 0o755); err != nil {
@@ -125,7 +125,7 @@ func (b *bench) assemble(logger *slog.Logger) *application {
 
 func (b *bench) setEvents(count string) {
 	b.t.Helper()
-	path := filepath.Join(b.dataDir, "plugins", "testmonitor", "events")
+	path := filepath.Join(b.dataDir, "monitors", "testmonitor", "events")
 	if err := os.WriteFile(path, []byte(count), 0o600); err != nil {
 		b.t.Fatal(err)
 	}

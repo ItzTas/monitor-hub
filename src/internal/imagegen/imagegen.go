@@ -26,7 +26,6 @@ const (
 	maxManifestBytes = 64 << 10
 	maxStderrBytes   = 8 << 10
 	readConcurrency  = 4
-	manifestFile     = "plugin.json"
 	baseApk          = "ca-certificates"
 )
 
@@ -35,7 +34,7 @@ var (
 	containerPattern = regexp.MustCompile(`^[0-9a-f]{12,128}$`)
 )
 
-type PluginImage struct {
+type MonitorImage struct {
 	Name  string `json:"name"`
 	Image string `json:"image"`
 }
@@ -50,25 +49,25 @@ type DockerReader struct {
 	run runFunc
 }
 
-func LoadPlugins(r io.Reader) ([]PluginImage, error) {
+func LoadMonitors(r io.Reader) ([]MonitorImage, error) {
 	var file struct {
-		Plugins *[]PluginImage `json:"plugins"`
+		Monitors *[]MonitorImage `json:"monitors"`
 	}
 	dec := json.NewDecoder(r)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&file); err != nil {
-		return nil, fmt.Errorf("decode plugins: %w", err)
+		return nil, fmt.Errorf("decode monitors: %w", err)
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, errors.New("unexpected data after the plugins object")
+		return nil, errors.New("unexpected data after the monitors object")
 	}
-	if file.Plugins == nil {
-		return nil, errors.New(`plugins: the "plugins" list is required`)
+	if file.Monitors == nil {
+		return nil, errors.New(`monitors: the "monitors" list is required`)
 	}
-	return *file.Plugins, nil
+	return *file.Monitors, nil
 }
 
-func Generate(ctx context.Context, entries []PluginImage, reader ManifestReader) ([]byte, error) {
+func Generate(ctx context.Context, entries []MonitorImage, reader ManifestReader) ([]byte, error) {
 	if err := validateEntries(entries); err != nil {
 		return nil, err
 	}
@@ -79,7 +78,7 @@ func Generate(ctx context.Context, entries []PluginImage, reader ManifestReader)
 		g.Go(func() (err error) {
 			manifests[i], err = reader.ReadManifest(gctx, entry.Image)
 			if err != nil {
-				return fmt.Errorf("plugin %q: read the manifest of %s: %w", entry.Name, entry.Image, err)
+				return fmt.Errorf("monitor %q: read the manifest of %s: %w", entry.Name, entry.Image, err)
 			}
 			return nil
 		})
@@ -90,9 +89,9 @@ func Generate(ctx context.Context, entries []PluginImage, reader ManifestReader)
 	return Render(entries, manifests)
 }
 
-func Render(entries []PluginImage, manifests []catalog.Manifest) ([]byte, error) {
+func Render(entries []MonitorImage, manifests []catalog.Manifest) ([]byte, error) {
 	if len(entries) != len(manifests) {
-		return nil, fmt.Errorf("got %d manifests for %d plugins", len(manifests), len(entries))
+		return nil, fmt.Errorf("got %d manifests for %d monitors", len(manifests), len(entries))
 	}
 	if err := validateEntries(entries); err != nil {
 		return nil, err
@@ -110,38 +109,38 @@ func Render(entries []PluginImage, manifests []catalog.Manifest) ([]byte, error)
 	b.WriteString(buildStage)
 	fmt.Fprintf(&b, runtimeStage, apkList(packages))
 	for _, entry := range entries {
-		fmt.Fprintf(&b, "COPY --from=%s /plugin/ /opt/monitor-hub/plugins/%s/\n", entry.Image, entry.Name)
+		fmt.Fprintf(&b, "COPY --from=%s /monitor/ /opt/monitor-hub/monitors/%s/\n", entry.Image, entry.Name)
 	}
 	if len(entries) > 0 {
-		b.WriteString("RUN chmod -R a+rX /opt/monitor-hub/plugins\n")
+		b.WriteString("RUN chmod -R a+rX /opt/monitor-hub/monitors\n")
 	}
 	b.WriteString(finalStage)
 	return []byte(b.String()), nil
 }
 
-func validateEntries(entries []PluginImage) error {
+func validateEntries(entries []MonitorImage) error {
 	seen := map[string]bool{}
 	for _, entry := range entries {
 		if err := catalog.ValidateName(entry.Name); err != nil {
-			return fmt.Errorf("plugin %q: %w", entry.Name, err)
+			return fmt.Errorf("monitor %q: %w", entry.Name, err)
 		}
 		if !imagePattern.MatchString(entry.Image) {
-			return fmt.Errorf("plugin %q: invalid image reference %q", entry.Name, entry.Image)
+			return fmt.Errorf("monitor %q: invalid image reference %q", entry.Name, entry.Image)
 		}
 		if seen[entry.Name] {
-			return fmt.Errorf("duplicate plugin name %q", entry.Name)
+			return fmt.Errorf("duplicate monitor name %q", entry.Name)
 		}
 		seen[entry.Name] = true
 	}
 	return nil
 }
 
-func checkManifest(entry PluginImage, m catalog.Manifest) error {
+func checkManifest(entry MonitorImage, m catalog.Manifest) error {
 	if err := m.Validate(); err != nil {
-		return fmt.Errorf("plugin %q: invalid manifest: %w", entry.Name, err)
+		return fmt.Errorf("monitor %q: invalid manifest: %w", entry.Name, err)
 	}
 	if m.Name != entry.Name {
-		return fmt.Errorf("plugin %q: the manifest of %s is named %q", entry.Name, entry.Image, m.Name)
+		return fmt.Errorf("monitor %q: the manifest of %s is named %q", entry.Name, entry.Image, m.Name)
 	}
 	return nil
 }
@@ -200,7 +199,7 @@ func (d *DockerReader) ReadManifest(ctx context.Context, image string) (catalog.
 	}
 	m, err := manifestFromArchive(archive)
 	if err != nil {
-		return catalog.Manifest{}, errors.Join(fmt.Errorf("read %s from %s: %w", manifestFile, image, err), removeErr)
+		return catalog.Manifest{}, errors.Join(fmt.Errorf("read %s from %s: %w", catalog.ManifestFile, image, err), removeErr)
 	}
 	return m, removeErr
 }
@@ -222,7 +221,7 @@ func createContainer(ctx context.Context, run runFunc, image string) (string, er
 func copyManifest(ctx context.Context, run runFunc, id string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, dockerTimeout)
 	defer cancel()
-	out, err := run(ctx, "cp", id+":/plugin/"+manifestFile, "-")
+	out, err := run(ctx, "cp", id+":/monitor/"+catalog.ManifestFile, "-")
 	if err != nil {
 		return nil, fmt.Errorf("docker cp: %w", err)
 	}
@@ -247,8 +246,8 @@ func manifestFromArchive(archive []byte) (catalog.Manifest, error) {
 	if err != nil {
 		return catalog.Manifest{}, fmt.Errorf("read the archive: %w", err)
 	}
-	if header.Typeflag != tar.TypeReg || header.Name != manifestFile {
-		return catalog.Manifest{}, fmt.Errorf("the archive starts with %q, not a regular file named %s", header.Name, manifestFile)
+	if header.Typeflag != tar.TypeReg || header.Name != catalog.ManifestFile {
+		return catalog.Manifest{}, fmt.Errorf("the archive starts with %q, not a regular file named %s", header.Name, catalog.ManifestFile)
 	}
 	if header.Size > maxManifestBytes {
 		return catalog.Manifest{}, fmt.Errorf("the manifest is %d bytes, over the %d byte limit", header.Size, maxManifestBytes)
@@ -280,7 +279,7 @@ func runDocker(ctx context.Context, args ...string) ([]byte, error) {
 	return stdout.buf.Bytes(), nil
 }
 
-const buildStage = `# Code generated by src/cmd/imagegen from plugins.json. DO NOT EDIT.
+const buildStage = `# Code generated by src/cmd/imagegen from monitors.json. DO NOT EDIT.
 # Regenerate with: go run ./src/cmd/imagegen
 
 FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine3.24 AS build
@@ -306,7 +305,7 @@ const runtimeStage = `FROM alpine:3.24
 RUN apk add --no-cache %s \
     && addgroup -S -g 65532 monitor-hub \
     && adduser -S -D -H -u 65532 -G monitor-hub monitor-hub \
-    && mkdir -p /opt/monitor-hub/plugins /data \
+    && mkdir -p /opt/monitor-hub/monitors /data \
     && chown 65532:65532 /data
 
 COPY --from=build /out/monitor-hub /usr/local/bin/monitor-hub

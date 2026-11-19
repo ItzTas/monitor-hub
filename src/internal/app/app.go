@@ -42,7 +42,7 @@ type application struct {
 }
 
 func assemble(ctx context.Context, cfg core.Config, environ []string, logger *slog.Logger, now func() time.Time) (*application, error) {
-	entries, err := catalog.Load(cfg.PluginsDir)
+	entries, err := catalog.Load(cfg.MonitorsDir)
 	if err != nil {
 		return nil, err
 	}

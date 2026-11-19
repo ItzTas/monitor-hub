@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	pluginsPath    = "plugins.json"
+	monitorsPath   = "monitors.json"
 	dockerfilePath = "Dockerfile"
 )
 
@@ -40,7 +40,7 @@ func run(ctx context.Context) error {
 	check := flag.Bool("check", false, "fail when the Dockerfile is not what the generator would write")
 	flag.Parse()
 
-	entries, err := loadPlugins()
+	entries, err := loadMonitors()
 	if err != nil {
 		return err
 	}
@@ -54,15 +54,15 @@ func run(ctx context.Context) error {
 	return os.WriteFile(dockerfilePath, rendered, 0o600)
 }
 
-func loadPlugins() ([]imagegen.PluginImage, error) {
-	f, err := os.Open(pluginsPath)
+func loadMonitors() ([]imagegen.MonitorImage, error) {
+	f, err := os.Open(monitorsPath)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	entries, err := imagegen.LoadPlugins(f)
+	entries, err := imagegen.LoadMonitors(f)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", pluginsPath, err)
+		return nil, fmt.Errorf("%s: %w", monitorsPath, err)
 	}
 	return entries, nil
 }

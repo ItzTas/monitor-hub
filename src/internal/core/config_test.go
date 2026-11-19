@@ -16,7 +16,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		"PUBLIC_URL=https://hub.example.com/",
 		"API_TOKEN=api-secret",
 		"FEED_TOKEN=feed-secret",
-		"PLUGINS_DIR=/srv/plugins/",
+		"MONITORS_DIR=/srv/monitors/",
 		"DATA_DIR=/srv/data",
 		"LOG_LEVEL=debug",
 		"UNRELATED=x=y",
@@ -30,7 +30,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		PublicURL:   "https://hub.example.com",
 		APIToken:    "api-secret",
 		FeedToken:   "feed-secret",
-		PluginsDir:  "/srv/plugins",
+		MonitorsDir: "/srv/monitors",
 		DataDir:     "/srv/data",
 		LogLevel:    slog.LevelDebug,
 	}
@@ -48,7 +48,7 @@ func TestLoadFillsDefaults(t *testing.T) {
 		DatabaseURL: "postgres://db",
 		HTTPAddress: ":8080",
 		APIToken:    "secret",
-		PluginsDir:  "/opt/monitor-hub/plugins",
+		MonitorsDir: "/opt/monitor-hub/monitors",
 		DataDir:     "/data",
 		LogLevel:    slog.LevelInfo,
 	}
@@ -59,11 +59,11 @@ func TestLoadFillsDefaults(t *testing.T) {
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
 	cases := map[string][]string{
-		"no database":          {"API_TOKEN=secret"},
-		"no api token":         {"DATABASE_URL=postgres://db"},
-		"relative plugins dir": {"DATABASE_URL=postgres://db", "API_TOKEN=secret", "PLUGINS_DIR=plugins"},
-		"relative data dir":    {"DATABASE_URL=postgres://db", "API_TOKEN=secret", "DATA_DIR=./data"},
-		"unknown log level":    {"DATABASE_URL=postgres://db", "API_TOKEN=secret", "LOG_LEVEL=loud"},
+		"no database":           {"API_TOKEN=secret"},
+		"no api token":          {"DATABASE_URL=postgres://db"},
+		"relative monitors dir": {"DATABASE_URL=postgres://db", "API_TOKEN=secret", "MONITORS_DIR=monitors"},
+		"relative data dir":     {"DATABASE_URL=postgres://db", "API_TOKEN=secret", "DATA_DIR=./data"},
+		"unknown log level":     {"DATABASE_URL=postgres://db", "API_TOKEN=secret", "LOG_LEVEL=loud"},
 	}
 	for name, environ := range cases {
 		t.Run(name, func(t *testing.T) {

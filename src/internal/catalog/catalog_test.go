@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -50,8 +52,22 @@ func writeManifest(t *testing.T, root, dir, body string) {
 	if body == "" {
 		return
 	}
-	if err := os.WriteFile(filepath.Join(root, dir, "plugin.json"), []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, dir, "monitor.json"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadRequiresMonitorJSON(t *testing.T) {
+	root := t.TempDir()
+	writeManifest(t, root, "sei", "")
+	_, err := Load(root)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Load error = %v, want fs.ErrNotExist", err)
+	}
+	for _, want := range []string{"monitor directory", "monitor.json"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
 	}
 }
 
@@ -83,11 +99,6 @@ func TestLoadFails(t *testing.T) {
 		"name differs from directory": func(t *testing.T) string {
 			root := t.TempDir()
 			writeManifest(t, root, "foo", `{"protocol_version":2,"name":"bar","command":["x"]}`)
-			return root
-		},
-		"directory without manifest": func(t *testing.T) string {
-			root := t.TempDir()
-			writeManifest(t, root, "foo", "")
 			return root
 		},
 		"missing root": func(t *testing.T) string {
@@ -124,17 +135,17 @@ func TestEnvironment(t *testing.T) {
 		"prefixed and reserved": {
 			name:    "diario",
 			environ: []string{"DIARIO__WATCH_TERMS=a,b", "TELEGRAM_TOKEN=s", "SEI__SEI_URL=u", "PATH=/bin", "TZ=America/Boa_Vista"},
-			want:    []string{"MONITOR_HUB_DATA_DIR=/data/plugins/diario", "PATH=/bin", "TMPDIR=/tmp", "TZ=America/Boa_Vista", "WATCH_TERMS=a,b"},
+			want:    []string{"MONITOR_HUB_DATA_DIR=/data/monitors/diario", "PATH=/bin", "TMPDIR=/tmp", "TZ=America/Boa_Vista", "WATCH_TERMS=a,b"},
 		},
 		"related plugin names stay isolated": {
 			name:    "sei",
 			environ: []string{"SEI_EXTRA__TOKEN=a", "SEI__URL=u"},
-			want:    []string{"MONITOR_HUB_DATA_DIR=/data/plugins/sei", "TMPDIR=/tmp", "URL=u"},
+			want:    []string{"MONITOR_HUB_DATA_DIR=/data/monitors/sei", "TMPDIR=/tmp", "URL=u"},
 		},
 		"reserved names cannot be overridden": {
 			name:    "diario",
 			environ: []string{"PATH=/bin", "DIARIO__PATH=/evil", "DIARIO__MONITOR_HUB_DATA_DIR=/x"},
-			want:    []string{"MONITOR_HUB_DATA_DIR=/data/plugins/diario", "PATH=/bin", "TMPDIR=/tmp"},
+			want:    []string{"MONITOR_HUB_DATA_DIR=/data/monitors/diario", "PATH=/bin", "TMPDIR=/tmp"},
 		},
 	}
 	for name, tt := range tests {

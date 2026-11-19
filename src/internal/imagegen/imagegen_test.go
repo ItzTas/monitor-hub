@@ -34,7 +34,7 @@ func golden(t *testing.T, name string) string {
 }
 
 func TestRenderMatchesGolden(t *testing.T) {
-	entries := []PluginImage{{Name: "sei", Image: seiImage}, {Name: "diario", Image: diarioImage}}
+	entries := []MonitorImage{{Name: "sei", Image: seiImage}, {Name: "diario", Image: diarioImage}}
 	got, err := Render(entries, []catalog.Manifest{manifest("sei"), manifest("diario", "poppler-utils")})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -44,7 +44,7 @@ func TestRenderMatchesGolden(t *testing.T) {
 	}
 }
 
-func TestRenderWithoutPluginsMatchesGolden(t *testing.T) {
+func TestRenderWithoutMonitorsMatchesGolden(t *testing.T) {
 	got, err := Render(nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -55,7 +55,7 @@ func TestRenderWithoutPluginsMatchesGolden(t *testing.T) {
 }
 
 func TestRenderDedupesAndSortsApk(t *testing.T) {
-	entries := []PluginImage{{Name: "sei", Image: seiImage}, {Name: "diario", Image: diarioImage}}
+	entries := []MonitorImage{{Name: "sei", Image: seiImage}, {Name: "diario", Image: diarioImage}}
 	manifests := []catalog.Manifest{
 		manifest("sei", "poppler-utils", "ca-certificates", "tzdata"),
 		manifest("diario", "poppler-utils", "curl"),
@@ -77,7 +77,7 @@ func TestRenderDedupesAndSortsApk(t *testing.T) {
 }
 
 func TestManifestNameMustMatchEntry(t *testing.T) {
-	_, err := Render([]PluginImage{{Name: "sei", Image: seiImage}}, []catalog.Manifest{manifest("diario")})
+	_, err := Render([]MonitorImage{{Name: "sei", Image: seiImage}}, []catalog.Manifest{manifest("diario")})
 	if err == nil {
 		t.Fatal("Render accepted a manifest whose name differs from the entry")
 	}
@@ -89,28 +89,28 @@ func TestManifestNameMustMatchEntry(t *testing.T) {
 }
 
 func TestRenderRejectsInvalidInput(t *testing.T) {
-	good := PluginImage{Name: "sei", Image: seiImage}
+	good := MonitorImage{Name: "sei", Image: seiImage}
 	digest := "ghcr.io/itztas/sei-monitor@sha256:" + strings.Repeat("a", 64)
 	tests := []struct {
 		name      string
-		entries   []PluginImage
+		entries   []MonitorImage
 		manifests []catalog.Manifest
 		want      string
 	}{
-		{"image with a space", []PluginImage{{Name: "sei", Image: "ghcr.io/itztas/sei-monitor:v1 --privileged"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
-		{"image with a newline", []PluginImage{{Name: "sei", Image: "ghcr.io/itztas/sei-monitor:v1\nRUN id"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
-		{"image with a command substitution", []PluginImage{{Name: "sei", Image: "ghcr.io/itztas/$(id):v1"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
-		{"image with a semicolon", []PluginImage{{Name: "sei", Image: "ghcr.io/itztas/sei;id:v1"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
-		{"image with uppercase", []PluginImage{{Name: "sei", Image: "ghcr.io/ItzTas/sei-monitor:v1"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
-		{"image without a tag", []PluginImage{{Name: "sei", Image: "ghcr.io/itztas/sei-monitor"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
-		{"image starting with a dash", []PluginImage{{Name: "sei", Image: "-ghcr.io/itztas/sei-monitor:v1"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
-		{"image without a registry path", []PluginImage{{Name: "sei", Image: "sei-monitor:v1"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
-		{"empty image", []PluginImage{{Name: "sei"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
-		{"short digest", []PluginImage{{Name: "sei", Image: "ghcr.io/itztas/sei-monitor@sha256:abc"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
-		{"duplicate names", []PluginImage{good, {Name: "sei", Image: digest}}, []catalog.Manifest{manifest("sei"), manifest("sei")}, `duplicate plugin name "sei"`},
-		{"invalid apk package", []PluginImage{good}, []catalog.Manifest{manifest("sei", "curl && id")}, `"sei"`},
-		{"invalid plugin name", []PluginImage{{Name: "Sei Monitor", Image: seiImage}}, []catalog.Manifest{manifest("Sei Monitor")}, `"Sei Monitor"`},
-		{"fewer manifests than entries", []PluginImage{good}, nil, "manifests"},
+		{"image with a space", []MonitorImage{{Name: "sei", Image: "ghcr.io/itztas/sei-monitor:v1 --privileged"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
+		{"image with a newline", []MonitorImage{{Name: "sei", Image: "ghcr.io/itztas/sei-monitor:v1\nRUN id"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
+		{"image with a command substitution", []MonitorImage{{Name: "sei", Image: "ghcr.io/itztas/$(id):v1"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
+		{"image with a semicolon", []MonitorImage{{Name: "sei", Image: "ghcr.io/itztas/sei;id:v1"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
+		{"image with uppercase", []MonitorImage{{Name: "sei", Image: "ghcr.io/ItzTas/sei-monitor:v1"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
+		{"image without a tag", []MonitorImage{{Name: "sei", Image: "ghcr.io/itztas/sei-monitor"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
+		{"image starting with a dash", []MonitorImage{{Name: "sei", Image: "-ghcr.io/itztas/sei-monitor:v1"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
+		{"image without a registry path", []MonitorImage{{Name: "sei", Image: "sei-monitor:v1"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
+		{"empty image", []MonitorImage{{Name: "sei"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
+		{"short digest", []MonitorImage{{Name: "sei", Image: "ghcr.io/itztas/sei-monitor@sha256:abc"}}, []catalog.Manifest{manifest("sei")}, `"sei"`},
+		{"duplicate names", []MonitorImage{good, {Name: "sei", Image: digest}}, []catalog.Manifest{manifest("sei"), manifest("sei")}, `duplicate monitor name "sei"`},
+		{"invalid apk package", []MonitorImage{good}, []catalog.Manifest{manifest("sei", "curl && id")}, `"sei"`},
+		{"invalid monitor name", []MonitorImage{{Name: "Sei Monitor", Image: seiImage}}, []catalog.Manifest{manifest("Sei Monitor")}, `"Sei Monitor"`},
+		{"fewer manifests than entries", []MonitorImage{good}, nil, "manifests"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,11 +127,11 @@ func TestRenderRejectsInvalidInput(t *testing.T) {
 
 func TestRenderAcceptsDigestReference(t *testing.T) {
 	image := "ghcr.io/itztas/sei-monitor@sha256:" + strings.Repeat("0123456789abcdef", 4)
-	got, err := Render([]PluginImage{{Name: "sei", Image: image}}, []catalog.Manifest{manifest("sei")})
+	got, err := Render([]MonitorImage{{Name: "sei", Image: image}}, []catalog.Manifest{manifest("sei")})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	if want := "COPY --from=" + image + " /plugin/ /opt/monitor-hub/plugins/sei/\n"; !strings.Contains(string(got), want) {
+	if want := "COPY --from=" + image + " /monitor/ /opt/monitor-hub/monitors/sei/\n"; !strings.Contains(string(got), want) {
 		t.Errorf("Dockerfile has no line %q", want)
 	}
 }
@@ -152,7 +152,7 @@ func (f *fakeReader) ReadManifest(_ context.Context, image string) (catalog.Mani
 
 func TestGenerateReadsEveryImage(t *testing.T) {
 	reader := &fakeReader{manifests: map[string]catalog.Manifest{seiImage: manifest("sei"), diarioImage: manifest("diario", "poppler-utils")}}
-	entries := []PluginImage{{Name: "sei", Image: seiImage}, {Name: "diario", Image: diarioImage}}
+	entries := []MonitorImage{{Name: "sei", Image: seiImage}, {Name: "diario", Image: diarioImage}}
 	got, err := Generate(t.Context(), entries, reader)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -166,7 +166,7 @@ func TestGenerateReadsEveryImage(t *testing.T) {
 	}
 }
 
-func TestGenerateWithoutPluginsNeedsNoReader(t *testing.T) {
+func TestGenerateWithoutMonitorsNeedsNoReader(t *testing.T) {
 	got, err := Generate(t.Context(), nil, nil)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -178,7 +178,7 @@ func TestGenerateWithoutPluginsNeedsNoReader(t *testing.T) {
 
 func TestGenerateNamesTheEntryWhoseImageFailed(t *testing.T) {
 	reader := &fakeReader{err: errors.New("no such image")}
-	_, err := Generate(t.Context(), []PluginImage{{Name: "sei", Image: seiImage}}, reader)
+	_, err := Generate(t.Context(), []MonitorImage{{Name: "sei", Image: seiImage}}, reader)
 	if err == nil || !strings.Contains(err.Error(), `"sei"`) || !errors.Is(err, reader.err) {
 		t.Errorf("Generate error = %v, want one naming the entry and wrapping the cause", err)
 	}
@@ -186,7 +186,7 @@ func TestGenerateNamesTheEntryWhoseImageFailed(t *testing.T) {
 
 func TestGenerateValidatesBeforeReading(t *testing.T) {
 	reader := &fakeReader{}
-	_, err := Generate(t.Context(), []PluginImage{{Name: "sei", Image: "ghcr.io/itztas/$(id):v1"}}, reader)
+	_, err := Generate(t.Context(), []MonitorImage{{Name: "sei", Image: "ghcr.io/itztas/$(id):v1"}}, reader)
 	if err == nil {
 		t.Fatal("Generate accepted an invalid image")
 	}
@@ -195,32 +195,33 @@ func TestGenerateValidatesBeforeReading(t *testing.T) {
 	}
 }
 
-func TestLoadPlugins(t *testing.T) {
-	got, err := LoadPlugins(strings.NewReader(`{"plugins":[{"name":"sei","image":"` + seiImage + `"}]}`))
+func TestLoadMonitors(t *testing.T) {
+	got, err := LoadMonitors(strings.NewReader(`{"monitors":[{"name":"sei","image":"` + seiImage + `"}]}`))
 	if err != nil {
-		t.Fatalf("LoadPlugins: %v", err)
+		t.Fatalf("LoadMonitors: %v", err)
 	}
-	if want := []PluginImage{{Name: "sei", Image: seiImage}}; !reflect.DeepEqual(got, want) {
-		t.Errorf("LoadPlugins = %v, want %v", got, want)
+	if want := []MonitorImage{{Name: "sei", Image: seiImage}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("LoadMonitors = %v, want %v", got, want)
 	}
-	empty, err := LoadPlugins(strings.NewReader(`{"plugins":[]}`))
+	empty, err := LoadMonitors(strings.NewReader(`{"monitors":[]}`))
 	if err != nil || len(empty) != 0 {
-		t.Errorf("LoadPlugins(empty) = %v, %v, want no entries and no error", empty, err)
+		t.Errorf("LoadMonitors(empty) = %v, %v, want no entries and no error", empty, err)
 	}
 }
 
-func TestLoadPluginsRejectsMalformedInput(t *testing.T) {
+func TestLoadMonitorsRejectsMalformedInput(t *testing.T) {
 	for name, input := range map[string]string{
-		"unknown field":    `{"plugins":[],"extra":1}`,
-		"unknown entry":    `{"plugins":[{"name":"sei","image":"` + seiImage + `","tag":"x"}]}`,
-		"trailing data":    `{"plugins":[]} {}`,
-		"not json":         `plugins`,
-		"missing plugins":  `{}`,
-		"null plugin list": `{"plugins":null}`,
+		"unknown field":     `{"monitors":[],"extra":1}`,
+		"old list key":      `{"plugins":[]}`,
+		"unknown entry":     `{"monitors":[{"name":"sei","image":"` + seiImage + `","tag":"x"}]}`,
+		"trailing data":     `{"monitors":[]} {}`,
+		"not json":          `monitors`,
+		"missing monitors":  `{}`,
+		"null monitor list": `{"monitors":null}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := LoadPlugins(strings.NewReader(input)); err == nil {
-				t.Error("LoadPlugins accepted the input")
+			if _, err := LoadMonitors(strings.NewReader(input)); err == nil {
+				t.Error("LoadMonitors accepted the input")
 			}
 		})
 	}
@@ -303,7 +304,7 @@ func tarEntry(t *testing.T, header *tar.Header, body []byte) []byte {
 const manifestJSON = `{"protocol_version":2,"name":"diario","command":["./diario-alerr"],"apk":["poppler-utils"]}`
 
 func TestDockerReaderCreatesCopiesAndRemoves(t *testing.T) {
-	docker := &fakeDocker{cp: func(func()) ([]byte, error) { return tarOf(t, "plugin.json", []byte(manifestJSON)), nil }}
+	docker := &fakeDocker{cp: func(func()) ([]byte, error) { return tarOf(t, "monitor.json", []byte(manifestJSON)), nil }}
 	got, err := (&DockerReader{run: docker.run}).ReadManifest(t.Context(), diarioImage)
 	if err != nil {
 		t.Fatalf("ReadManifest: %v", err)
@@ -313,7 +314,7 @@ func TestDockerReaderCreatesCopiesAndRemoves(t *testing.T) {
 	}
 	want := [][]string{
 		{"create", diarioImage},
-		{"cp", containerID + ":/plugin/plugin.json", "-"},
+		{"cp", containerID + ":/monitor/monitor.json", "-"},
 		{"rm", containerID},
 	}
 	for i, c := range docker.calls {
@@ -334,13 +335,13 @@ func TestDockerReaderRemovesTheContainerOnEveryFailure(t *testing.T) {
 		"copy fails":       nil,
 		"not a tar":        func() ([]byte, error) { return []byte("not a tar"), nil },
 		"wrong file":       func() ([]byte, error) { return tarOf(t, "other.json", []byte(manifestJSON)), nil },
-		"invalid manifest": func() ([]byte, error) { return tarOf(t, "plugin.json", []byte(`{"name":"x"}`)), nil },
+		"invalid manifest": func() ([]byte, error) { return tarOf(t, "monitor.json", []byte(`{"name":"x"}`)), nil },
 		"oversized manifest": func() ([]byte, error) {
-			return tarOf(t, "plugin.json", bytes.Repeat([]byte(" "), maxManifestBytes+1)), nil
+			return tarOf(t, "monitor.json", bytes.Repeat([]byte(" "), maxManifestBytes+1)), nil
 		},
 		"empty archive": func() ([]byte, error) { return nil, nil },
 		"directory not a file": func() ([]byte, error) {
-			return tarEntry(t, &tar.Header{Name: "plugin.json", Mode: 0o755, Typeflag: tar.TypeDir}, nil), nil
+			return tarEntry(t, &tar.Header{Name: "monitor.json", Mode: 0o755, Typeflag: tar.TypeDir}, nil), nil
 		},
 	}
 	for name, cp := range tests {
@@ -406,7 +407,7 @@ func TestDockerReaderRejectsAnInvalidImageBeforeRunningDocker(t *testing.T) {
 
 func TestGenerateRejectsAnInvalidNameBeforeReading(t *testing.T) {
 	reader := &fakeReader{}
-	_, err := Generate(t.Context(), []PluginImage{{Name: "Sei Monitor", Image: seiImage}}, reader)
+	_, err := Generate(t.Context(), []MonitorImage{{Name: "Sei Monitor", Image: seiImage}}, reader)
 	if err == nil || !strings.Contains(err.Error(), `"Sei Monitor"`) {
 		t.Fatalf("Generate error = %v, want one naming the entry", err)
 	}
