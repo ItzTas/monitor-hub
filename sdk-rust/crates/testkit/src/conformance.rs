@@ -14,7 +14,7 @@ use std::time::Duration;
 use crate::ci;
 use crate::process::{Failure, Finished, Keep, STDERR_TAIL, execute};
 
-pub const SDK_GO_VERSION: &str = "sdk-go/v0.4.0";
+pub const SDK_GO_VERSION: &str = "sdk-go/v0.6.0";
 
 const GO_PACKAGE: &str = "github.com/ItzTas/monitor-hub/sdk-go/cmd/monitor-conformance";
 const BINARY: &str = "monitor-conformance";
