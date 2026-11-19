@@ -28,8 +28,6 @@ type stopped struct{}
 
 type processChanged struct{}
 
-type unimplemented struct{}
-
 type dropped struct {
 	established bool
 	err         error
@@ -37,7 +35,6 @@ type dropped struct {
 
 func (stopped) watchEnd()        {}
 func (processChanged) watchEnd() {}
-func (unimplemented) watchEnd()  {}
 func (dropped) watchEnd()        {}
 
 type watchStream struct {
@@ -64,20 +61,13 @@ func (s *Service) subscribe(ctx context.Context, name string, sch *schedule) {
 			return
 		case processChanged:
 			failures = 0
-		case unimplemented:
-			s.log.Info("the monitor has no Watch; polling it every 15s", "monitor", name)
-			sch.request(pollRequest{full: true})
-			if !waitChange(ctx, changed) {
-				return
-			}
-			failures = 0
 		case dropped:
 			if end.established {
 				failures = 0
 			}
 			delay := reopenDelays[min(failures, len(reopenDelays)-1)]
 			failures++
-			s.log.Warn("the monitor's Watch stopped; polling it every 15s", "monitor", name, "error", end.err, "retry_in", delay)
+			s.reportDrop(name, end.err, delay)
 			select {
 			case <-ctx.Done():
 				return
@@ -132,12 +122,12 @@ func (s *Service) await(ctx context.Context, changed <-chan struct{}, w *watchSt
 		case <-silence:
 			return dropped{err: fmt.Errorf("no signal for %s", HeartbeatLimit)}
 		case err := <-w.ended:
-			return ended(ctx, changed, err, w.signals > 0)
+			return ended(ctx, changed, err)
 		}
 	}
 }
 
-func ended(ctx context.Context, changed <-chan struct{}, err error, signalled bool) watchEnd {
+func ended(ctx context.Context, changed <-chan struct{}, err error) watchEnd {
 	if ctx.Err() != nil {
 		return stopped{}
 	}
@@ -146,10 +136,15 @@ func ended(ctx context.Context, changed <-chan struct{}, err error, signalled bo
 		return processChanged{}
 	default:
 	}
-	if !signalled && status.Code(err) == codes.Unimplemented {
-		return unimplemented{}
-	}
 	return dropped{err: err}
+}
+
+func (s *Service) reportDrop(name string, err error, delay time.Duration) {
+	if status.Code(err) == codes.Unimplemented {
+		s.log.Error("the monitor violates the protocol: its Watch answered UNIMPLEMENTED; polling it every 15s", "monitor", name, "error", err, "retry_in", delay)
+		return
+	}
+	s.log.Warn("the monitor's Watch stopped; polling it every 15s", "monitor", name, "error", err, "retry_in", delay)
 }
 
 func backToPolling(end watchEnd, signalled bool, sch *schedule) {

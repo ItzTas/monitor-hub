@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -96,46 +97,31 @@ func TestHeartbeatsDoNotPostponeTheSafetyPoll(t *testing.T) {
 	expectStored(t, pool, "sei", 4, 2, 4, true)
 }
 
-func TestAMonitorWithoutWatchIsAskedOncePerProcess(t *testing.T) {
+func TestAMonitorWithoutWatchIsRetriedAsAProtocolViolation(t *testing.T) {
 	pool := coretest.Pool(t)
-	p1 := monitor("sei", numbered(1, 3)...)
-	clients := newSwitchingClients(p1)
-	r := start(t, serviceOf(pool, clients))
+	p := monitor("sei", numbered(1, 3)...)
+	s := serviceOf(pool, newSwitchingClients(p))
+	logs := &recordedLogs{}
+	s.log = slog.New(logs)
+	r := start(t, s)
 
 	expectPoll(t, r, pollRequest{full: true})
-	if calls := p1.watchCalls.Load(); calls != 1 {
-		t.Fatalf("Watch calls = %d, want 1", calls)
-	}
 	r.clock.waitArmed(t, PollInterval)
-	for range 2 {
-		r.clock.fire(t, PollInterval)
-		expectPoll(t, r, pollRequest{full: true})
-	}
-	if calls := p1.watchCalls.Load(); calls != 1 {
-		t.Errorf("Watch calls after two timed polls = %d, want 1", calls)
-	}
-
-	statusBefore := p1.statusCalls.Load()
-	p2 := monitor("sei", numbered(1, 3)...)
-	clients.drop("sei")
-	clients.set("sei", p2)
+	r.clock.fire(t, time.Second)
 	expectPoll(t, r, pollRequest{full: true})
-	if calls := p2.watchCalls.Load(); calls != 1 {
-		t.Errorf("Watch calls on the new process = %d, want 1", calls)
+	r.clock.fire(t, 5*time.Second)
+	expectPoll(t, r, pollRequest{full: true})
+	r.clock.waitArmed(t, 30*time.Second)
+
+	if calls := p.watchCalls.Load(); calls != 3 {
+		t.Errorf("Watch calls = %d, want 3", calls)
 	}
-	if calls := p2.statusCalls.Load(); calls != 1 {
-		t.Errorf("Status calls on the new process = %d, want 1", calls)
+	want := slices.Repeat([]string{"the monitor violates the protocol: its Watch answered UNIMPLEMENTED; polling it every 15s"}, 3)
+	if warnings := logs.atLeast(slog.LevelWarn); !slices.Equal(warnings, want) {
+		t.Errorf("warnings = %q, want %q", warnings, want)
 	}
-	if calls := p1.statusCalls.Load(); calls != statusBefore {
-		t.Errorf("Status calls on the old process = %d, want %d", calls, statusBefore)
-	}
-	if calls := p1.watchCalls.Load(); calls != 1 {
-		t.Errorf("Watch calls on the old process = %d, want 1", calls)
-	}
-	for _, delay := range reopenDelays {
-		if armed := r.clock.armedCount(delay); armed != 0 {
-			t.Errorf("after(%s) calls = %d, want no back-off for a monitor without Watch", delay, armed)
-		}
+	if errs := logs.atLeast(slog.LevelError); !slices.Equal(errs, want) {
+		t.Errorf("errors = %q, want %q", errs, want)
 	}
 }
 
@@ -389,19 +375,21 @@ func TestRunEndsEveryStreamBeforeItReturns(t *testing.T) {
 func TestPollsCutShortByTheEndOfRunLogNoWarning(t *testing.T) {
 	pool := coretest.Pool(t)
 	entered := make(chan struct{})
-	p := monitor("sei", numbered(1, 3)...)
+	p := watched(monitor("sei", numbered(1, 3)...))
 	p.stallStatus = make(chan struct{}, 1)
 	p.respond = func(ctx context.Context, _ *monitorpb.EventsRequest) (*monitorpb.EventsResponse, error) {
 		close(entered)
 		<-ctx.Done()
 		return nil, status.FromContextError(ctx.Err()).Err()
 	}
-	failing := monitor("tjsp", numbered(1, 3)...)
+	failing := watched(monitor("tjsp", numbered(1, 3)...))
 	failing.respond = unavailable
 	s := newService(pool, p, failing)
 	logs := &recordedLogs{}
 	s.log = slog.New(logs)
 	r := start(t, s)
+	failing.nextStream(t).signal(t, 0)
+	p.nextStream(t).signal(t, 3)
 	if got := r.nextPoll(t); got.name != "tjsp" {
 		t.Fatalf("first poll = %+v, want tjsp", got)
 	}
