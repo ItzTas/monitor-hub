@@ -129,6 +129,8 @@ func TestAFailedWatchIsRetriedWithBackOff(t *testing.T) {
 	pool := coretest.Pool(t)
 	p := watched(monitor("sei", numbered(1, 3)...))
 	s := serviceOf(pool, newSwitchingClients(p))
+	logs := &recordedLogs{}
+	s.log = slog.New(logs)
 	wall := withSteppingClock(s)
 	r := start(t, s)
 	r.clock.waitArmed(t, PollInterval)
@@ -158,6 +160,13 @@ func TestAFailedWatchIsRetriedWithBackOff(t *testing.T) {
 	p.nextStream(t)
 	if calls := p.watchCalls.Load(); calls != 4 {
 		t.Errorf("Watch calls = %d, want 4", calls)
+	}
+	want := slices.Repeat([]string{"the monitor's Watch stopped; polling it every 15s"}, 3)
+	if warnings := logs.atLeast(slog.LevelWarn); !slices.Equal(warnings, want) {
+		t.Errorf("warnings = %q, want %q", warnings, want)
+	}
+	if errs := logs.atLeast(slog.LevelError); len(errs) != 0 {
+		t.Errorf("errors = %q, want none", errs)
 	}
 }
 
