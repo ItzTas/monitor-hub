@@ -323,7 +323,7 @@ Now run the pending count of "The SEI program" once more, list the rows if it is
 
 The hub listens on port 8090 on the host, or on your `APP_PORT`. The commands below use 8090.
 
-If a hub older than this release used the `data` volume, move each monitor's directory before you start the hub. This release gives each monitor `<DATA_DIR>/monitors/<name>` and does not move the directory the older hub used, which sits next to `monitors` under the old name for monitors. diario, sei and anhanguera keep nothing there, so the move matters only for a monitor of your own.
+If an older hub used the `data` volume, move each monitor's directory from `<DATA_DIR>/plugins/<name>` to `<DATA_DIR>/monitors/<name>` before you start this release; the hub does not move it for you. diario, sei and anhanguera keep nothing there, so this matters only for a monitor of your own.
 
 ```bash
 cd /opt/stacks/monitor-hub
