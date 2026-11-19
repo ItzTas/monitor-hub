@@ -54,7 +54,7 @@ func skipOrFail(t *testing.T, format string, args ...any) {
 
 func pythonScript(t *testing.T) string {
 	t.Helper()
-	script, err := filepath.Abs(filepath.Join("..", "..", "..", "examples", "python-plugin", "main.py"))
+	script, err := filepath.Abs(filepath.Join("..", "..", "..", "examples", "python-monitor", "main.py"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-"""A monitor-hub plugin in Python: every Check records a "ping" event in SQLite.
+"""A monitor for monitor-hub in Python: every Check records a "ping" event in SQLite.
 
 It follows docs/protocol.md and uses only grpcio, protobuf and the standard library.
 """
@@ -226,7 +226,7 @@ class MonitorService(pb_grpc.MonitorServicer):
 def health_handler() -> grpc.GenericRpcHandler:
     # grpc.health.v1 is wire-compatible with these wrappers: the request is a string at
     # field 1 and the response an enum (an int32) at field 1. The grpcio-health-checking
-    # package is not among the Alpine packages the plugin may install.
+    # package is not among the Alpine packages the monitor may install.
     def check(request: wrappers_pb2.StringValue, context: grpc.ServicerContext) -> wrappers_pb2.Int32Value:
         if request.value != "plugin":
             context.abort(grpc.StatusCode.NOT_FOUND, "unknown service")
@@ -257,7 +257,7 @@ def controller_handler(stop: threading.Event) -> grpc.GenericRpcHandler:
 
 def socket_path() -> Path:
     base = os.environ.get("PLUGIN_UNIX_SOCKET_DIR") or os.environ.get("TMPDIR") or "/tmp"
-    return Path(base) / f"plugin{secrets.token_hex(6)}"
+    return Path(base) / f"monitor{secrets.token_hex(6)}"
 
 
 def serve(store: Store) -> int:
@@ -293,7 +293,7 @@ def serve(store: Store) -> int:
 
 def main() -> int:
     if os.environ.get("MONITOR_HUB_MONITOR") != COOKIE:
-        print("This is a monitor-hub plugin. It is started by the hub, not by hand.", file=sys.stderr)
+        print("This is a monitor for monitor-hub. It is started by the hub, not by hand.", file=sys.stderr)
         return 1
     data_dir = os.environ.get("MONITOR_HUB_DATA_DIR")
     if not data_dir:

@@ -80,7 +80,7 @@ jobs:
             esac
           done
 
-      - name: Install procps and the Python plugin example's runtime
+      - name: Install procps and the Python monitor example's runtime
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends procps python3-venv

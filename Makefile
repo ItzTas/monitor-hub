@@ -32,7 +32,7 @@ check-rust:
 	cd sdk-rust && cargo test --workspace --all-features
 
 generate-python:
-	uvx --from grpcio-tools==1.78.0 python -m grpc_tools.protoc -Iproto/monitorhub/monitor/v1 --python_out=examples/python-plugin/gen --pyi_out=examples/python-plugin/gen --grpc_python_out=examples/python-plugin/gen proto/monitorhub/monitor/v1/monitor.proto
+	uvx --from grpcio-tools==1.78.0 python -m grpc_tools.protoc -Iproto/monitorhub/monitor/v1 --python_out=examples/python-monitor/gen --pyi_out=examples/python-monitor/gen --grpc_python_out=examples/python-monitor/gen proto/monitorhub/monitor/v1/monitor.proto
 
 dockerfile:
 	go run ./src/cmd/imagegen
