@@ -1,5 +1,7 @@
 package ingest
 
+// The hub keeps one Watch call open per monitor and follows the monitor's current process. A signal asks for a poll; while the call is down, the schedule polls every 15 seconds.
+
 import (
 	"context"
 	"fmt"
@@ -39,9 +41,10 @@ func (unimplemented) watchEnd()  {}
 func (dropped) watchEnd()        {}
 
 type watchStream struct {
-	beat    chan struct{}
-	ended   chan error
-	done    chan struct{}
+	beat  chan struct{}
+	ended chan error
+	done  chan struct{}
+	// Written only by the goroutine that reads the stream; follow reads it after done is closed.
 	signals int
 }
 
@@ -107,7 +110,13 @@ func (s *Service) follow(ctx context.Context, name string, client monitorpb.Moni
 	lived := s.now().Sub(opened)
 	cancel()
 	<-w.done
-	return settle(end, w.signals >= 2 && lived >= EstablishedAfter, w.signals > 0, sch)
+	established := w.signals >= 2 && lived >= EstablishedAfter
+	backToPolling(end, w.signals > 0, sch)
+	if end, ok := end.(dropped); ok {
+		end.established = established
+		return end
+	}
+	return end
 }
 
 func (s *Service) await(ctx context.Context, changed <-chan struct{}, w *watchStream) watchEnd {
@@ -143,18 +152,14 @@ func ended(ctx context.Context, changed <-chan struct{}, err error, signalled bo
 	return dropped{err: err}
 }
 
-func settle(end watchEnd, established, signalled bool, sch *schedule) watchEnd {
+func backToPolling(end watchEnd, signalled bool, sch *schedule) {
 	if signalled {
 		sch.setWatching(false)
 	}
-	switch end := end.(type) {
-	case dropped:
-		sch.request(pollRequest{full: true})
-		return dropped{established: established, err: end.err}
-	case processChanged:
+	switch end.(type) {
+	case dropped, processChanged:
 		sch.request(pollRequest{full: true})
 	}
-	return end
 }
 
 func (s *Service) read(ctx context.Context, name string, client monitorpb.MonitorClient, sch *schedule, w *watchStream) error {
