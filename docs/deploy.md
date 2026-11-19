@@ -4,7 +4,7 @@ This runbook moves two services onto the hub: sei-monitor (the government proces
 
 Placeholders are written in angle brackets and are yours to fill in:
 
-- `<postgres-container>`: the name of the Postgres container that holds the database a command names, from `docker ps`. On the shared Postgres that is one container for all three databases. If the SEI database still lives in the sei-monitor stack's own Postgres, commands on `sei_monitor` use that container instead (see step 1).
+- `<postgres-container>`: the name of the Postgres container that holds the database a command names, from `docker ps`. On the shared Postgres that is one container for all the databases. If the SEI database still lives in the sei-monitor stack's own Postgres, commands on `sei_monitor` use that container instead (see step 1).
 - `<hub-db-password>`: the password you choose for the hub's database role.
 - `<anhanguera-db-password>`: the password you choose for the anhanguera monitor's database role.
 - `<old-stack-network>`: the Docker network of the sei-monitor stack, only when its database is still bundled in that stack (see step 1).
@@ -95,7 +95,7 @@ docker compose pull
 docker run --rm --entrypoint ls ghcr.io/itztas/monitor-hub:latest /opt/monitor-hub/monitors
 ```
 
-Check: the list shows both `diario` and `sei`. If `sei` is missing, the image is older than the commit that added it: stop here, leave both old stacks running, and pull again after the hub's CI has published a newer image. Step 4 stops sei-monitor too, and nothing in an image without `sei` would replace it, so SEI would go unwatched. If you set `MONITOR_HUB_TAG`, use that tag in the command instead of `latest`.
+Check: the list shows both `diario` and `sei`. If `ls` cannot find `/opt/monitor-hub/monitors`, or `sei` is missing, the image is too old: stop here, leave both old stacks running, and pull again after the hub's CI has published a newer image. Step 4 stops sei-monitor too, and nothing in an image without `sei` would replace it, so SEI would go unwatched. If you set `MONITOR_HUB_TAG`, use that tag in the command instead of `latest`.
 
 ### Where the databases are
 
@@ -159,7 +159,7 @@ The copy also holds the `anhanguera` block. Delete it from `.env` for now: "Add 
 
 ### The monitor database URLs
 
-`SEI__DATABASE_URL` and `DIARIO__DATABASE_URL` point at the existing databases, so nothing they already saw is announced again. The old `.env` files may not hold a ready `DATABASE_URL`.
+`SEI__DATABASE_URL` and `DIARIO__DATABASE_URL` point at the existing databases, so nothing the old services already saw is announced again. The old `.env` files may not hold a ready `DATABASE_URL`.
 
 - `SEI__DATABASE_URL`: the old sei-monitor compose file builds it from `POSTGRES_PASSWORD`. Its shape is
   `postgres://sei_monitor:<password>@<host>:5432/sei_monitor?sslmode=disable`, with user and database `sei_monitor` and host `postgres` in the `v1.0.0` file.
@@ -323,6 +323,8 @@ Now run the pending count of "The SEI program" once more, list the rows if it is
 
 The hub listens on port 8090 on the host, or on your `APP_PORT`. The commands below use 8090.
 
+If a hub older than this release used the `data` volume, move each monitor's directory before you start the hub. This release gives each monitor `<DATA_DIR>/monitors/<name>` and does not move the directory the older hub used, which sits next to `monitors` under the old name for monitors. diario, sei and anhanguera keep nothing there, so the move matters only for a monitor of your own.
+
 ```bash
 cd /opt/stacks/monitor-hub
 docker compose up -d
@@ -466,6 +468,14 @@ Finally open `http://hub.lan` if the proxy is set up.
 
 The anhanguera monitor reads the Anhanguera student portal (AVA) and reports invoices, activity deadlines and calendar events. It is a third monitor next to `diario` and `sei`, and it starts on its own database. There is nothing to take over: it has no old service.
 
+Pull the image first (`docker compose pull`) and check that it carries the monitor:
+
+```bash
+docker run --rm --entrypoint ls ghcr.io/itztas/monitor-hub:latest /opt/monitor-hub/monitors
+```
+
+Check: the list shows `anhanguera`. If it does not, the image is older than the commit that added the monitor: skip this section and come back once the hub's CI has published a newer image. If you set `MONITOR_HUB_TAG`, use that tag instead of `latest`.
+
 ### Create its database
 
 Run this in the shared Postgres as its admin user, with a real password you keep for the next step. The role owns the database, so it also owns every table the monitor creates.
@@ -484,9 +494,9 @@ Check: one line with `anhanguera_monitor` as owner. The monitor applies its migr
 
 Copy the `anhanguera` block from `.env.example` into `.env`. Four settings are required:
 
-- `ANHANGUERA__DATABASE_URL`, or `ANHANGUERA__DATABASE_URL_FILE`: `postgres://anhanguera_monitor:<anhanguera-db-password>@postgres:5432/anhanguera_monitor?sslmode=disable`.
+- `ANHANGUERA__DATABASE_URL`, or `ANHANGUERA__DATABASE_URL_FILE`: `postgres://anhanguera_monitor:<anhanguera-db-password>@postgres:5432/anhanguera_monitor?sslmode=disable`. If the hub also joins the sei-monitor stack's network (step 1), put the shared Postgres container's name in place of `postgres`, as in the other URLs.
 - `ANHANGUERA__AVA_USERNAME`: the student's CPF.
-- `ANHANGUERA__AVA_PASSWORD`, or `ANHANGUERA__AVA_PASSWORD_FILE`: the portal password. A password with `$` or quotes can reach the monitor changed, so use the file form for it.
+- `ANHANGUERA__AVA_PASSWORD`, or `ANHANGUERA__AVA_PASSWORD_FILE`: the portal password. A password with `$` or quotes can reach the monitor changed, so use the file form for it. Mount the file as section 8, "Secrets from files", shows for the SEI password.
 - `ANHANGUERA__COURSES`: the course names to watch, separated by commas.
 
 The rest have defaults. The monitor reads the portal once an hour, and every start of the monitor is one login to the portal, so do not change the settings in a loop. Then restart the hub (`docker compose up -d`) and check `/api/monitors` as in step 5: `anhanguera` should be `running`.
@@ -529,7 +539,7 @@ Check: no "not paired" warning. If you paired while the hub was running, restart
 
 ## 7. Roll back
 
-Use this if the hub misbehaves and you want the old services back. The old stacks are already pinned to their Go images (step 1).
+Use this if the hub misbehaves and you want the old services back. The old stacks are already pinned to their Go images (step 1). The rollback also stops the anhanguera monitor, which has no old service to take over.
 
 1. List what the hub has not delivered. Nobody sends these after the rollback: the old programs do not read the hub's tables.
 
@@ -627,11 +637,11 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
   The delete is needed because the hub silently drops an event whose id it already stored for that monitor, and a new database reuses ids such as `welcome`. The next read is a new baseline: what the monitor held when it started is stored and not announced. On a new gazette database the welcome and the first cycle's alerts are announced on the hub's second read, about 15 seconds later. On a new SEI database the monitor's first check of the account only takes note of what is there, and reports start with its second check. This statement was run on a throwaway copy of the hub's schema, not on a production database.
 
 - **No retention in the hub.** The hub never deletes events or deliveries. Rows for a channel that is never paired or never works pile up. Prune them by hand if the database grows.
-- **Nobody is told when a monitor is failing.** The hub sends no notification about a monitor's state. A `failing` or `paused` monitor shows only in `/api/monitors`, with the reason in `message`, and in the monitor's own lines in the hub log. The one exception is a SEI login that SEI refused, which also records an event (next point). Look at the list after every hub restart and every configuration change, and now and then:
+- **Nobody is told when a monitor is failing.** The hub sends no notification about a monitor's state. A `failing` or `paused` monitor shows only in `/api/monitors`, with the reason in `message`, and in the monitor's own lines in the hub log. There are two exceptions: a SEI login that SEI refused, which also records an event (next point), and an anhanguera portal that keeps failing for `ANHANGUERA__FAILING_ALERT_AFTER` (24 hours by default), after which that monitor records an alert. Look at the list after every hub restart and every configuration change, and now and then:
 
   ```bash
   curl -s -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/monitors
-  docker compose logs --since 24h monitor-hub | grep -E 'monitor=(diario|sei)' | grep -E 'level=(WARN|ERROR)'
+  docker compose logs --since 24h monitor-hub | grep -E 'monitor=(diario|sei|anhanguera)' | grep -E 'level=(WARN|ERROR)'
   ```
 
   A failing `sei` check retries on its own after 30 seconds, then a minute, doubling up to `POLL_INTERVAL`, and goes back to `idle` after the first check that works. If the message names an unknown agency or module and stays, fix `SEI__SEI_ORG` or set `SEI__SEI_API_URL`, then restart the hub.
@@ -688,7 +698,7 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
   ```
 
   A `cursor_at` in the future means this happened. The other one: a PDF without a text layer, such as a scan saved as images, reads as "no match", with no alert and no error.
-- **A monitor that never starts.** If `running` stays false, the monitor's configuration error is in the hub log. A misspelled `SEI__` or `DIARIO__` name is not an error: the monitor never sees it and uses the default or reports the variable missing.
+- **A monitor that never starts.** If `running` stays false, the monitor's configuration error is in the hub log. A misspelled `SEI__`, `DIARIO__` or `ANHANGUERA__` name is not an error: the monitor never sees it and uses the default or reports the variable missing.
 - **Secrets from files.** `_FILE` variables need the file inside the container. The compose file mounts none, so add a volume before using one. The hub and its monitors run as user `65532`, which must be able to read the file. For the SEI password, for example, put it in `/opt/stacks/monitor-hub/secrets/sei_password`, then:
 
   ```bash
