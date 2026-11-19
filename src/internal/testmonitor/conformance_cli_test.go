@@ -327,10 +327,11 @@ func TestConformanceChecksWatch(t *testing.T) {
 		want  []string
 		limit time.Duration
 	}{
-		"follow": {code: 0},
-		"silent": {code: 1, want: []string{"Watch sent no signal within 5s"}, limit: 20 * time.Second},
-		"close":  {code: 1, want: []string{"Watch ended after its first signal; it must stay open while the monitor runs"}},
-		"fail":   {code: 1, want: []string{"Watch failed: rpc error: code = Internal desc = watch failed"}},
+		"follow":        {code: 0},
+		"silent":        {code: 1, want: []string{"Watch sent no signal within 5s"}, limit: 20 * time.Second},
+		"close":         {code: 1, want: []string{"Watch ended after its first signal; it must stay open while the monitor runs"}},
+		"fail":          {code: 1, want: []string{"Watch failed: rpc error: code = Internal desc = watch failed"}},
+		"unimplemented": {code: 1, want: []string{"Watch answered UNIMPLEMENTED; every monitor must implement Watch"}},
 	}
 	for mode, tt := range tests {
 		t.Run(mode, func(t *testing.T) {

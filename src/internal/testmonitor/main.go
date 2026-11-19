@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -215,10 +216,7 @@ func (*server) Check(context.Context, *monitorpb.CheckRequest) (*monitorpb.Check
 }
 
 func (s *server) Watch(req *monitorpb.WatchRequest, stream grpc.ServerStreamingServer[monitorpb.WatchResponse]) error {
-	mode := os.Getenv("WATCH")
-	if mode == "" {
-		return s.UnimplementedMonitorServer.Watch(req, stream)
-	}
+	mode := cmp.Or(os.Getenv("WATCH"), "follow")
 	modes := map[string]func(grpc.ServerStreamingServer[monitorpb.WatchResponse]) error{
 		"follow": watchFollow,
 		"silent": func(stream grpc.ServerStreamingServer[monitorpb.WatchResponse]) error {
@@ -230,6 +228,9 @@ func (s *server) Watch(req *monitorpb.WatchRequest, stream grpc.ServerStreamingS
 		},
 		"fail": func(grpc.ServerStreamingServer[monitorpb.WatchResponse]) error {
 			return status.Error(codes.Internal, "watch failed")
+		},
+		"unimplemented": func(stream grpc.ServerStreamingServer[monitorpb.WatchResponse]) error {
+			return s.UnimplementedMonitorServer.Watch(req, stream)
 		},
 	}
 	watch, ok := modes[mode]

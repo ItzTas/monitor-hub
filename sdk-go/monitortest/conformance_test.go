@@ -44,7 +44,7 @@ func (f *fakeClient) Watch(ctx context.Context, _ *monitorpb.WatchRequest, _ ...
 	if f.watch != nil {
 		return f.watch(ctx)
 	}
-	return nil, status.Error(codes.Unimplemented, "method Watch not implemented")
+	return &scriptedStream{ctx: ctx, steps: []watchStep{signal(0)}}, nil
 }
 
 func (f *fakeClient) Events(_ context.Context, req *monitorpb.EventsRequest, _ ...grpc.CallOption) (*monitorpb.EventsResponse, error) {
@@ -68,6 +68,8 @@ func (f *fakeClient) Events(_ context.Context, req *monitorpb.EventsRequest, _ .
 	return &monitorpb.EventsResponse{Events: out}, nil
 }
 
+var fastWatch = watchLimits{50 * time.Millisecond, 50 * time.Millisecond}
+
 func event(seq int64, id string) *monitorpb.Event {
 	return &monitorpb.Event{
 		Seq:        seq,
@@ -81,21 +83,21 @@ func event(seq int64, id string) *monitorpb.Event {
 
 func TestCheckAcceptsValidMonitor(t *testing.T) {
 	c := &fakeClient{events: []*monitorpb.Event{event(1, "a"), event(2, "b"), event(3, "c")}}
-	if got := check(t.Context(), c, Options{MinEvents: 3}); len(got) != 0 {
+	if got := check(t.Context(), c, Options{MinEvents: 3}, fastWatch); len(got) != 0 {
 		t.Fatalf("violations = %v, want none", got)
 	}
 }
 
 func TestCheckCatchesBadSeq(t *testing.T) {
 	c := &fakeClient{events: []*monitorpb.Event{event(2, "a"), event(1, "b")}}
-	if got := check(t.Context(), c, Options{MinEvents: 2}); !slices.Contains(got, "seq not strictly increasing") {
+	if got := check(t.Context(), c, Options{MinEvents: 2}, fastWatch); !slices.Contains(got, "seq not strictly increasing") {
 		t.Fatalf("violations = %v, want seq not strictly increasing", got)
 	}
 }
 
 func TestCheckCatchesDuplicateID(t *testing.T) {
 	c := &fakeClient{events: []*monitorpb.Event{event(1, "a"), event(2, "a")}}
-	if got := check(t.Context(), c, Options{MinEvents: 2}); !slices.Contains(got, "duplicate event id") {
+	if got := check(t.Context(), c, Options{MinEvents: 2}, fastWatch); !slices.Contains(got, "duplicate event id") {
 		t.Fatalf("violations = %v, want duplicate event id", got)
 	}
 }
@@ -116,13 +118,26 @@ func TestValidName(t *testing.T) {
 	}
 }
 
+func TestCheckReportsAMonitorWithoutWatch(t *testing.T) {
+	c := &fakeClient{
+		events: []*monitorpb.Event{event(1, "a"), event(2, "b"), event(3, "c")},
+		watch: func(context.Context) (grpc.ServerStreamingClient[monitorpb.WatchResponse], error) {
+			return nil, status.Error(codes.Unimplemented, "method Watch not implemented")
+		},
+	}
+	want := []string{"Watch answered UNIMPLEMENTED; every monitor must implement Watch"}
+	if got := check(t.Context(), c, Options{MinEvents: 3}, fastWatch); !slices.Equal(got, want) {
+		t.Fatalf("violations = %q, want %q", got, want)
+	}
+}
+
 func TestCheckWaitsWhileUnavailable(t *testing.T) {
 	c := &fakeClient{
 		events:    []*monitorpb.Event{event(1, "a"), event(2, "b"), event(3, "c")},
 		eventsErr: status.Error(codes.Unavailable, "starting"),
 		failures:  2,
 	}
-	got := check(t.Context(), c, Options{MinEvents: 3, ReadyTimeout: 2 * time.Second})
+	got := check(t.Context(), c, Options{MinEvents: 3, ReadyTimeout: 2 * time.Second}, fastWatch)
 	if len(got) != 0 {
 		t.Fatalf("violations = %v, want none", got)
 	}
@@ -130,7 +145,7 @@ func TestCheckWaitsWhileUnavailable(t *testing.T) {
 
 func TestCheckReportsUnavailableAfterTimeout(t *testing.T) {
 	c := &fakeClient{eventsErr: status.Error(codes.Unavailable, "starting"), failures: -1}
-	got := check(t.Context(), c, Options{ReadyTimeout: 300 * time.Millisecond})
+	got := check(t.Context(), c, Options{ReadyTimeout: 300 * time.Millisecond}, fastWatch)
 	if !slices.Contains(got, "events unavailable after 300ms") {
 		t.Fatalf("violations = %v, want events unavailable after 300ms", got)
 	}
@@ -139,7 +154,7 @@ func TestCheckReportsUnavailableAfterTimeout(t *testing.T) {
 func TestCheckDoesNotWaitOnOtherErrors(t *testing.T) {
 	c := &fakeClient{eventsErr: status.Error(codes.Internal, "boom"), failures: -1}
 	begin := time.Now()
-	got := check(t.Context(), c, Options{ReadyTimeout: 2 * time.Second})
+	got := check(t.Context(), c, Options{ReadyTimeout: 2 * time.Second}, fastWatch)
 	if elapsed := time.Since(begin); elapsed > 500*time.Millisecond {
 		t.Fatalf("took %v, want under 500ms", elapsed)
 	}
@@ -150,7 +165,7 @@ func TestCheckDoesNotWaitOnOtherErrors(t *testing.T) {
 
 func TestCheckDoesNotWaitWithoutReadyTimeout(t *testing.T) {
 	c := &fakeClient{eventsErr: status.Error(codes.Unavailable, "starting"), failures: -1}
-	got := check(t.Context(), c, Options{})
+	got := check(t.Context(), c, Options{}, fastWatch)
 	if !slices.ContainsFunc(got, func(v string) bool { return strings.HasPrefix(v, "Events failed") }) || c.calls != 1 {
 		t.Fatalf("violations = %v after %d calls, want one Events failed violation after one call", got, c.calls)
 	}
@@ -171,7 +186,7 @@ func TestCheckNamesWhatLimitOneReturned(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			c := &fakeClient{events: events, onLimitOne: tt.onLimitOne}
-			if got := check(t.Context(), c, Options{}); !slices.Equal(got, []string{tt.want}) {
+			if got := check(t.Context(), c, Options{}, fastWatch); !slices.Equal(got, []string{tt.want}) {
 				t.Fatalf("violations = %q, want %q", got, tt.want)
 			}
 		})
@@ -216,8 +231,8 @@ func TestCheckWatch(t *testing.T) {
 		openErr error
 		want    []string
 	}{
-		"unimplemented on recv":  {steps: []watchStep{{err: unimplemented}}},
-		"unimplemented on open":  {openErr: unimplemented},
+		"unimplemented on recv":  {steps: []watchStep{{err: unimplemented}}, want: []string{watchUnimplemented}},
+		"unimplemented on open":  {openErr: unimplemented, want: []string{watchUnimplemented}},
 		"one signal, stays open": {steps: []watchStep{signal(1)}},
 		"two signals":            {steps: []watchStep{signal(1), signal(2)}},
 		"fails at once":          {steps: []watchStep{{err: broken}}, want: []string{"Watch failed: rpc error: code = Internal desc = broken"}},
@@ -239,7 +254,7 @@ func TestCheckWatch(t *testing.T) {
 				}
 				return &scriptedStream{ctx: ctx, steps: tt.steps}, nil
 			}}
-			got := checkWatch(t.Context(), c, watchLimits{50 * time.Millisecond, 50 * time.Millisecond})
+			got := checkWatch(t.Context(), c, fastWatch)
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("violations = %q, want %q", got, tt.want)
 			}

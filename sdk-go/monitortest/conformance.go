@@ -86,17 +86,17 @@ func Check(ctx context.Context, cmd *exec.Cmd, opts Options) ([]string, error) {
 		return nil, err
 	}
 	defer client.Kill()
-	return check(ctx, c, opts), nil
+	return check(ctx, c, opts, watchLimits{watchFirstSignal, watchStaysOpen}), nil
 }
 
 func Run(t *testing.T, cmd *exec.Cmd, minEvents int) {
 	t.Helper()
-	for _, violation := range check(t.Context(), Dial(t, cmd), Options{MinEvents: minEvents}) {
+	for _, violation := range check(t.Context(), Dial(t, cmd), Options{MinEvents: minEvents}, watchLimits{watchFirstSignal, watchStaysOpen}) {
 		t.Errorf("conformance: %s", violation)
 	}
 }
 
-func check(ctx context.Context, c monitorpb.MonitorClient, opts Options) []string {
+func check(ctx context.Context, c monitorpb.MonitorClient, opts Options, limits watchLimits) []string {
 	ctx, cancel := context.WithTimeout(ctx, suiteTimeout+opts.ReadyTimeout)
 	defer cancel()
 
@@ -109,7 +109,7 @@ func check(ctx context.Context, c monitorpb.MonitorClient, opts Options) []strin
 	out = append(out, checkPaging(ctx, c, events)...)
 	out = append(out, checkLimits(ctx, c, events)...)
 	out = append(out, checkCheck(ctx, c)...)
-	return append(out, checkWatch(ctx, c, watchLimits{watchFirstSignal, watchStaysOpen})...)
+	return append(out, checkWatch(ctx, c, limits)...)
 }
 
 func validName(name string) bool {
@@ -346,9 +346,11 @@ func checkWatch(ctx context.Context, c monitorpb.MonitorClient, limits watchLimi
 	return watchViolations(ctx, results, limits)
 }
 
+const watchUnimplemented = "Watch answered UNIMPLEMENTED; every monitor must implement Watch"
+
 func watchOpenFailure(err error) []string {
 	if status.Code(err) == codes.Unimplemented {
-		return nil
+		return []string{watchUnimplemented}
 	}
 	return []string{fmt.Sprintf("Watch failed: %v", err)}
 }

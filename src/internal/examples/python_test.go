@@ -3,12 +3,14 @@ package examples
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/sdk-go/monitortest"
@@ -226,6 +228,35 @@ func TestPythonMonitorHealthAndShutdown(t *testing.T) {
 		t.Errorf("unknown service: code = %v, want NotFound", status.Code(err))
 	}
 
+	p.shutdown(t)
+}
+
+func TestPythonMonitorSignalsAfterACheck(t *testing.T) {
+	p := startPython(t, t.TempDir())
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	stream, err := monitorpb.NewMonitorClient(p.conn).Watch(ctx, &monitorpb.WatchRequest{})
+	if err != nil {
+		t.Fatalf("Watch: %v", err)
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("no first signal within 10s: %v", err)
+	}
+	if got := first.GetLatestSeq(); got != 1 {
+		t.Errorf("first signal latest_seq = %d, want 1 (the first ping)", got)
+	}
+
+	p.check(t)
+	next, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("no signal after the Check within 10s: %v", err)
+	}
+	if got := next.GetLatestSeq(); got != 2 {
+		t.Errorf("signal after the Check: latest_seq = %d, want 2", got)
+	}
+
+	cancel()
 	p.shutdown(t)
 }
 

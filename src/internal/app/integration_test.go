@@ -95,7 +95,7 @@ func TestRunStopsEverythingAndLogsNoSecret(t *testing.T) {
 }
 
 func TestHubNotifiesAsSoonAsTheMonitorSignals(t *testing.T) {
-	b := newBench(t, "TESTMONITOR__WATCH=follow")
+	b := newBench(t)
 	logs := newLogMessages()
 	app := b.assemble(slog.New(logs))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -114,7 +114,7 @@ func TestHubNotifiesAsSoonAsTheMonitorSignals(t *testing.T) {
 			t.Errorf("ntfy received %+v, want %+v", got, want)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("the notification did not arrive within 10s: the hub polls a monitor without Watch every 15s and the dispatcher every 30s, so the signal was not followed")
+		t.Fatal("the notification did not arrive within 10s: the hub polls a monitor whose Watch is down every 15s and the dispatcher every 30s, so the signal was not followed")
 	}
 
 	cancel()

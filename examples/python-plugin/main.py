@@ -12,11 +12,11 @@ import sqlite3
 import sys
 import threading
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from concurrent import futures
 from pathlib import Path
 from types import FrameType
-from typing import override
+from typing import cast, override
 
 import grpc
 from google.protobuf import empty_pb2, wrappers_pb2
@@ -30,6 +30,7 @@ COOKIE = "7c0e5a52-monitor-hub"
 NAME = "example-python"
 DEFAULT_LIMIT = 100
 SERVING = 1
+HEARTBEAT_SECONDS = 30
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -45,6 +46,7 @@ SELECT 'ping-' || n, ?, 'ping ' || n
 FROM (SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0) + 1 AS n)
 """
 ADD_FIRST_PING = ADD_PING + " WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'events')"
+LATEST_SEQ = "SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0)"
 
 
 def log(level: str, message: str, **fields: object) -> None:
@@ -71,15 +73,24 @@ class Store:
         except sqlite3.Error as err:
             raise StorageError(str(err)) from err
 
-    def add_ping(self) -> None:
+    def add_ping(self) -> int:
         with self._open() as conn, conn:
             conn.execute(ADD_PING, (now_ms(),))
+            return latest_seq(conn)
+
+    def latest_seq(self) -> int:
+        with self._open() as conn:
+            return latest_seq(conn)
 
     def events_after(self, after: int, limit: int) -> list[pb.Event]:
         query = "SELECT seq, id, occurred_ms, title FROM events WHERE seq > ? ORDER BY seq LIMIT ?"
         with self._open() as conn:
             rows = conn.execute(query, (after, limit)).fetchall()
         return [to_event(*row) for row in rows]
+
+
+def latest_seq(conn: sqlite3.Connection) -> int:
+    return cast(int, conn.execute(LATEST_SEQ).fetchone()[0])
 
 
 def now_ms() -> int:
@@ -105,12 +116,24 @@ def to_event(seq: int, event_id: str, occurred_ms: int, title: str) -> pb.Event:
     return event
 
 
+def initial_seq(store: Store) -> int:
+    try:
+        return store.latest_seq()
+    except StorageError as err:
+        log("error", "latest seq unavailable", error=str(err))
+        return 0
+
+
 class MonitorService(pb_grpc.MonitorServicer):
     def __init__(self, store: Store) -> None:
         self._store = store
         self._lock = threading.Lock()
         self._last_check_ms: int | None = None
         self._failure = ""
+        self._changes: threading.Condition = threading.Condition()
+        self._version: int = 0
+        self._latest_seq: int = initial_seq(store)
+        self._closed: bool = False
 
     @override
     def Describe(self, request: pb.DescribeRequest, context: grpc.ServicerContext) -> pb.DescribeResponse:
@@ -139,19 +162,55 @@ class MonitorService(pb_grpc.MonitorServicer):
     def Check(self, request: pb.CheckRequest, context: grpc.ServicerContext) -> pb.CheckResponse:
         started_ms = now_ms()
         try:
-            self._store.add_ping()
+            seq = self._store.add_ping()
         except StorageError as err:
             failure = f"storage unavailable: {err}"
             self._record_check(started_ms, failure)
+            self._signal()
             log("error", "check failed", error=str(err))
             return pb.CheckResponse(accepted=False, message=failure)
         self._record_check(started_ms, "")
+        self._signal(seq)
         return pb.CheckResponse(accepted=True)
 
     def _record_check(self, started_ms: int, failure: str) -> None:
         with self._lock:
             self._last_check_ms = started_ms
             self._failure = failure
+
+    def _signal(self, seq: int = 0) -> None:
+        with self._changes:
+            self._version += 1
+            # Checks run in parallel and can commit out of order, so the largest seq is the latest.
+            self._latest_seq = max(self._latest_seq, seq)
+            self._changes.notify_all()
+
+    def _wake_watchers(self) -> None:
+        with self._changes:
+            self._changes.notify_all()
+
+    def _watch_over(self, context: grpc.ServicerContext) -> bool:
+        return self._closed or not context.is_active()
+
+    def close(self) -> None:
+        with self._changes:
+            self._closed = True
+            self._changes.notify_all()
+
+    @override
+    def Watch(self, request: pb.WatchRequest, context: grpc.ServicerContext) -> Iterator[pb.WatchResponse]:
+        # The callback runs when the call ends, so a cancelled Watch stops waiting at once.
+        if not context.add_callback(self._wake_watchers):
+            return
+        with self._changes:
+            seen, latest = self._version, self._latest_seq
+        while True:
+            yield pb.WatchResponse(latest_seq=latest)
+            with self._changes:
+                _ = self._changes.wait_for(lambda: self._version != seen or self._watch_over(context), HEARTBEAT_SECONDS)
+                if self._watch_over(context):
+                    return
+                seen, latest = self._version, self._latest_seq
 
     @override
     def Events(self, request: pb.EventsRequest, context: grpc.ServicerContext) -> pb.EventsResponse:
@@ -212,7 +271,8 @@ def serve(store: Store) -> int:
 
     path = socket_path()
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    pb_grpc.add_MonitorServicer_to_server(MonitorService(store), server)
+    service = MonitorService(store)
+    pb_grpc.add_MonitorServicer_to_server(service, server)
     server.add_generic_rpc_handlers((health_handler(), controller_handler(stop)))
     try:
         if not server.add_insecure_port(f"unix:{path}"):
@@ -221,6 +281,7 @@ def serve(store: Store) -> int:
         log("info", "serving", socket=str(path))
         print(f"1|2|unix|{path}|grpc", flush=True)
         stop.wait()
+        service.close()
     except RuntimeError as err:
         log("error", "cannot start the server", error=str(err))
         return 1
