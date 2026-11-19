@@ -212,7 +212,7 @@ func TestLoadMonitors(t *testing.T) {
 func TestLoadMonitorsRejectsMalformedInput(t *testing.T) {
 	for name, input := range map[string]string{
 		"unknown field":     `{"monitors":[],"extra":1}`,
-		"old list key":      `{"plugins":[]}`,
+		"unknown list key":  `{"images":[]}`,
 		"unknown entry":     `{"monitors":[{"name":"sei","image":"` + seiImage + `","tag":"x"}]}`,
 		"trailing data":     `{"monitors":[]} {}`,
 		"not json":          `monitors`,
