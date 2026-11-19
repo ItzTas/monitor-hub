@@ -15,12 +15,12 @@ use crate::controller::Empty;
 use crate::controller::grpc_controller_server::{GrpcController, GrpcControllerServer};
 use crate::handshake::{NOT_LAUNCHED_BY_HUB, Socket, launched_by_hub};
 use crate::monitor::Monitor;
-use crate::proto::monitor_server::{Monitor as MonitorService, MonitorServer};
 use crate::proto::{
     CheckRequest, CheckResponse, DescribeRequest, DescribeResponse, EventsRequest, EventsResponse,
     StatusRequest, StatusResponse, WatchRequest, WatchResponse,
 };
 use crate::watch::{Notifier, stream};
+use crate::wire::monitor_server::{Monitor as MonitorService, MonitorServer};
 
 const HEALTH_SERVICE: &str = "plugin";
 const DRAIN_LIMIT: Duration = Duration::from_secs(1);

@@ -1,7 +1,15 @@
 #[rustfmt::skip]
 #[allow(clippy::all)]
 #[path = "generated/monitorhub.monitor.v1.rs"]
-pub mod proto;
+mod wire;
+
+pub mod proto {
+    pub use crate::wire::{
+        CheckRequest, CheckResponse, DescribeRequest, DescribeResponse, Event, EventKind,
+        EventsRequest, EventsResponse, Severity, State, StatusRequest, StatusResponse,
+        WatchRequest, WatchResponse,
+    };
+}
 
 #[rustfmt::skip]
 #[allow(clippy::all)]
