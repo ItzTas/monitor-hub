@@ -200,13 +200,13 @@ The first signal of a call always makes the hub read `Events`, and so does every
 
 A monitor whose `Watch` answers `UNIMPLEMENTED` violates the protocol, and the [conformance suite](#checks) fails it. The hub logs it as an error, `the monitor violates the protocol: its Watch answered UNIMPLEMENTED; polling it every 15s`, and otherwise treats it like any other failed call (below).
 
-Polling every 15 seconds stays as the hub's fallback, for the times a signal cannot be relied on: while the call is open and has not sent its first signal, after 90 seconds without a signal, and while the call is down.
+Polling every 15 seconds is the hub's fallback for the times a signal cannot be relied on: while the call is open and has not sent its first signal, after 90 seconds without a signal, and while the call is down.
 
 What the hub does with the call:
 
 - On the first signal of a call, the hub logs `watching a monitor` and polls.
 - When 90 seconds pass without a signal, the hub cancels the call, polls at once, goes back to polling every 15 seconds, and opens `Watch` again after a delay.
-- An error, `UNIMPLEMENTED` included, and the end of the call are handled the same way. For these and for the 90 seconds of silence, the hub logs `the monitor's Watch stopped; polling it every 15s` as a warning, with the error and the delay. `UNIMPLEMENTED` gets the error line above instead.
+- An error and the end of the call are handled the same way, `UNIMPLEMENTED` included. For these and for 90 seconds of silence, the hub logs `the monitor's Watch stopped; polling it every 15s` as a warning, with the error and the delay; for `UNIMPLEMENTED` it logs the error line above instead.
 - The delay before the hub opens `Watch` again grows: 1 second, 5 seconds, 30 seconds, then 2 minutes for every further attempt. It goes back to 1 second after a call that stayed open at least 30 seconds and sent at least two signals, or when the monitor's process changes.
 - When the monitor's process restarts, the hub cancels the old call and opens `Watch` on the new process.
 - A signal that comes early, twice or never changes only when the hub polls, never what it stores. When a signal announces a `seq` that `Events` does not return yet, the hub reads `Events`, stores nothing and keeps its position. The next signal, or the 5-minute poll, reads again.
