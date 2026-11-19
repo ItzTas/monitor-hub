@@ -21,13 +21,22 @@ impl Notifier {
         Self { sender }
     }
 
-    pub fn notify(&self, latest_seq: i64) {
+    /// Call after recording events, with the seq of the newest one.
+    pub fn events_recorded(&self, latest_seq: i64) {
         self.sender
             .send_modify(|current| *current = (*current).max(latest_seq));
     }
 
     pub fn status_changed(&self) {
         self.sender.send_modify(|_| {});
+    }
+
+    /// Call at the start of a cycle: signals now and again when the cycle ends, however it ends.
+    pub fn status_scope(&self) -> StatusScope {
+        self.status_changed();
+        StatusScope {
+            notifier: self.clone(),
+        }
     }
 
     pub fn subscribe(&self) -> Signals {
@@ -40,6 +49,19 @@ impl Notifier {
 impl Default for Notifier {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Keep it alive for the whole cycle; dropping it, by `?` or a panic too, signals the hub again.
+#[must_use = "bind the scope to a variable such as _cycle; it signals again when dropped"]
+#[derive(Debug)]
+pub struct StatusScope {
+    notifier: Notifier,
+}
+
+impl Drop for StatusScope {
+    fn drop(&mut self) {
+        self.notifier.status_changed();
     }
 }
 
@@ -99,6 +121,7 @@ async fn forward(
 
 #[cfg(test)]
 mod tests {
+    use std::panic::{self, AssertUnwindSafe};
     use std::time::Duration;
 
     use tokio::sync::watch;
@@ -107,7 +130,7 @@ mod tests {
     use tokio_stream::StreamExt;
     use tonic::codegen::BoxStream;
 
-    use super::{HEARTBEAT, Notifier, stream};
+    use super::{HEARTBEAT, Notifier, Signals, stream};
     use crate::proto::WatchResponse;
 
     const WAIT_LIMIT: Duration = Duration::from_secs(300);
@@ -154,7 +177,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_first_signal_is_sent_at_once_with_the_latest_seq() {
         let notifier = Notifier::new();
-        notifier.notify(7);
+        notifier.events_recorded(7);
         let mut watch = Watch::open(&notifier);
 
         assert_eq!(watch.signal().await, 7);
@@ -162,10 +185,10 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn notify_never_lowers_the_seq() {
+    async fn events_recorded_never_lowers_the_seq() {
         let notifier = Notifier::new();
-        notifier.notify(9);
-        notifier.notify(3);
+        notifier.events_recorded(9);
+        notifier.events_recorded(3);
         let mut watch = Watch::open(&notifier);
 
         assert_eq!(watch.signal().await, 9);
@@ -177,8 +200,8 @@ mod tests {
         let mut watch = Watch::open(&notifier);
         assert_eq!(watch.signal().await, 0);
 
-        notifier.notify(8);
-        notifier.notify(9);
+        notifier.events_recorded(8);
+        notifier.events_recorded(9);
         notifier.status_changed();
 
         assert_eq!(watch.signal().await, 9);
@@ -189,7 +212,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_heartbeat_repeats_the_latest_seq_every_30_seconds() {
         let notifier = Notifier::new();
-        notifier.notify(2);
+        notifier.events_recorded(2);
         let mut watch = Watch::open(&notifier);
         assert_eq!(watch.signal().await, 2);
 
@@ -206,7 +229,7 @@ mod tests {
         assert_eq!(watch.signal().await, 0);
 
         sleep(Duration::from_secs(20)).await;
-        notifier.notify(5);
+        notifier.events_recorded(5);
 
         assert_eq!(watch.signal().await, 5);
         assert_eq!(watch.elapsed(), Duration::from_secs(20));
@@ -220,13 +243,13 @@ mod tests {
         let mut watch = Watch::open(&notifier);
         assert_eq!(watch.signal().await, 0);
 
-        notifier.notify(8);
+        notifier.events_recorded(8);
         settle().await;
-        notifier.notify(9);
+        notifier.events_recorded(9);
         settle().await;
-        notifier.notify(10);
+        notifier.events_recorded(10);
         settle().await;
-        notifier.notify(11);
+        notifier.events_recorded(11);
 
         assert_eq!(watch.signal().await, 8);
         assert_eq!(watch.signal().await, 11);
@@ -236,17 +259,17 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn notify_signals_even_when_the_seq_does_not_rise() {
+    async fn events_recorded_signals_even_when_the_seq_does_not_rise() {
         let notifier = Notifier::new();
-        notifier.notify(4);
+        notifier.events_recorded(4);
         let mut watch = Watch::open(&notifier);
         assert_eq!(watch.signal().await, 4);
 
-        notifier.notify(4);
+        notifier.events_recorded(4);
         assert_eq!(watch.signal().await, 4);
         assert_eq!(watch.elapsed(), Duration::ZERO);
 
-        notifier.notify(3);
+        notifier.events_recorded(3);
         assert_eq!(watch.signal().await, 4);
         assert_eq!(watch.elapsed(), Duration::ZERO);
     }
@@ -254,7 +277,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn status_changed_signals_with_the_same_seq() {
         let notifier = Notifier::new();
-        notifier.notify(4);
+        notifier.events_recorded(4);
         let mut watch = Watch::open(&notifier);
         assert_eq!(watch.signal().await, 4);
 
@@ -300,18 +323,78 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn notify_works_with_no_one_watching() {
+    async fn the_notifier_works_with_no_one_watching() {
         let notifier = Notifier::new();
-        notifier.notify(3);
+        notifier.events_recorded(3);
         notifier.status_changed();
 
         let mut signals = notifier.subscribe();
         assert_eq!(signals.latest_seq(), 3);
 
-        notifier.notify(6);
+        notifier.events_recorded(6);
         let changed = timeout(WAIT_LIMIT, signals.changed())
             .await
-            .expect("changed resolves after notify");
+            .expect("changed resolves after events_recorded");
         assert_eq!(changed, 6);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_status_scope_signals_when_it_starts_and_when_it_ends() {
+        let notifier = Notifier::new();
+        let mut signals = notifier.subscribe();
+        signals.latest_seq();
+
+        let scope = notifier.status_scope();
+        timeout(WAIT_LIMIT, signals.changed())
+            .await
+            .expect("the scope signals when it starts");
+        drop(scope);
+        timeout(WAIT_LIMIT, signals.changed())
+            .await
+            .expect("the scope signals when it ends");
+
+        let extra = timeout(Duration::from_secs(1), signals.changed()).await;
+        assert!(extra.is_err(), "unexpected extra signal {extra:?}");
+    }
+
+    async fn failing_cycle(notifier: &Notifier, signals: &mut Signals) -> Result<(), &'static str> {
+        let _cycle = notifier.status_scope();
+        timeout(WAIT_LIMIT, signals.changed())
+            .await
+            .expect("the scope signals when it starts");
+        Err("the cycle failed")?;
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_status_scope_signals_again_when_the_cycle_returns_early() {
+        let notifier = Notifier::new();
+        let mut signals = notifier.subscribe();
+        signals.latest_seq();
+
+        let cycle = failing_cycle(&notifier, &mut signals).await;
+
+        assert_eq!(cycle, Err("the cycle failed"));
+        timeout(WAIT_LIMIT, signals.changed())
+            .await
+            .expect("the scope signals again when the cycle returns early");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_status_scope_signals_again_when_the_cycle_panics() {
+        let notifier = Notifier::new();
+        let mut signals = notifier.subscribe();
+        signals.latest_seq();
+
+        let cycle = panic::catch_unwind(AssertUnwindSafe(|| {
+            let _cycle = notifier.status_scope();
+            signals.latest_seq();
+            panic!("the cycle panicked");
+        }));
+
+        assert!(cycle.is_err(), "the cycle did not panic");
+        timeout(WAIT_LIMIT, signals.changed())
+            .await
+            .expect("the scope signals again when the cycle panics");
     }
 }

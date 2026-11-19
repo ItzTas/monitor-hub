@@ -147,7 +147,7 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let notifier = Notifier::new();
-    notifier.notify(events);
+    notifier.events_recorded(events);
     match serve(Fixed { events }, notifier).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,

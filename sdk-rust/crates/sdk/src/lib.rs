@@ -20,4 +20,4 @@ pub use handshake::{
 };
 pub use monitor::Monitor;
 pub use serve::{ServeError, serve};
-pub use watch::{Notifier, Signals};
+pub use watch::{Notifier, Signals, StatusScope};
