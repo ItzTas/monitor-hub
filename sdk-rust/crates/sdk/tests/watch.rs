@@ -6,31 +6,18 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use monitor_hub_sdk::proto::monitor_server::Monitor;
 use monitor_hub_sdk::proto::{WatchRequest, WatchResponse};
 use monitor_hub_sdk::{MAGIC_COOKIE_KEY, MAGIC_COOKIE_VALUE};
 use tempfile::TempDir;
+use tonic::Request;
 use tonic::codec::Streaming;
 use tonic::codegen::http::uri::PathAndQuery;
 use tonic::transport::{Channel, Endpoint};
-use tonic::{Code, Request};
 
 #[path = "support/example.rs"]
 mod example;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-
-struct Bare;
-
-#[tonic::async_trait]
-impl Monitor for Bare {}
-
-#[tokio::test]
-async fn a_monitor_without_the_notifier_answers_unimplemented() {
-    let result = Bare.watch(Request::new(WatchRequest {})).await;
-    let status = result.err().expect("watch must fail");
-    assert_eq!(status.code(), Code::Unimplemented);
-}
 
 struct Example(Child);
 

@@ -14,7 +14,8 @@ use tonic_health::ServingStatus;
 use crate::controller::Empty;
 use crate::controller::grpc_controller_server::{GrpcController, GrpcControllerServer};
 use crate::handshake::{NOT_LAUNCHED_BY_HUB, Socket, launched_by_hub};
-use crate::proto::monitor_server::{Monitor, MonitorServer};
+use crate::monitor::Monitor;
+use crate::proto::monitor_server::{Monitor as MonitorService, MonitorServer};
 use crate::proto::{
     CheckRequest, CheckResponse, DescribeRequest, DescribeResponse, EventsRequest, EventsResponse,
     StatusRequest, StatusResponse, WatchRequest, WatchResponse,
@@ -39,25 +40,8 @@ pub enum ServeError {
     Transport(#[source] tonic::transport::Error),
 }
 
-pub async fn serve<M: Monitor>(monitor: M) -> Result<(), ServeError> {
-    run(|_| monitor).await
-}
-
-pub async fn serve_with_notifier<M: Monitor>(
-    monitor: M,
-    notifier: Notifier,
-) -> Result<(), ServeError> {
-    run(|closing| Watched {
-        monitor,
-        notifier,
-        closing,
-    })
-    .await
-}
-
-async fn run<M: Monitor>(
-    build_monitor: impl FnOnce(watch::Receiver<bool>) -> M,
-) -> Result<(), ServeError> {
+/// Call once from `main`: serves `monitor` until the hub stops it; `Watch` reads `notifier`.
+pub async fn serve<M: Monitor>(monitor: M, notifier: Notifier) -> Result<(), ServeError> {
     if !launched_by_hub() {
         eprintln!("{NOT_LAUNCHED_BY_HUB}");
         return Err(ServeError::NotLaunchedByHub);
@@ -74,7 +58,11 @@ async fn run<M: Monitor>(
     let router = Server::builder()
         .add_service(health_service)
         .add_service(GrpcControllerServer::new(Controller { stop }))
-        .add_service(MonitorServer::new(build_monitor(closed)));
+        .add_service(MonitorServer::new(Watched {
+            monitor,
+            notifier,
+            closing: closed,
+        }));
 
     socket.announce().map_err(ServeError::Handshake)?;
 
@@ -139,7 +127,9 @@ struct Watched<M> {
 }
 
 #[tonic::async_trait]
-impl<M: Monitor> Monitor for Watched<M> {
+impl<M: Monitor> MonitorService for Watched<M> {
+    type WatchStream = BoxStream<WatchResponse>;
+
     async fn describe(
         &self,
         request: Request<DescribeRequest>,
@@ -168,10 +158,7 @@ impl<M: Monitor> Monitor for Watched<M> {
         self.monitor.events(request).await
     }
 
-    async fn watch(
-        &self,
-        _: Request<WatchRequest>,
-    ) -> Result<Response<BoxStream<WatchResponse>>, Status> {
+    async fn watch(&self, _: Request<WatchRequest>) -> Result<Response<Self::WatchStream>, Status> {
         Ok(Response::new(stream(&self.notifier, self.closing.clone())))
     }
 }

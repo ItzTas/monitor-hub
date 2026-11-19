@@ -3,13 +3,12 @@ use std::error::Error;
 use std::process::ExitCode;
 
 use monitor_hub_sdk::logging::{self, LoggingError};
-use monitor_hub_sdk::proto::monitor_server::Monitor;
 use monitor_hub_sdk::proto::{
     CheckRequest, CheckResponse, DescribeRequest, DescribeResponse, Event, EventKind,
     EventsRequest, EventsResponse, Severity, State, StatusRequest, StatusResponse,
 };
 use monitor_hub_sdk::settings::{self, Problem, VALIDATE_SETTINGS_ARG};
-use monitor_hub_sdk::{Notifier, ServeError, serve_with_notifier};
+use monitor_hub_sdk::{Monitor, Notifier, ServeError, serve};
 use prost_types::Timestamp;
 use tonic::{Request, Response, Status};
 
@@ -149,7 +148,7 @@ async fn main() -> ExitCode {
     }
     let notifier = Notifier::new();
     notifier.notify(events);
-    match serve_with_notifier(Fixed { events }, notifier).await {
+    match serve(Fixed { events }, notifier).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(ServeError::NotLaunchedByHub) => ExitCode::FAILURE,
         Err(err) => {

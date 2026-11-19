@@ -22,7 +22,6 @@ fn generate(sdk: &Path, out: &Path) -> io::Result<()> {
     fs::create_dir_all(out)?;
     tonic_prost_build::configure()
         .build_client(false)
-        .generate_default_stubs(true)
         .emit_rerun_if_changed(false)
         .out_dir(out)
         .compile_protos(

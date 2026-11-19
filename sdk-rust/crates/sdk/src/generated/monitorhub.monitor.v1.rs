@@ -180,36 +180,29 @@ pub mod monitor_server {
         ) -> std::result::Result<
             tonic::Response<super::DescribeResponse>,
             tonic::Status,
-        > {
-            Err(tonic::Status::unimplemented("Not yet implemented"))
-        }
+        >;
         async fn status(
             &self,
             request: tonic::Request<super::StatusRequest>,
-        ) -> std::result::Result<tonic::Response<super::StatusResponse>, tonic::Status> {
-            Err(tonic::Status::unimplemented("Not yet implemented"))
-        }
+        ) -> std::result::Result<tonic::Response<super::StatusResponse>, tonic::Status>;
         async fn check(
             &self,
             request: tonic::Request<super::CheckRequest>,
-        ) -> std::result::Result<tonic::Response<super::CheckResponse>, tonic::Status> {
-            Err(tonic::Status::unimplemented("Not yet implemented"))
-        }
+        ) -> std::result::Result<tonic::Response<super::CheckResponse>, tonic::Status>;
         async fn events(
             &self,
             request: tonic::Request<super::EventsRequest>,
-        ) -> std::result::Result<tonic::Response<super::EventsResponse>, tonic::Status> {
-            Err(tonic::Status::unimplemented("Not yet implemented"))
-        }
+        ) -> std::result::Result<tonic::Response<super::EventsResponse>, tonic::Status>;
+        /// Server streaming response type for the Watch method.
+        type WatchStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::WatchResponse, tonic::Status>,
+            >
+            + std::marker::Send
+            + 'static;
         async fn watch(
             &self,
             request: tonic::Request<super::WatchRequest>,
-        ) -> std::result::Result<
-            tonic::Response<BoxStream<super::WatchResponse>>,
-            tonic::Status,
-        > {
-            Err(tonic::Status::unimplemented("Not yet implemented"))
-        }
+        ) -> std::result::Result<tonic::Response<Self::WatchStream>, tonic::Status>;
     }
     #[derive(Debug)]
     pub struct MonitorServer<T> {
@@ -467,7 +460,7 @@ pub mod monitor_server {
                     > tonic::server::ServerStreamingService<super::WatchRequest>
                     for WatchSvc<T> {
                         type Response = super::WatchResponse;
-                        type ResponseStream = BoxStream<super::WatchResponse>;
+                        type ResponseStream = T::WatchStream;
                         type Future = BoxFuture<
                             tonic::Response<Self::ResponseStream>,
                             tonic::Status,
