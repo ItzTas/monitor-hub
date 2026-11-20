@@ -86,7 +86,7 @@ The Go images to pin:
 
 ### The images for the hub
 
-The hub image carries the monitors listed in `monitors.json` in the hub repository: `diario` from `ghcr.io/itztas/diario-alerr:2.0.1` and `sei` from `ghcr.io/itztas/sei-monitor:2.0.0`. Each `ghcr.io/itztas/monitor-hub` image built from that file holds both, under `/opt/monitor-hub/monitors/diario/` and `/opt/monitor-hub/monitors/sei/`.
+The hub image carries the monitors listed in `monitors.json` in the hub repository: `diario` from `ghcr.io/itztas/diario-alerr:2.3.0` and `sei` from `ghcr.io/itztas/sei-monitor:2.3.0`. Each `ghcr.io/itztas/monitor-hub` image built from that file holds both, under `/opt/monitor-hub/monitors/diario/` and `/opt/monitor-hub/monitors/sei/`.
 
 Pull the image now so the downtime later is short, and list the monitors inside it:
 
