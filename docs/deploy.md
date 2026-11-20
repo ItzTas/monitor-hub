@@ -172,17 +172,19 @@ Both monitors are stricter about their database than the Go programs were. A URL
 
 - The role must own the tables and the sequence the monitor reads: `alerts_seq_seq` for the gazette, `events_id_seq` for SEI. On its first start the gazette monitor applies a migration that alters a table, and every `Events` call of either monitor reads its sequence. This matters if a database was ever moved by dump and restore under another role.
 - Connect straight to Postgres. A pooler in transaction mode breaks the session lock each monitor holds, and both send an `options` start-up parameter that such a pooler refuses.
-- The monitors connect without TLS. Use `sslmode=disable` or `sslmode=prefer` and no other TLS parameter. `sslmode=verify-full`, or a parameter only pgx understands such as `pool_max_conns`, makes a monitor exit with `DATABASE_URL is not a valid Postgres address`.
-- The role must have no `idle_session_timeout`. Each monitor keeps one connection idle for as long as it runs, to hold its lock. If the server closes it, the monitor exits and the hub restarts it, over and over. For SEI every new start logs in to SEI once, up to 12 times an hour.
+- The URL must carry the role's password. Both monitors refuse a URL without one, or with an empty one, with `DATABASE_URL has no password: add the role's password to the URL`. If the database trusts the role without a password, put any password there; Postgres ignores it.
+- The monitors connect without TLS. `sslmode=disable`, `allow` and `prefer` work. `require`, `verify-ca` and `verify-full` fail at once.
+- Both refuse several hosts, a URL with no host, and any query key they do not know with `DATABASE_URL is not a valid Postgres address`, which never repeats the URL. diario also refuses the key=value form (`host=db user=diario`) and any scheme other than `postgres://` and `postgresql://`. The libpq keys that 2.1 accepted, such as `connect_timeout` and `keepalives`, are accepted and ignored.
+- An `idle_session_timeout` on the role no longer makes a monitor exit. The lock connection is queried every 0.5 s, and pool connections are tested before each use. A monitor still exits if its lock connection closes or stops answering (30 s for sei, 10 s for diario), so do not run `pg_terminate_backend` on it or put a firewall in between that cuts long connections. For sei, each restart logs in to SEI once, up to 12 times an hour.
 
 Check each role:
 
 ```bash
-docker exec <postgres-container> psql -U diario_alerr -d diario_alerr -c '\dt' -c '\ds' -c 'SHOW idle_session_timeout'
-docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c '\dt' -c '\ds' -c 'SHOW idle_session_timeout'
+docker exec <postgres-container> psql -U diario_alerr -d diario_alerr -c '\dt' -c '\ds'
+docker exec <postgres-container> psql -U sei_monitor -d sei_monitor -c '\dt' -c '\ds'
 ```
 
-Check: the `Owner` of every table and of `alerts_seq_seq` or `events_id_seq` is the role in that URL, and `idle_session_timeout` is `0`. Use your own role and database names.
+Check: the `Owner` of every table and of `alerts_seq_seq` or `events_id_seq` is the role in that URL. Use your own role and database names.
 
 ### From the old sei-monitor `.env`
 
