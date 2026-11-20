@@ -124,9 +124,75 @@ jobs:
       - name: Check the generated Dockerfile
         run: go run ./src/cmd/imagegen -check
 
+  release:
+    name: Tag the releases
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.hub.outputs.new_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - id: hub
+        uses: mathieudutour/github-tag-action@83c71bb5e316c2ffdea47a2c169498dfa9fc6afd # v7
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag_prefix: v
+          path_filter: src/,sql/,proto/,sdk-go/,monitors.json,Dockerfile,go.mod,go.sum
+          release_branches: main
+          default_bump: false
+          create_annotated_tag: true
+
+      - if: steps.hub.outputs.new_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.hub.outputs.new_tag }}
+          NOTES: ${{ steps.hub.outputs.changelog }}
+        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "$NOTES"
+
+      - id: sdk_go
+        uses: mathieudutour/github-tag-action@83c71bb5e316c2ffdea47a2c169498dfa9fc6afd # v7
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag_prefix: sdk-go/v
+          path_filter: sdk-go/,proto/
+          release_branches: main
+          default_bump: false
+          create_annotated_tag: true
+
+      - if: steps.sdk_go.outputs.new_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.sdk_go.outputs.new_tag }}
+          NOTES: ${{ steps.sdk_go.outputs.changelog }}
+        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "$NOTES"
+
+      - id: sdk_rust
+        uses: mathieudutour/github-tag-action@83c71bb5e316c2ffdea47a2c169498dfa9fc6afd # v7
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag_prefix: sdk-rust/v
+          path_filter: sdk-rust/,proto/
+          release_branches: main
+          default_bump: false
+          create_annotated_tag: true
+
+      - if: steps.sdk_rust.outputs.new_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.sdk_rust.outputs.new_tag }}
+          NOTES: ${{ steps.sdk_rust.outputs.changelog }}
+        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "$NOTES"
+
   image:
     name: Build and publish the image
-    needs: test
+    needs: [test, release]
+    if: ${{ !cancelled() && needs.test.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -145,6 +211,8 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ needs.release.outputs.version }},enable=${{ needs.release.outputs.version != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release.outputs.version }},enable=${{ needs.release.outputs.version != '' }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,priority=300
 
