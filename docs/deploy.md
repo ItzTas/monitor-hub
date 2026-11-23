@@ -174,16 +174,16 @@ The copy also holds the `anhanguera` block. Delete it from `.env` for now: "Add 
 - `DIARIO__DATABASE_URL`: diario-alerr keeps `DATABASE_URL` in its `.env`. The example in its repository is
   `postgres://diario_alerr:<password>@postgres:5432/diario_alerr?sslmode=disable`.
 
-Take the real user, password, host and database from the running stack's own compose file and `.env` on the host. A password with special characters must be percent-encoded in the URL. The host is `postgres` on the shared network and the container name for a bundled database. If the hub also joins the sei-monitor stack's network, use container names for all three URLs, the hub's `DATABASE_URL` included (see step 1).
+`ANHANGUERA__DATABASE_URL` is a new database, set up in "Add the anhanguera monitor", and the rules below apply to it too. Take the real user, password, host and database from the running stack's own compose file and `.env` on the host. A password with special characters must be percent-encoded in the URL. The host is `postgres` on the shared network and the container name for a bundled database. If the hub also joins the sei-monitor stack's network, use container names for all three URLs, the hub's `DATABASE_URL` included (see step 1).
 
-Both monitors are stricter about their database than the Go programs were. A URL and a role that worked for Go can fail here:
+All three monitors are stricter about their database than the Go programs were. A URL and a role that worked for Go can fail here:
 
 - The role must own the tables and the sequence the monitor reads: `alerts_seq_seq` for the gazette, `events_id_seq` for SEI. On its first start the gazette monitor applies a migration that alters a table, and every `Events` call of either monitor reads its sequence. This matters if a database was ever moved by dump and restore under another role.
-- Connect straight to Postgres. A pooler in transaction mode breaks the session lock each monitor holds, and both send an `options` start-up parameter that such a pooler refuses.
-- The URL must carry the role's password. Both monitors refuse a URL without one, or with an empty one, with `DATABASE_URL has no password: add the role's password to the URL`. If the database trusts the role without a password, put any password there; Postgres ignores it.
+- Connect straight to Postgres. A pooler in transaction mode breaks the session lock each monitor holds, and all three send an `options` start-up parameter that such a pooler refuses.
+- The URL must carry the role's password. All three monitors refuse a URL without one, or with an empty one, with `DATABASE_URL has no password: add the role's password to the URL`. If the database trusts the role without a password, put any password there; Postgres ignores it.
 - The monitors connect without TLS. `sslmode=disable`, `allow` and `prefer` work. `require`, `verify-ca` and `verify-full` fail at once.
-- Both refuse several hosts, a URL with no host, and any query key they do not know with `DATABASE_URL is not a valid Postgres address`, which never repeats the URL. diario also refuses the key=value form (`host=db user=diario`) and any scheme other than `postgres://` and `postgresql://`. The libpq keys that 2.1 accepted, such as `connect_timeout` and `keepalives`, are accepted and ignored.
-- An `idle_session_timeout` on the role no longer makes a monitor exit. The lock connection is queried every 0.5 s, and pool connections are tested before each use. A monitor still exits if its lock connection closes or stops answering (30 s for sei, 10 s for diario), so do not run `pg_terminate_backend` on it or put a firewall in between that cuts long connections. For sei, each restart logs in to SEI once, up to 12 times an hour.
+- All three refuse several hosts, a URL with no host, and any query key they do not know with `DATABASE_URL is not a valid Postgres address`, which never repeats the URL. diario and anhanguera also refuse the key=value form (`host=db user=diario`) and any scheme other than `postgres://` and `postgresql://`. The libpq keys that diario and sei 2.1 accepted, and anhanguera 0.1.0 too, such as `connect_timeout` and `keepalives`, are accepted and ignored.
+- An `idle_session_timeout` on the role no longer makes a monitor exit. The lock connection is queried every 0.5 s, and pool connections are tested before each use. A monitor still exits if its lock connection closes or stops answering (30 s for sei and anhanguera, 10 s for diario), so do not run `pg_terminate_backend` on it or put a firewall in between that cuts long connections. For sei, each restart logs in to SEI once, up to 12 times an hour. For anhanguera, each restart is one login to the portal.
 
 Check each role:
 
@@ -476,7 +476,9 @@ Finally open `http://hub.lan` if the proxy is set up.
 
 ## Add the anhanguera monitor
 
-The anhanguera monitor reads the Anhanguera student portal (AVA) and reports invoices, activity deadlines and calendar events. It is a third monitor next to `diario` and `sei`, and it starts on its own database. There is nothing to take over: it has no old service.
+The anhanguera monitor reads the Anhanguera student portal (AVA) and reports invoices, activity deadlines and calendar events. It is a third monitor next to `diario` and `sei`, and a new install starts on its own database. There is nothing to take over: it has no old service.
+
+If you already ran anhanguera 0.1.0 under an earlier hub, read "Upgrading from 0.1.0" in the README of the anhanguera-monitor repository before the first start of this version. The role needs `CREATE` on its schema and must own the `goose_db_version` table, and you should take a `pg_dump` first, because 0.1.0 cannot use the database once this version has run on it. Then skip "Create its database" and keep the existing role and database.
 
 Pull the image first (`docker compose pull`) and check that it carries the monitor:
 
@@ -484,7 +486,7 @@ Pull the image first (`docker compose pull`) and check that it carries the monit
 docker run --rm --entrypoint ls ghcr.io/itztas/monitor-hub:latest /opt/monitor-hub/monitors
 ```
 
-Check: the list shows `anhanguera`. If it does not, the image is older than the commit that added the monitor: skip this section and come back once the hub's CI has published a newer image. If you set `MONITOR_HUB_TAG`, use that tag instead of `latest`.
+Check: the list shows `anhanguera`. If you set `MONITOR_HUB_TAG`, use that tag instead of `latest`.
 
 ### Create its database
 
@@ -498,7 +500,7 @@ SQL
 docker exec -i <postgres-container> psql -U postgres -c '\l' | grep anhanguera_monitor
 ```
 
-Check: one line with `anhanguera_monitor` as owner. The monitor applies its migrations on first start. The rules from step 3, "The monitor database URLs", apply here too: connect straight to Postgres with no pooler in between, use `sslmode=disable` or `sslmode=prefer`, and leave `idle_session_timeout` at `0` for the role.
+Check: one line with `anhanguera_monitor` as owner. The monitor applies its migrations on first start. The rules from step 3, "The monitor database URLs", apply here too: connect straight to Postgres with no pooler in between, and use `sslmode=disable`, `allow` or `prefer`. The URL must carry the role's password: without one the monitor refuses it with `DATABASE_URL has no password: add the role's password to the URL`. It also refuses the key=value form and any scheme other than `postgres://` and `postgresql://`. `idle_session_timeout` on the role no longer needs to be `0`. The monitor stops when its lock connection closes or stays silent for 30 s, and each restart is one login to the portal, so do not run `pg_terminate_backend` on it.
 
 ### Set the variables
 
