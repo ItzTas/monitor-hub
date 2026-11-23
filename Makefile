@@ -1,8 +1,8 @@
 MODULES := . sdk-go
 
-.PHONY: check lint test generate generate-rust generate-python check-rust dockerfile dockerfile-check
+.PHONY: check lint test test-scripts generate generate-rust generate-python check-rust dockerfile dockerfile-check
 
-check: lint test
+check: lint test test-scripts
 
 lint:
 	test -z "$$(gofmt -l .)"
@@ -18,6 +18,9 @@ test:
 		echo "test $$m"; \
 		(cd $$m && go test -race -timeout 30m ./...) || exit 1; \
 	done
+
+test-scripts:
+	.github/scripts/release.test.sh
 
 generate:
 	go tool buf generate

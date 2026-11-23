@@ -132,13 +132,13 @@ jobs:
     permissions:
       contents: write
     outputs:
-      version: ${{ steps.hub.outputs.new_version }}
+      version: ${{ steps.hub.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - id: hub
+      - id: hub_next
         uses: mathieudutour/github-tag-action@83c71bb5e316c2ffdea47a2c169498dfa9fc6afd # v7
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -146,16 +146,19 @@ jobs:
           path_filter: src/,sql/,proto/,sdk-go/,monitors.json,Dockerfile,go.mod,go.sum
           release_branches: main
           default_bump: false
-          create_annotated_tag: true
+          dry_run: true
 
-      - if: steps.hub.outputs.new_tag != ''
+      - id: hub
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.hub.outputs.new_tag }}
-          NOTES: ${{ steps.hub.outputs.changelog }}
-        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "$NOTES"
+          TAG_PREFIX: v
+          RELEASE_TYPE: ${{ steps.hub_next.outputs.release_type }}
+          PREVIOUS_VERSION: ${{ steps.hub_next.outputs.previous_version }}
+          NEW_VERSION: ${{ steps.hub_next.outputs.new_version }}
+          CHANGELOG: ${{ steps.hub_next.outputs.changelog }}
+        run: .github/scripts/tag-release.sh
 
-      - id: sdk_go
+      - id: sdk_go_next
         uses: mathieudutour/github-tag-action@83c71bb5e316c2ffdea47a2c169498dfa9fc6afd # v7
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -163,16 +166,19 @@ jobs:
           path_filter: sdk-go/,proto/
           release_branches: main
           default_bump: false
-          create_annotated_tag: true
+          dry_run: true
 
-      - if: steps.sdk_go.outputs.new_tag != ''
+      - id: sdk_go
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.sdk_go.outputs.new_tag }}
-          NOTES: ${{ steps.sdk_go.outputs.changelog }}
-        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "$NOTES"
+          TAG_PREFIX: sdk-go/v
+          RELEASE_TYPE: ${{ steps.sdk_go_next.outputs.release_type }}
+          PREVIOUS_VERSION: ${{ steps.sdk_go_next.outputs.previous_version }}
+          NEW_VERSION: ${{ steps.sdk_go_next.outputs.new_version }}
+          CHANGELOG: ${{ steps.sdk_go_next.outputs.changelog }}
+        run: .github/scripts/tag-release.sh
 
-      - id: sdk_rust
+      - id: sdk_rust_next
         uses: mathieudutour/github-tag-action@83c71bb5e316c2ffdea47a2c169498dfa9fc6afd # v7
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -180,14 +186,17 @@ jobs:
           path_filter: sdk-rust/,proto/
           release_branches: main
           default_bump: false
-          create_annotated_tag: true
+          dry_run: true
 
-      - if: steps.sdk_rust.outputs.new_tag != ''
+      - id: sdk_rust
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.sdk_rust.outputs.new_tag }}
-          NOTES: ${{ steps.sdk_rust.outputs.changelog }}
-        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "$NOTES"
+          TAG_PREFIX: sdk-rust/v
+          RELEASE_TYPE: ${{ steps.sdk_rust_next.outputs.release_type }}
+          PREVIOUS_VERSION: ${{ steps.sdk_rust_next.outputs.previous_version }}
+          NEW_VERSION: ${{ steps.sdk_rust_next.outputs.new_version }}
+          CHANGELOG: ${{ steps.sdk_rust_next.outputs.changelog }}
+        run: .github/scripts/tag-release.sh
 
   image:
     name: Build and publish the image
