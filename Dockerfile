@@ -28,6 +28,7 @@ RUN apk add --no-cache ca-certificates poppler-utils \
 COPY --from=build /out/monitor-hub /usr/local/bin/monitor-hub
 COPY --from=ghcr.io/itztas/diario-alerr:2.3.0 /monitor/ /opt/monitor-hub/monitors/diario/
 COPY --from=ghcr.io/itztas/sei-monitor:2.3.0 /monitor/ /opt/monitor-hub/monitors/sei/
+COPY --from=ghcr.io/itztas/anhanguera-monitor:0.1.1 /monitor/ /opt/monitor-hub/monitors/anhanguera/
 RUN chmod -R a+rX /opt/monitor-hub/monitors
 
 USER 65532:65532

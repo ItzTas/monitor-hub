@@ -86,7 +86,13 @@ The Go images to pin:
 
 ### The images for the hub
 
-The hub image carries the monitors listed in `monitors.json` in the hub repository: `diario` from `ghcr.io/itztas/diario-alerr:2.3.0` and `sei` from `ghcr.io/itztas/sei-monitor:2.3.0`. Each `ghcr.io/itztas/monitor-hub` image built from that file holds both, under `/opt/monitor-hub/monitors/diario/` and `/opt/monitor-hub/monitors/sei/`.
+The hub image carries the monitors listed in `monitors.json` in the hub repository:
+
+- `diario` from `ghcr.io/itztas/diario-alerr:2.3.0`, under `/opt/monitor-hub/monitors/diario/`;
+- `sei` from `ghcr.io/itztas/sei-monitor:2.3.0`, under `/opt/monitor-hub/monitors/sei/`;
+- `anhanguera` from `ghcr.io/itztas/anhanguera-monitor:0.1.1`, under `/opt/monitor-hub/monitors/anhanguera/`.
+
+Each `ghcr.io/itztas/monitor-hub` image built from that file holds all three.
 
 CI tags releases from Conventional Commits on every push to `main`, in three separate streams: `vX.Y.Z` for the hub image, `sdk-go/vX.Y.Z` for the Go SDK and `sdk-rust/vX.Y.Z` for the Rust SDK. Each stream looks only at commits that touch its own files, so an SDK-only commit does not release the hub. A `feat` is a minor release and `fix` and `perf` are patches. A breaking change (`!` or a `BREAKING CHANGE:` footer) is a major release, except while a stream is still in 0.x: there it bumps the minor, so `v0.1.0` becomes `v0.2.0`. The project is not in production yet, so `v1.0.0` comes only when the owner decides. Other types, such as `docs`, `chore`, `ci` and `test`, release nothing. Every tag gets a GitHub Release with its changelog. A tag pushed with `GITHUB_TOKEN` starts no new run, so the image is built in the same run that created the hub tag and gets the `X.Y.Z` and `X.Y` tags. SDK tags build no image. A `v*` tag pushed by hand still publishes its version tags.
 
@@ -97,7 +103,7 @@ docker compose pull
 docker run --rm --entrypoint ls ghcr.io/itztas/monitor-hub:latest /opt/monitor-hub/monitors
 ```
 
-Check: the list shows both `diario` and `sei`. If `ls` cannot find `/opt/monitor-hub/monitors`, or `sei` is missing, the image is too old: stop here, leave both old stacks running, and pull again after the hub's CI has published a newer image. Step 4 stops sei-monitor too, and nothing in an image without `sei` would replace it, so SEI would go unwatched. If you set `MONITOR_HUB_TAG`, use that tag in the command instead of `latest`.
+Check: the list shows `diario`, `sei` and `anhanguera`. If `ls` cannot find `/opt/monitor-hub/monitors`, or `sei` is missing, the image is too old: stop here, leave both old stacks running, and pull again after the hub's CI has published a newer image. Step 4 stops sei-monitor too, and nothing in an image without `sei` would replace it, so SEI would go unwatched. If you set `MONITOR_HUB_TAG`, use that tag in the command instead of `latest`.
 
 ### Where the databases are
 
