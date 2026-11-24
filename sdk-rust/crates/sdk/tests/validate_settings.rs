@@ -5,6 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use monitor_hub_sdk::settings::VALIDATE_SETTINGS_ARG;
+use monitor_hub_sdk_testkit::settings::command_with_document;
 
 #[path = "support/example.rs"]
 mod example;
@@ -16,10 +17,16 @@ fn monitor_dir() -> PathBuf {
 }
 
 fn validate(vars: &[(&str, &str)]) -> Output {
-    let child = Command::new(example::fixed())
+    let mut command = Command::new(example::fixed());
+    command
         .arg(VALIDATE_SETTINGS_ARG)
         .env_clear()
-        .envs(vars.iter().copied())
+        .envs(vars.iter().copied());
+    run(command)
+}
+
+fn run(mut command: Command) -> Output {
+    let child = command
         .current_dir(monitor_dir())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -31,13 +38,14 @@ fn validate(vars: &[(&str, &str)]) -> Output {
     thread::spawn(move || {
         let _ = sender.send(child.wait_with_output());
     });
-    let Ok(output) = receiver.recv_timeout(EXIT_TIMEOUT) else {
-        let _ = Command::new("kill")
-            .args(["-s", "KILL", "--", &id.to_string()])
-            .status();
-        panic!("validate-settings did not exit within {EXIT_TIMEOUT:?}");
-    };
-    output.expect("wait for example monitor")
+    if let Ok(output) = receiver.recv_timeout(EXIT_TIMEOUT) {
+        return output.expect("wait for example monitor");
+    }
+    let _ = Command::new("kill")
+        .args(["-s", "KILL", "--", &id.to_string()])
+        .status();
+    let _ = receiver.recv();
+    panic!("validate-settings did not exit within {EXIT_TIMEOUT:?}");
 }
 
 #[test]
@@ -58,6 +66,17 @@ fn every_problem_is_listed_at_once() {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
         concat!(
+            r#"{"problems":[{"path":"events","message":"EVENTS is not an integer (\"x\")"}]}"#,
+            "\n"
+        )
+    );
+    assert_eq!(output.status.code(), Some(1));
+
+    let output = validate(&[("EVENTS", "-1"), ("LOG_DEMO", "2")]);
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        concat!(
             r#"{"problems":[{"path":"events","message":"use a whole number of 0 or more"},"#,
             r#"{"path":"log_demo","message":"use 0 or 1"}]}"#,
             "\n"
@@ -69,14 +88,16 @@ fn every_problem_is_listed_at_once() {
 #[test]
 fn each_setting_accepts_only_its_values() {
     let events = "use a whole number of 0 or more";
+    let padded = r#"EVENTS is not an integer (\" 5\")"#;
+    let fraction = r#"EVENTS is not an integer (\"1.5\")"#;
     let switch = "use 0 or 1";
     let cases = [
         ("EVENTS", "events", "", None),
         ("EVENTS", "events", "0", None),
         ("EVENTS", "events", "42", None),
         ("EVENTS", "events", "-1", Some(events)),
-        ("EVENTS", "events", " 5", Some(events)),
-        ("EVENTS", "events", "1.5", Some(events)),
+        ("EVENTS", "events", " 5", Some(padded)),
+        ("EVENTS", "events", "1.5", Some(fraction)),
         ("LOG_DEMO", "log_demo", "", None),
         ("LOG_DEMO", "log_demo", "0", None),
         ("LOG_DEMO", "log_demo", "1", None),
@@ -105,4 +126,26 @@ fn each_setting_accepts_only_its_values() {
         );
         assert_eq!(output.status.code(), Some(code), "{variable}={value:?}");
     }
+}
+
+#[test]
+fn a_document_on_the_descriptor_wins_over_the_environment() {
+    let mut document = command_with_document(
+        example::fixed(),
+        &[VALIDATE_SETTINGS_ARG],
+        br#"{"events": -1}"#,
+    )
+    .expect("write the document");
+    document.command.env("EVENTS", "5");
+
+    let output = run(document.command);
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        concat!(
+            r#"{"problems":[{"path":"events","message":"use a whole number of 0 or more"}]}"#,
+            "\n"
+        )
+    );
+    assert_eq!(output.status.code(), Some(1));
 }

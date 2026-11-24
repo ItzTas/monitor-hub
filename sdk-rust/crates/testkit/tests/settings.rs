@@ -2,11 +2,16 @@ use std::env;
 use std::fs::{self, Permissions};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
-use monitor_hub_sdk_testkit::settings::check;
+use monitor_hub_sdk_testkit::settings::{
+    assert_no_drift, check, command_with_document, full_document, undeclared_documents,
+};
+use serde::Deserialize;
+use serde_json::json;
 use tempfile::TempDir;
 
 #[path = "../../sdk/tests/support/example.rs"]
@@ -20,6 +25,14 @@ const API_SETTINGS: &str =
     r#"{"settings_version":2,"fields":[{"name":"api_url","label":"API","type":"string"}]}"#;
 const CLEAN_ENVIRONMENT: &str =
     r#"[ -z "${CARGO_MANIFEST_DIR:-}" ] && [ -f settings.json ] || exit 3; echo '{"problems":[]}'"#;
+const FIXED_SETTINGS: &str = include_str!("../../sdk/examples/fixed-monitor/settings.json");
+const RULES_SETTINGS: &str = r#"{"settings_version": 2, "fields": [
+  {"name": "rules", "label": "Notification rules", "type": "list",
+   "items": {"type": "object", "fields": [
+     {"name": "process", "label": "Process number (regular expression)", "type": "string", "required": true},
+     {"name": "actions", "label": "Actions", "type": "list", "items": {"type": "choice", "options": ["urgent", "ignore"]}}
+   ]}}
+]}"#;
 const VALIDATOR: &str = "validator";
 const BOUND: Duration = Duration::from_secs(10);
 
@@ -123,6 +136,194 @@ fn the_fixed_example_passes() {
         check(fixed_monitor_dir(), example::fixed()),
         Vec::<String>::new()
     );
+}
+
+// The tests only check whether serde reads a document, so nothing reads these fields.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FixedLike {
+    #[serde(rename = "events")]
+    _events: i64,
+    #[serde(rename = "log_demo")]
+    _log_demo: String,
+    #[serde(rename = "panic_demo")]
+    _panic_demo: String,
+}
+
+#[derive(Deserialize)]
+struct Lenient {
+    #[serde(rename = "events")]
+    _events: i64,
+    #[serde(rename = "log_demo")]
+    _log_demo: String,
+    #[serde(rename = "panic_demo")]
+    _panic_demo: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WithoutPanicDemo {
+    #[serde(rename = "events")]
+    _events: i64,
+    #[serde(rename = "log_demo")]
+    _log_demo: String,
+}
+
+#[test]
+fn the_fixed_example_has_no_drift() {
+    assert_no_drift::<FixedLike>(FIXED_SETTINGS);
+}
+
+#[test]
+#[should_panic(expected = "the configuration accepts an undeclared field at undeclared")]
+fn drift_names_the_path() {
+    assert_no_drift::<Lenient>(FIXED_SETTINGS);
+}
+
+#[test]
+#[should_panic(expected = "the configuration refuses a document with every declared field: ")]
+fn a_declared_field_the_code_lacks_is_drift() {
+    assert_no_drift::<WithoutPanicDemo>(FIXED_SETTINGS);
+}
+
+#[test]
+#[should_panic(expected = "settings.json is not valid: missing field `fields`")]
+fn a_declaration_that_does_not_parse_panics_with_its_cause() {
+    full_document(r#"{"settings_version": 2}"#);
+}
+
+#[test]
+fn full_documents_cover_every_level() {
+    assert_eq!(
+        full_document(RULES_SETTINGS),
+        json!({"rules": [{"process": "x", "actions": ["urgent"]}]})
+    );
+}
+
+#[test]
+fn full_documents_take_the_default_or_a_value_of_the_type() {
+    let settings = r#"{"settings_version": 2, "fields": [
+      {"name": "url", "label": "URL", "type": "string"},
+      {"name": "interval", "label": "Interval", "type": "duration"},
+      {"name": "count", "label": "Count", "type": "integer"},
+      {"name": "ratio", "label": "Ratio", "type": "number"},
+      {"name": "verbose", "label": "Verbose", "type": "boolean"},
+      {"name": "mode", "label": "Mode", "type": "choice", "options": ["fast", "slow"]},
+      {"name": "retries", "label": "Retries", "type": "integer", "default": 3},
+      {"name": "units", "label": "Units", "type": "list", "items": {"type": "string"}, "default": ["SEPLAN", "SEAD"]},
+      {"name": "limits", "label": "Limits", "type": "object", "fields": [
+        {"name": "burst", "label": "Burst", "type": "number"},
+        {"name": "per_hour", "label": "Per hour", "type": "integer", "default": 10}
+      ]}
+    ]}"#;
+
+    assert_eq!(
+        full_document(settings),
+        json!({
+            "url": "x",
+            "interval": "1m",
+            "count": 1,
+            "ratio": 1.5,
+            "verbose": true,
+            "mode": "fast",
+            "retries": 3,
+            "units": ["SEPLAN", "SEAD"],
+            "limits": {"burst": 1.5, "per_hour": 10}
+        })
+    );
+}
+
+#[test]
+fn undeclared_documents_reach_every_object() {
+    assert_eq!(
+        undeclared_documents(RULES_SETTINGS),
+        [
+            (
+                "undeclared".to_owned(),
+                json!({"rules": [{"process": "x", "actions": ["urgent"]}], "undeclared": "x"}),
+            ),
+            (
+                "rules[0].undeclared".to_owned(),
+                json!({"rules": [{"process": "x", "actions": ["urgent"], "undeclared": "x"}]}),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn the_undeclared_key_differs_from_every_declared_name() {
+    let settings = r#"{"settings_version": 2, "fields": [
+      {"name": "undeclared", "label": "Undeclared", "type": "boolean"},
+      {"name": "limits", "label": "Limits", "type": "object", "fields": [
+        {"name": "undeclared", "label": "Undeclared", "type": "string"},
+        {"name": "undeclared_", "label": "Undeclared", "type": "string"}
+      ]}
+    ]}"#;
+
+    let paths: Vec<String> = undeclared_documents(settings)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+
+    assert_eq!(paths, ["undeclared_", "limits.undeclared__"]);
+}
+
+#[test]
+fn a_document_reaches_the_program_on_descriptor_3() {
+    assert!(
+        env::var_os("CARGO_MANIFEST_DIR").is_some(),
+        "cargo test sets CARGO_MANIFEST_DIR"
+    );
+    let (output, file) = {
+        let mut document = command_with_document(
+            "/bin/sh",
+            &[
+                "-c",
+                r#"read -r line <&3; printf '%s %s %s %s' "$line" "$MONITOR_HUB_CONFIG_FD" "${ADDED-unset}" "${CARGO_MANIFEST_DIR-unset}""#,
+            ],
+            br#"{"a":1}"#,
+        )
+        .expect("write the document");
+        let file = PathBuf::from(
+            document
+                .command
+                .get_args()
+                .nth(2)
+                .expect("the file follows the script"),
+        );
+        assert!(file.is_file(), "{} is not a file", file.display());
+        document.command.env("ADDED", "a");
+        (output_within(document.command, BOUND), file)
+    };
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        r#"{"a":1} 3 a unset"#
+    );
+    assert!(output.status.success(), "{}", output.status);
+    assert!(!file.exists(), "{} is still there", file.display());
+}
+
+fn output_within(mut command: Command, limit: Duration) -> Output {
+    let child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start the program");
+    let id = child.id();
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(child.wait_with_output());
+    });
+    if let Ok(output) = receiver.recv_timeout(limit) {
+        return output.expect("wait for the program");
+    }
+    let _ = Command::new("kill")
+        .args(["-s", "KILL", "--", &id.to_string()])
+        .status();
+    let _ = receiver.recv();
+    panic!("the program did not exit within {limit:?}");
 }
 
 #[test]
