@@ -444,7 +444,7 @@ A field's value comes from the settings page first, then from the `.env` variabl
 - A missing object is built from the defaults of its fields. It goes into the document if it ends up with at least one key.
 - An object, or an item of a list of objects, that lacks a field with a `default` gets that default.
 - A secret field never has a default.
-- Any other value stays as it is, including `null` and a value of the wrong type, and the monitor refuses it.
+- Any other value stays as it is, including `null` and a value of the wrong type, and the monitor refuses it. Deserializers such as serde quote the refused value in their errors, so a monitor never passes that text on.
 
 Without a descriptor, when `MONITOR_HUB_CONFIG_FD` is unset or empty, the monitor builds the same document from its environment through the [env bridge](#the-env-bridge), and applies the defaults the same way. That is how a monitor runs by hand, in tests, under the conformance command and under the hub in this release. `monitor_hub_sdk::config::load` does both; see [`sdk-rust/README.md`](../sdk-rust/README.md).
 

@@ -362,7 +362,9 @@ struct Config {
 fn read_config() -> Result<Config, Vec<Problem>> {
     let document = config::load(include_str!("../settings.json")).map_err(|err| err.problems())?;
     let config: Config = serde_json::from_value(Value::Object(document))
-        .map_err(|err| vec![Problem::new("", err.to_string())])?;
+        .map_err(|_| {
+            vec![Problem::new("", "the configuration does not fit the monitor's configuration type")]
+        })?;
     if config.watch_terms.is_empty() {
         return Err(vec![Problem::new("watch_terms", "set at least one term")]);
     }
@@ -427,7 +429,7 @@ The steps of `load` are public too. `from_descriptor(settings, fd)` reads a docu
 
 `settings::answer(problems)` writes `{"problems":[...]}` and a newline on stdout, flushes it, and returns the exit code: `0` when the list is empty, `1` when it is not, and `2` when stdout cannot be written. Write nothing else on stdout. `write_answer(out, problems)` does the same into any `Write` and returns the code as a `u8`. `VALIDATE_SETTINGS_LIMIT` (5 seconds) and `ANSWER_LIMIT` (65536 bytes) hold the protocol's limits.
 
-`Problem::new(path, message)` builds one problem. `path` names the value it is about, such as `watch_terms` or `rules[2].process`, or is `""` for a problem with several fields together or with the whole document. Collect every problem before you answer, and never put the value of a secret field in a message.
+`Problem::new(path, message)` builds one problem. `path` names the value it is about, such as `watch_terms` or `rules[2].process`, or is `""` for a problem with several fields together or with the whole document. Collect every problem before you answer, and never put the value of a secret field in a message. Errors from `serde` quote the value they refused, so never pass them on. The example above answers with a fixed message instead.
 
 ### Reading the file
 
