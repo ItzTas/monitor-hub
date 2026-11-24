@@ -1,30 +1,8 @@
 {
-  "settings_version": 1,
+  "settings_version": 2,
   "fields": [
-    {
-      "name": "EVENTS",
-      "label": "Events",
-      "help": "How many fixed events the example reports.",
-      "type": "integer",
-      "default": "0"
-    },
-    {
-      "name": "LOG_DEMO",
-      "label": "Log demo",
-      "help": "Set to 1 to write one log line at each level on start.",
-      "type": "choice",
-      "options": ["0", "1"],
-      "default": "0",
-      "group": "Demos"
-    },
-    {
-      "name": "PANIC_DEMO",
-      "label": "Panic demo",
-      "help": "Set to 1 to panic on start.",
-      "type": "choice",
-      "options": ["0", "1"],
-      "default": "0",
-      "group": "Demos"
-    }
+    {"name": "events", "label": "Events", "help": "How many fixed events the example reports.", "type": "integer", "default": 0, "env": "EVENTS"},
+    {"name": "log_demo", "label": "Log demo", "help": "Set to 1 to write one log line at each level on start.", "type": "choice", "options": ["0", "1"], "default": "0", "group": "Demos", "env": "LOG_DEMO"},
+    {"name": "panic_demo", "label": "Panic demo", "help": "Set to 1 to panic on start.", "type": "choice", "options": ["0", "1"], "default": "0", "group": "Demos", "env": "PANIC_DEMO"}
   ]
 }

@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	defaultSettings = `{"settings_version":1,"fields":[{"name":"EVENTS","label":"Events","type":"integer"}]}`
-	badSettings     = `{"settings_version":1,"fields":[{"name":"events","label":"Events","type":"integer"}]}`
-	badSettingsLine = `settings.json: fields[0]: name "events" does not match ^[A-Z][A-Z0-9_]*$`
+	defaultSettings = `{"settings_version":2,"fields":[{"name":"events","label":"Events","type":"integer","env":"EVENTS"}]}`
+	badSettings     = `{"settings_version":2,"fields":[{"name":"Events","label":"Events","type":"integer","env":"EVENTS"}]}`
+	badSettingsLine = `settings.json: fields[0]: name "Events" does not match ^[a-z][a-z0-9_]*$`
 )
 
 func conformance(t *testing.T, args ...string) (int, string, string) {
@@ -120,7 +120,7 @@ func settingsArgs(dir string) []string {
 
 func TestConformanceChecksSettings(t *testing.T) {
 	t.Setenv("LEAK", "x")
-	for name, mode := range map[string]string{"default mode": "", "problems": "problems"} {
+	for name, mode := range map[string]string{"default mode": "", "problems": "problems", "version-1": "version-1"} {
 		t.Run(name, func(t *testing.T) {
 			code, stdout, stderr := conformance(t, settingsArgs(monitorDir(t, "", mode))...)
 			if code != 0 {
@@ -171,7 +171,7 @@ func TestConformanceReportsValidatorViolations(t *testing.T) {
 		"empty-message":            {want: "validate-settings answer is invalid: problem 0 has an empty message"},
 		"mismatch":                 {want: "validate-settings exited with code 0 but listed problems"},
 		"unlisted":                 {want: "validate-settings exited with code 1 but listed no problems"},
-		"undeclared":               {want: `validate-settings answer is invalid: problem 2 names "NOT_DECLARED", which settings.json does not declare`},
+		"undeclared":               {want: `validate-settings answer is invalid: problem 2 names the path "nope[0]", which settings.json does not declare`},
 		"undeclared-0":             {want: "validate-settings exited with code 0 but listed problems"},
 		"undeclared-empty-message": {want: "validate-settings answer is invalid: problem 1 has an empty message"},
 	}
@@ -245,6 +245,12 @@ func TestConformanceReportsSettingsFileViolations(t *testing.T) {
 				return monitorDir(t, badSettings, "")
 			},
 			want: badSettingsLine,
+		},
+		"settings_version 1": {
+			dir: func(t *testing.T) string {
+				return monitorDir(t, `{"settings_version":1,"fields":[{"name":"EVENTS","label":"Events","type":"integer"}]}`, "")
+			},
+			want: "settings.json: settings_version is 1, want 2",
 		},
 		"unreadable": {
 			dir: func(t *testing.T) string {

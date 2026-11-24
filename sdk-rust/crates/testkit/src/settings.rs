@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs;
 use std::iter;
@@ -8,7 +7,7 @@ use std::process::{Command, ExitStatus};
 
 use monitor_hub_sdk::settings::{
     ANSWER_LIMIT, Answer, SETTINGS_FILE, Settings, VALIDATE_SETTINGS_ARG, VALIDATE_SETTINGS_LIMIT,
-    is_reserved, parse,
+    parse,
 };
 use serde_json::Value;
 
@@ -17,50 +16,8 @@ use crate::process::{Failure, Finished, Keep, execute};
 pub fn check(dir: impl AsRef<Path>, program: impl AsRef<Path>) -> Vec<String> {
     let dir = dir.as_ref();
     let settings = read_settings(dir);
-    let declared: Option<BTreeSet<&str>> = settings.as_ref().ok().map(|settings| {
-        settings
-            .fields
-            .iter()
-            .map(|field| field.name.as_str())
-            .collect()
-    });
-    let validator = validator_violation(dir, program.as_ref(), declared.as_ref());
+    let validator = validator_violation(dir, program.as_ref(), settings.as_ref().ok());
     settings.err().into_iter().chain(validator).collect()
-}
-
-#[track_caller]
-pub fn assert_no_drift(settings_json: &str, read: &[&str]) {
-    let settings = match parse(settings_json.as_bytes()) {
-        Ok(settings) => settings,
-        Err(err) => panic!("{}", chain(&err)),
-    };
-    let declared: BTreeSet<&str> = settings
-        .fields
-        .iter()
-        .map(|field| field.name.as_str())
-        .collect();
-    let read: BTreeSet<&str> = read
-        .iter()
-        .copied()
-        .filter(|name| !is_reserved(name))
-        .collect();
-    let sides = [
-        ("read but not declared", read.difference(&declared)),
-        ("declared but not read", declared.difference(&read)),
-    ];
-    let lines: Vec<String> = sides
-        .into_iter()
-        .map(|(side, names)| (side, names.copied().collect::<Vec<_>>()))
-        .filter(|(_, names)| !names.is_empty())
-        .map(|(side, names)| format!("\n  {side}: {}", names.join(", ")))
-        .collect();
-    if lines.is_empty() {
-        return;
-    }
-    panic!(
-        "{SETTINGS_FILE} and the configuration disagree:{}",
-        lines.concat()
-    );
 }
 
 fn chain(err: &(dyn Error + 'static)) -> String {
@@ -77,11 +34,7 @@ fn read_settings(dir: &Path) -> Result<Settings, String> {
     parse(&json).map_err(|err| chain(&err))
 }
 
-fn validator_violation(
-    dir: &Path,
-    program: &Path,
-    declared: Option<&BTreeSet<&str>>,
-) -> Option<String> {
+fn validator_violation(dir: &Path, program: &Path, settings: Option<&Settings>) -> Option<String> {
     let not_started = "validate-settings could not be started";
     let program = match path::absolute(program) {
         Ok(program) => program,
@@ -99,7 +52,7 @@ fn validator_violation(
         .env_clear()
         .current_dir(dir);
     match execute(&mut command, VALIDATE_SETTINGS_LIMIT, Keep::Nothing) {
-        Ok(finished) => answer_violation(&finished, declared).err(),
+        Ok(finished) => answer_violation(&finished, settings).err(),
         Err(Failure::Timeout(_)) => Some(format!(
             "validate-settings did not finish within {}s",
             VALIDATE_SETTINGS_LIMIT.as_secs()
@@ -108,7 +61,7 @@ fn validator_violation(
     }
 }
 
-fn answer_violation(finished: &Finished, declared: Option<&BTreeSet<&str>>) -> Result<(), String> {
+fn answer_violation(finished: &Finished, settings: Option<&Settings>) -> Result<(), String> {
     let code = exit_code(finished.status)?;
     let stdout = finished.stdout.as_slice();
     if stdout.len() > ANSWER_LIMIT {
@@ -132,24 +85,25 @@ fn answer_violation(finished: &Finished, declared: Option<&BTreeSet<&str>>) -> R
     match (code, answer.problems.is_empty()) {
         (0, false) => Err("validate-settings exited with code 0 but listed problems".to_owned()),
         (1, true) => Err("validate-settings exited with code 1 but listed no problems".to_owned()),
-        _ => undeclared_violation(&answer, declared),
+        _ => undeclared_violation(&answer, settings),
     }
 }
 
-fn undeclared_violation(answer: &Answer, declared: Option<&BTreeSet<&str>>) -> Result<(), String> {
-    let Some(declared) = declared else {
+fn undeclared_violation(answer: &Answer, settings: Option<&Settings>) -> Result<(), String> {
+    let Some(settings) = settings else {
         return Ok(());
     };
-    let Some((index, problem)) =
-        answer.problems.iter().enumerate().find(|(_, problem)| {
-            !problem.name.is_empty() && !declared.contains(problem.name.as_str())
-        })
+    let Some((index, problem)) = answer
+        .problems
+        .iter()
+        .enumerate()
+        .find(|(_, problem)| !settings.declares(&problem.path))
     else {
         return Ok(());
     };
     Err(format!(
-        "validate-settings answer is invalid: problem {index} names {:?}, which {SETTINGS_FILE} does not declare",
-        problem.name
+        "validate-settings answer is invalid: problem {index} names the path {:?}, which {SETTINGS_FILE} does not declare",
+        problem.path
     ))
 }
 

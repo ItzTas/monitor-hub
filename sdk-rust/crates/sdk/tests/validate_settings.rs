@@ -58,8 +58,8 @@ fn every_problem_is_listed_at_once() {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
         concat!(
-            r#"{"problems":[{"name":"EVENTS","message":"use a whole number of 0 or more"},"#,
-            r#"{"name":"LOG_DEMO","message":"use 0 or 1"}]}"#,
+            r#"{"problems":[{"path":"events","message":"use a whole number of 0 or more"},"#,
+            r#"{"path":"log_demo","message":"use 0 or 1"}]}"#,
             "\n"
         )
     );
@@ -71,38 +71,38 @@ fn each_setting_accepts_only_its_values() {
     let events = "use a whole number of 0 or more";
     let switch = "use 0 or 1";
     let cases = [
-        ("EVENTS", "", None),
-        ("EVENTS", "0", None),
-        ("EVENTS", "42", None),
-        ("EVENTS", "-1", Some(events)),
-        ("EVENTS", " 5", Some(events)),
-        ("EVENTS", "1.5", Some(events)),
-        ("LOG_DEMO", "", None),
-        ("LOG_DEMO", "0", None),
-        ("LOG_DEMO", "1", None),
-        ("LOG_DEMO", "yes", Some(switch)),
-        ("PANIC_DEMO", "", None),
-        ("PANIC_DEMO", "0", None),
-        ("PANIC_DEMO", "1", None),
-        ("PANIC_DEMO", "2", Some(switch)),
+        ("EVENTS", "events", "", None),
+        ("EVENTS", "events", "0", None),
+        ("EVENTS", "events", "42", None),
+        ("EVENTS", "events", "-1", Some(events)),
+        ("EVENTS", "events", " 5", Some(events)),
+        ("EVENTS", "events", "1.5", Some(events)),
+        ("LOG_DEMO", "log_demo", "", None),
+        ("LOG_DEMO", "log_demo", "0", None),
+        ("LOG_DEMO", "log_demo", "1", None),
+        ("LOG_DEMO", "log_demo", "yes", Some(switch)),
+        ("PANIC_DEMO", "panic_demo", "", None),
+        ("PANIC_DEMO", "panic_demo", "0", None),
+        ("PANIC_DEMO", "panic_demo", "1", None),
+        ("PANIC_DEMO", "panic_demo", "2", Some(switch)),
     ];
 
-    for (name, value, want) in cases {
+    for (variable, path, value, want) in cases {
         let (stdout, code) = match want {
             None => ("{\"problems\":[]}\n".to_owned(), 0),
             Some(message) => (
-                format!("{{\"problems\":[{{\"name\":\"{name}\",\"message\":\"{message}\"}}]}}\n"),
+                format!("{{\"problems\":[{{\"path\":\"{path}\",\"message\":\"{message}\"}}]}}\n"),
                 1,
             ),
         };
 
-        let output = validate(&[(name, value)]);
+        let output = validate(&[(variable, value)]);
 
         assert_eq!(
             String::from_utf8_lossy(&output.stdout),
             stdout,
-            "{name}={value:?}"
+            "{variable}={value:?}"
         );
-        assert_eq!(output.status.code(), Some(code), "{name}={value:?}");
+        assert_eq!(output.status.code(), Some(code), "{variable}={value:?}");
     }
 }

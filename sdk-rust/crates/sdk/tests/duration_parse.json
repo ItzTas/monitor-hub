@@ -1,0 +1,172 @@
+{
+  "parse": [
+    {
+      "input": "0",
+      "nanoseconds": 0
+    },
+    {
+      "input": "15m",
+      "nanoseconds": 900000000000
+    },
+    {
+      "input": "1h30m",
+      "nanoseconds": 5400000000000
+    },
+    {
+      "input": "90s",
+      "nanoseconds": 90000000000
+    },
+    {
+      "input": "1.5h",
+      "nanoseconds": 5400000000000
+    },
+    {
+      "input": ".5h",
+      "nanoseconds": 1800000000000
+    },
+    {
+      "input": "5.",
+      "nanoseconds": null
+    },
+    {
+      "input": "300s",
+      "nanoseconds": 300000000000
+    },
+    {
+      "input": "1m30.5s",
+      "nanoseconds": 90500000000
+    },
+    {
+      "input": "1ns",
+      "nanoseconds": 1
+    },
+    {
+      "input": "1us",
+      "nanoseconds": 1000
+    },
+    {
+      "input": "1µs",
+      "nanoseconds": 1000
+    },
+    {
+      "input": "1μs",
+      "nanoseconds": 1000
+    },
+    {
+      "input": "1ms",
+      "nanoseconds": 1000000
+    },
+    {
+      "input": "-5m",
+      "nanoseconds": -300000000000
+    },
+    {
+      "input": "+5m",
+      "nanoseconds": 300000000000
+    },
+    {
+      "input": "5",
+      "nanoseconds": null
+    },
+    {
+      "input": "",
+      "nanoseconds": null
+    },
+    {
+      "input": "5x",
+      "nanoseconds": null
+    },
+    {
+      "input": "5M",
+      "nanoseconds": null
+    },
+    {
+      "input": "1h 30m",
+      "nanoseconds": null
+    },
+    {
+      "input": "9223372036854775807ns",
+      "nanoseconds": 9223372036854775807
+    },
+    {
+      "input": "9223372036854775808ns",
+      "nanoseconds": null
+    },
+    {
+      "input": "2562047h",
+      "nanoseconds": 9223369200000000000
+    },
+    {
+      "input": "2562048h",
+      "nanoseconds": null
+    },
+    {
+      "input": "0.0000000001s",
+      "nanoseconds": 0
+    },
+    {
+      "input": "1e3s",
+      "nanoseconds": null
+    },
+    {
+      "input": "-0",
+      "nanoseconds": 0
+    },
+    {
+      "input": "+0",
+      "nanoseconds": 0
+    },
+    {
+      "input": "0s",
+      "nanoseconds": 0
+    },
+    {
+      "input": ".",
+      "nanoseconds": null
+    },
+    {
+      "input": ".s",
+      "nanoseconds": null
+    },
+    {
+      "input": "1h1h",
+      "nanoseconds": 7200000000000
+    },
+    {
+      "input": "1h-5m",
+      "nanoseconds": null
+    },
+    {
+      "input": "−5m",
+      "nanoseconds": null
+    },
+    {
+      "input": "１m",
+      "nanoseconds": null
+    },
+    {
+      "input": "1.0000000009s",
+      "nanoseconds": 1000000000
+    },
+    {
+      "input": "-9223372036854775808ns",
+      "nanoseconds": -9223372036854775808
+    },
+    {
+      "input": "-9223372036854775809ns",
+      "nanoseconds": null
+    },
+    {
+      "input": "4m59.999999999s",
+      "nanoseconds": 299999999999
+    },
+    {
+      "input": " 5m",
+      "nanoseconds": null
+    },
+    {
+      "input": "5m ",
+      "nanoseconds": null
+    }
+  ]
+}

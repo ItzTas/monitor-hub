@@ -1,254 +1,260 @@
 use std::error::Error;
+use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 
 use monitor_hub_sdk::settings::{
-    Answer, FieldProblem, FieldType, Problem, Settings, SettingsError, is_reserved, parse,
+    Answer, FieldProblem, FieldType, Problem, SettingsError, is_reserved, parse, parse_duration,
     write_answer,
 };
+use serde::Deserialize;
+use serde_json::{Value, json};
 
 const DESIGN_EXAMPLE: &str = r#"{
-  "settings_version": 1,
+  "settings_version": 2,
   "fields": [
-    {
-      "name": "WATCH_TERMS",
-      "label": "Watch terms",
-      "help": "Names or registration numbers to look for in each edition, separated by commas.",
-      "type": "list",
-      "required": true
-    },
-    {
-      "name": "CHECK_INTERVAL_MINUTES",
-      "label": "Check interval (minutes)",
-      "type": "number",
-      "default": "30"
-    },
-    {
-      "name": "DATABASE_URL",
-      "label": "Database address",
-      "type": "string",
-      "secret": true,
-      "required": true
-    }
+    {"name": "sei_url", "label": "SEI address", "type": "string", "required": true, "env": "SEI_URL"},
+    {"name": "password", "label": "SEI password", "type": "string", "secret": true, "env": "SEI_PASSWORD",
+     "help": "Saving restarts the monitor, and with a valid password that is one login to SEI."},
+    {"name": "units", "label": "Units", "type": "list", "items": {"type": "string"}, "env": "SEI_UNITS"},
+    {"name": "poll_interval", "label": "Check interval", "type": "duration", "default": "15m", "env": "POLL_INTERVAL"},
+    {"name": "password_command", "label": "Password command", "type": "string", "secret": true,
+     "editable": false, "reason": "It makes the monitor run a program inside the hub's container.",
+     "env": "SEI_PASSWORD_CMD"}
   ]
 }"#;
 
-type StructuralCase = (&'static str, Vec<u8>, Box<dyn Fn(&SettingsError) -> bool>);
+const OK_FIELD: &str = r#"{"name":"ok","label":"OK","type":"string"}"#;
 
-fn field(name: &str) -> String {
-    format!(r#"{{"name":"{name}","label":"L","type":"string"}}"#)
-}
+// A field written as a list, with every attribute in declaration order.
+const LISTED_FIELD: &str =
+    r#"["x","X",null,"string",false,false,null,null,null,true,null,null,null,null]"#;
 
-fn document(fields: &[String]) -> String {
+fn document(fields: &[&str]) -> String {
     format!(
-        r#"{{"settings_version":1,"fields":[{}]}}"#,
+        r#"{{"settings_version":2,"fields":[{}]}}"#,
         fields.join(",")
     )
 }
 
-fn with_bad_field(bad: &str) -> String {
-    document(&[field("OK_FIELD"), bad.to_owned()])
+fn second(field: &str) -> String {
+    document(&[OK_FIELD, field])
 }
 
-fn parse_str(json: &str) -> Result<Settings, SettingsError> {
-    parse(json.as_bytes())
+#[derive(Deserialize)]
+struct Vectors {
+    cases: Vec<Vector>,
 }
 
-fn source_text(err: &SettingsError) -> String {
-    err.source().map(ToString::to_string).unwrap_or_default()
+#[derive(Deserialize)]
+struct Vector {
+    name: String,
+    settings: Value,
+    problem: Option<String>,
 }
 
 #[test]
-fn the_design_example_parses() {
-    let settings = parse_str(DESIGN_EXAMPLE).unwrap();
-    assert_eq!(settings.settings_version, 1);
-    assert_eq!(settings.fields.len(), 3);
+fn the_rules_follow_the_shared_vectors() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../testdata/config/declarations.json");
+    let vectors: Vectors =
+        serde_json::from_slice(&fs::read(&path).expect("read the vectors")).expect("vectors");
+    assert!(!vectors.cases.is_empty(), "{} has no cases", path.display());
 
-    let terms = &settings.fields[0];
-    assert_eq!(terms.name, "WATCH_TERMS");
-    assert_eq!(terms.kind, FieldType::List);
-    assert!(terms.required);
+    for case in vectors.cases {
+        let json = serde_json::to_vec(&case.settings).expect("encode the case");
+        let got = parse(&json).map(drop).map_err(|err| err.to_string());
 
-    let interval = &settings.fields[1];
-    assert_eq!(interval.kind, FieldType::Number);
-    assert_eq!(interval.default.as_deref(), Some("30"));
-
-    let database = &settings.fields[2];
-    assert!(database.secret);
-
-    for each in &settings.fields {
-        assert!(each.editable);
-        assert_eq!(each.options, None);
+        assert_eq!(got, case.problem.map_or(Ok(()), Err), "{}", case.name);
     }
 }
 
 #[test]
+fn structural_errors_are_reported() {
+    let valid = document(&[OK_FIELD]);
+    let err = parse(format!("\u{feff}{valid}").as_bytes()).unwrap_err();
+    assert!(matches!(err, SettingsError::ByteOrderMark), "{err:?}");
+
+    let format: Vec<(&str, Vec<u8>)> = vec![
+        ("trailing data", format!("{valid}{{}}").into()),
+        (
+            "misspelled attribute",
+            second(r#"{"name":"b","label":"L","type":"string","secert":true}"#).into(),
+        ),
+        (
+            "unknown type",
+            second(r#"{"name":"b","label":"L","type":"password"}"#).into(),
+        ),
+        (
+            "label that is a number",
+            second(r#"{"name":"b","label":1,"type":"string"}"#).into(),
+        ),
+        (
+            "null required",
+            second(r#"{"name":"b","label":"L","type":"string","required":null}"#).into(),
+        ),
+        (
+            "null editable",
+            second(r#"{"name":"b","label":"L","type":"string","editable":null}"#).into(),
+        ),
+        (
+            "repeated name",
+            second(r#"{"name":"b","name":"c","label":"L","type":"string"}"#).into(),
+        ),
+        (
+            "invalid UTF-8",
+            b"{\"settings_version\":2,\"fields\":[{\"name\":\"b\",\"label\":\"\xff\",\"type\":\"string\"}]}"
+                .into(),
+        ),
+        (
+            "label in a list item",
+            second(r#"{"name":"b","label":"L","type":"list","items":{"type":"string","label":"L"}}"#)
+                .into(),
+        ),
+        (
+            "unknown top-level attribute",
+            r#"{"settings_version":2,"fields":[],"extra":1}"#.into(),
+        ),
+        ("no settings_version", r#"{"fields":[]}"#.into()),
+        ("a list as the document", "[]".into()),
+        ("a list with the document's values", "[2,[]]".into()),
+        (
+            "a list as a field",
+            r#"{"settings_version":2,"fields":[["a","A",null,"string"]]}"#.into(),
+        ),
+        ("a list with a field's values", document(&[LISTED_FIELD]).into()),
+        (
+            "a list as items",
+            second(r#"{"name":"b","label":"L","type":"list","items":["string"]}"#).into(),
+        ),
+        (
+            "a list with an item's values",
+            second(r#"{"name":"b","label":"L","type":"list","items":["string",null,null]}"#).into(),
+        ),
+        (
+            "a list as a field of an object",
+            second(&format!(
+                r#"{{"name":"b","label":"L","type":"object","fields":[{LISTED_FIELD}]}}"#
+            ))
+            .into(),
+        ),
+        (
+            "a list as a field of a list item",
+            second(&format!(
+                r#"{{"name":"b","label":"L","type":"list","items":{{"type":"object","fields":[{LISTED_FIELD}]}}}}"#
+            ))
+            .into(),
+        ),
+    ];
+    for (case, json) in format {
+        let err = parse(&json).expect_err(case);
+        assert!(matches!(err, SettingsError::Format(_)), "{case}: {err:?}");
+    }
+
+    for version in [1, 3] {
+        let json = format!(r#"{{"settings_version":{version},"fields":[]}}"#);
+        let err = parse(json.as_bytes()).unwrap_err();
+        assert!(
+            matches!(err, SettingsError::UnsupportedVersion(got) if got == version),
+            "{err:?}"
+        );
+    }
+}
+
+#[test]
+fn the_design_example_reads_as_declared() {
+    let settings = parse(DESIGN_EXAMPLE.as_bytes()).unwrap();
+    assert_eq!(settings.fields.len(), 5);
+    let field = |name: &str| {
+        settings
+            .fields
+            .iter()
+            .find(|field| field.name == name)
+            .unwrap_or_else(|| panic!("{name} is declared"))
+    };
+
+    let poll_interval = field("poll_interval");
+    assert_eq!(poll_interval.default, Some(json!("15m")));
+    assert_eq!(poll_interval.env.as_deref(), Some("POLL_INTERVAL"));
+    assert!(!field("password_command").is_editable());
+}
+
+#[test]
 fn every_attribute_is_read() {
-    let json = document(&[r#"{
-        "name": "MODE",
-        "label": "Mode",
-        "help": "Pick one.",
-        "type": "choice",
-        "options": ["a", "b"],
-        "default": "b",
-        "group": "G",
-        "required": true,
-        "editable": false,
-        "reason": "R"
-    }"#
-    .to_owned()]);
-    let settings = parse_str(&json).unwrap();
-    let got = &settings.fields[0];
-    assert_eq!(got.name, "MODE");
-    assert_eq!(got.label, "Mode");
-    assert_eq!(got.help.as_deref(), Some("Pick one."));
-    assert_eq!(got.kind, FieldType::Choice);
-    assert!(!got.secret);
-    assert!(got.required);
-    assert_eq!(got.default.as_deref(), Some("b"));
-    assert_eq!(
-        got.options.as_deref(),
-        Some(&["a".to_owned(), "b".to_owned()][..])
-    );
-    assert_eq!(got.group.as_deref(), Some("G"));
-    assert!(!got.editable);
-    assert_eq!(got.reason.as_deref(), Some("R"));
+    let json = document(&[
+        r#"{"name":"mode","label":"Mode","help":"Pick one.","type":"choice","required":true,"secret":false,
+            "default":"b","options":["a","b"],"group":"G","editable":false,"reason":"R","env":"MODE"}"#,
+        r#"{"name":"login","label":"Login","type":"object",
+            "fields":[{"name":"password","label":"Password","type":"string","secret":true}]}"#,
+        r#"{"name":"rules","label":"Rules","type":"list","items":{"type":"object",
+            "fields":[{"name":"actions","label":"Actions","type":"list","items":{"type":"choice","options":["urgent"]}}]}}"#,
+    ]);
+    let settings = parse(json.as_bytes()).unwrap();
+    assert_eq!(settings.settings_version, 2);
+    let [mode, login, rules] = &settings.fields[..] else {
+        panic!("{settings:?}");
+    };
+
+    assert_eq!(mode.name, "mode");
+    assert_eq!(mode.label, "Mode");
+    assert_eq!(mode.help.as_deref(), Some("Pick one."));
+    assert_eq!(mode.kind, FieldType::Choice);
+    assert!(mode.required);
+    assert!(!mode.secret);
+    assert_eq!(mode.default, Some(json!("b")));
+    assert_eq!(mode.options, Some(vec!["a".to_owned(), "b".to_owned()]));
+    assert_eq!(mode.group.as_deref(), Some("G"));
+    assert_eq!(mode.editable, Some(false));
+    assert!(!mode.is_editable());
+    assert_eq!(mode.reason.as_deref(), Some("R"));
+    assert_eq!(mode.env.as_deref(), Some("MODE"));
+
+    assert_eq!(login.kind, FieldType::Object);
+    let [password] = login.fields.as_deref().unwrap() else {
+        panic!("{login:?}");
+    };
+    assert_eq!(password.name, "password");
+    assert!(password.secret);
+    assert!(!password.required);
+    assert_eq!(password.editable, None);
+    assert!(password.is_editable());
+
+    assert_eq!(rules.kind, FieldType::List);
+    let item = rules.items.as_deref().unwrap();
+    assert_eq!(item.kind, FieldType::Object);
+    let [actions] = item.fields.as_deref().unwrap() else {
+        panic!("{item:?}");
+    };
+    assert_eq!(actions.name, "actions");
+    let choice = actions.items.as_deref().unwrap();
+    assert_eq!(choice.kind, FieldType::Choice);
+    assert_eq!(choice.options, Some(vec!["urgent".to_owned()]));
+    assert_eq!(choice.fields, None);
 }
 
 #[test]
 fn null_optional_attributes_count_as_absent() {
     let json = document(&[
-        r#"{"name":"A","label":"L","type":"string","help":null,"default":null,"options":null,"group":null,"reason":null}"#
-            .to_owned(),
+        r#"{"name":"a","label":"L","type":"string","help":null,"default":null,"options":null,"group":null,"reason":null,"env":null,"fields":null,"items":null}"#,
     ]);
-    let settings = parse_str(&json).unwrap();
+    let settings = parse(json.as_bytes()).unwrap();
     let got = &settings.fields[0];
     assert_eq!(got.help, None);
     assert_eq!(got.default, None);
     assert_eq!(got.options, None);
     assert_eq!(got.group, None);
     assert_eq!(got.reason, None);
-}
-
-#[test]
-fn structural_errors_are_reported() {
-    let valid = document(&[field("A")]);
-    let cases: Vec<StructuralCase> = vec![
-        (
-            "bom",
-            format!("\u{feff}{valid}").into_bytes(),
-            Box::new(|e| matches!(e, SettingsError::ByteOrderMark)),
-        ),
-        (
-            "trailing data",
-            format!("{valid}{{}}").into_bytes(),
-            Box::new(|e| matches!(e, SettingsError::Format(_))),
-        ),
-        (
-            "unknown top-level key",
-            r#"{"settings_version":1,"fields":[],"extra":1}"#.as_bytes().to_vec(),
-            Box::new(|e| {
-                matches!(e, SettingsError::Format(_)) && source_text(e).contains("`extra`")
-            }),
-        ),
-        (
-            "unknown field attribute",
-            r#"{"settings_version":1,"fields":[{"name":"A","label":"L","type":"string","secert":true}]}"#
-                .as_bytes()
-                .to_vec(),
-            Box::new(|e| {
-                matches!(e, SettingsError::Format(_)) && source_text(e).contains("`secert`")
-            }),
-        ),
-        (
-            "unknown type",
-            r#"{"settings_version":1,"fields":[{"name":"A","label":"L","type":"password"}]}"#
-                .as_bytes()
-                .to_vec(),
-            Box::new(|e| {
-                matches!(e, SettingsError::Format(_)) && source_text(e).contains("`password`")
-            }),
-        ),
-        (
-            "wrong json type",
-            r#"{"settings_version":1,"fields":[{"name":"A","label":"L","type":"string","default":30}]}"#
-                .as_bytes()
-                .to_vec(),
-            Box::new(|e| matches!(e, SettingsError::Format(_))),
-        ),
-        (
-            "missing label",
-            r#"{"settings_version":1,"fields":[{"name":"A","type":"string"}]}"#
-                .as_bytes()
-                .to_vec(),
-            Box::new(|e| {
-                matches!(e, SettingsError::Format(_)) && source_text(e).contains("`label`")
-            }),
-        ),
-        (
-            "missing settings_version",
-            br#"{"fields":[]}"#.to_vec(),
-            Box::new(|e| matches!(e, SettingsError::Format(_))),
-        ),
-        (
-            "duplicate attribute",
-            r#"{"settings_version":1,"fields":[{"name":"A","name":"B","label":"L","type":"string"}]}"#
-                .as_bytes()
-                .to_vec(),
-            Box::new(|e| matches!(e, SettingsError::Format(_))),
-        ),
-        (
-            "invalid utf-8",
-            b"{\"settings_version\":1,\"fields\":[{\"name\":\"A\",\"label\":\"\xff\",\"type\":\"string\"}]}"
-                .to_vec(),
-            Box::new(|e| matches!(e, SettingsError::Format(_))),
-        ),
-        (
-            "array document",
-            b"[1,[]]".to_vec(),
-            Box::new(|e| {
-                matches!(e, SettingsError::Format(_))
-                    && source_text(e).starts_with("invalid type: sequence, expected struct Settings")
-            }),
-        ),
-        (
-            "positional field",
-            br#"{"settings_version":1,"fields":[["N","Label",null,"string",false,false,null,null,null,true,null]]}"#
-                .to_vec(),
-            Box::new(|e| {
-                matches!(e, SettingsError::Format(_))
-                    && source_text(e).starts_with("invalid type: sequence, expected struct Field")
-            }),
-        ),
-        (
-            "version 2",
-            br#"{"settings_version":2,"fields":[]}"#.to_vec(),
-            Box::new(|e| matches!(e, SettingsError::UnsupportedVersion(2))),
-        ),
-        (
-            "version 0",
-            br#"{"settings_version":0,"fields":[]}"#.to_vec(),
-            Box::new(|e| matches!(e, SettingsError::UnsupportedVersion(0))),
-        ),
-    ];
-
-    for (case, input, check) in cases {
-        let err = parse(&input).expect_err(case);
-        assert!(check(&err), "{case}: {err:?}");
-    }
-}
-
-#[test]
-fn empty_field_list_is_valid() {
-    let settings = parse_str(r#"{"settings_version":1,"fields":[]}"#).unwrap();
-    assert!(settings.fields.is_empty());
+    assert_eq!(got.env, None);
+    assert_eq!(got.fields, None);
+    assert_eq!(got.items, None);
 }
 
 #[test]
 fn error_texts_are_stable() {
-    let err = parse(br#"{"settings_version":2,"fields":[]}"#).unwrap_err();
+    let err = parse(br#"{"settings_version":1,"fields":[]}"#).unwrap_err();
     assert_eq!(
         err.to_string(),
-        "settings.json: settings_version is 2, want 1"
+        "settings.json: settings_version is 1, want 2"
     );
     let err = parse(b"\xef\xbb\xbf{}").unwrap_err();
     assert_eq!(
@@ -261,195 +267,22 @@ fn error_texts_are_stable() {
 }
 
 #[test]
-fn field_rules_are_enforced() {
-    let two_watch = document(&[field("WATCH_TERMS"), field("WATCH_TERMS")]);
-    let cases: Vec<(&str, String, FieldProblem, &str)> = vec![
-        (
-            "lowercase name",
-            with_bad_field(&field("watch_terms")),
-            FieldProblem::InvalidName("watch_terms".into()),
-            r#"settings.json: fields[1]: name "watch_terms" does not match ^[A-Z][A-Z0-9_]*$"#,
-        ),
-        (
-            "digit first",
-            with_bad_field(&field("9X")),
-            FieldProblem::InvalidName("9X".into()),
-            r#"settings.json: fields[1]: name "9X" does not match ^[A-Z][A-Z0-9_]*$"#,
-        ),
-        (
-            "empty name",
-            with_bad_field(&field("")),
-            FieldProblem::InvalidName(String::new()),
-            r#"settings.json: fields[1]: name "" does not match ^[A-Z][A-Z0-9_]*$"#,
-        ),
-        (
-            "trailing newline in name",
-            with_bad_field(r#"{"name":"A\n","label":"L","type":"string"}"#),
-            FieldProblem::InvalidName("A\n".into()),
-            r#"settings.json: fields[1]: name "A\n" does not match ^[A-Z][A-Z0-9_]*$"#,
-        ),
-        (
-            "dash in name",
-            with_bad_field(&field("A-B")),
-            FieldProblem::InvalidName("A-B".into()),
-            r#"settings.json: fields[1]: name "A-B" does not match ^[A-Z][A-Z0-9_]*$"#,
-        ),
-        (
-            "space in name",
-            with_bad_field(&field("A B")),
-            FieldProblem::InvalidName("A B".into()),
-            r#"settings.json: fields[1]: name "A B" does not match ^[A-Z][A-Z0-9_]*$"#,
-        ),
-        (
-            "reserved PATH",
-            with_bad_field(&field("PATH")),
-            FieldProblem::ReservedName("PATH".into()),
-            r#"settings.json: fields[1]: name "PATH" is reserved by the hub"#,
-        ),
-        (
-            "reserved LD_PRELOAD",
-            with_bad_field(&field("LD_PRELOAD")),
-            FieldProblem::ReservedName("LD_PRELOAD".into()),
-            r#"settings.json: fields[1]: name "LD_PRELOAD" is reserved by the hub"#,
-        ),
-        (
-            "reserved MONITOR_HUB_X",
-            with_bad_field(&field("MONITOR_HUB_X")),
-            FieldProblem::ReservedName("MONITOR_HUB_X".into()),
-            r#"settings.json: fields[1]: name "MONITOR_HUB_X" is reserved by the hub"#,
-        ),
-        (
-            "duplicate name",
-            two_watch,
-            FieldProblem::DuplicateName("WATCH_TERMS".into()),
-            r#"settings.json: fields[1]: name "WATCH_TERMS" is declared more than once"#,
-        ),
-        (
-            "blank label",
-            with_bad_field(r#"{"name":"B","label":"  ","type":"string"}"#),
-            FieldProblem::EmptyLabel,
-            "settings.json: fields[1]: label is empty",
-        ),
-        (
-            "choice without options",
-            with_bad_field(r#"{"name":"B","label":"L","type":"choice"}"#),
-            FieldProblem::MissingOptions,
-            "settings.json: fields[1]: a choice field needs at least one option",
-        ),
-        (
-            "choice with empty options",
-            with_bad_field(r#"{"name":"B","label":"L","type":"choice","options":[]}"#),
-            FieldProblem::MissingOptions,
-            "settings.json: fields[1]: a choice field needs at least one option",
-        ),
-        (
-            "options on a string",
-            with_bad_field(r#"{"name":"B","label":"L","type":"string","options":["a"]}"#),
-            FieldProblem::UnexpectedOptions,
-            "settings.json: fields[1]: options are only for choice fields",
-        ),
-        (
-            "blank option",
-            with_bad_field(r#"{"name":"B","label":"L","type":"choice","options":["a"," "]}"#),
-            FieldProblem::EmptyOption,
-            "settings.json: fields[1]: an option is empty",
-        ),
-        (
-            "duplicate option",
-            with_bad_field(r#"{"name":"B","label":"L","type":"choice","options":["a","b","a"]}"#),
-            FieldProblem::DuplicateOption("a".into()),
-            r#"settings.json: fields[1]: option "a" is listed more than once"#,
-        ),
-        (
-            "default not an option",
-            with_bad_field(
-                r#"{"name":"B","label":"L","type":"choice","options":["a"],"default":"z"}"#,
-            ),
-            FieldProblem::DefaultNotAnOption("z".into()),
-            r#"settings.json: fields[1]: default "z" is not one of the options"#,
-        ),
-        (
-            "secret with an empty default",
-            with_bad_field(
-                r#"{"name":"B","label":"L","type":"string","secret":true,"default":""}"#,
-            ),
-            FieldProblem::SecretDefault,
-            "settings.json: fields[1]: a secret field cannot have a default",
-        ),
-        (
-            "not editable without reason",
-            with_bad_field(r#"{"name":"B","label":"L","type":"string","editable":false}"#),
-            FieldProblem::MissingReason,
-            "settings.json: fields[1]: editable: false needs a non-empty reason",
-        ),
-        (
-            "not editable with blank reason",
-            with_bad_field(
-                r#"{"name":"B","label":"L","type":"string","editable":false,"reason":" "}"#,
-            ),
-            FieldProblem::MissingReason,
-            "settings.json: fields[1]: editable: false needs a non-empty reason",
-        ),
-        (
-            "reason on an editable field",
-            with_bad_field(r#"{"name":"B","label":"L","type":"string","reason":"R"}"#),
-            FieldProblem::UnexpectedReason,
-            "settings.json: fields[1]: reason is only for fields with editable: false",
-        ),
-        (
-            "reason on an explicitly editable field",
-            with_bad_field(
-                r#"{"name":"B","label":"L","type":"string","editable":true,"reason":"R"}"#,
-            ),
-            FieldProblem::UnexpectedReason,
-            "settings.json: fields[1]: reason is only for fields with editable: false",
-        ),
-        (
-            "blank group",
-            with_bad_field(r#"{"name":"B","label":"L","type":"string","group":" "}"#),
-            FieldProblem::EmptyGroup,
-            "settings.json: fields[1]: group is empty",
-        ),
-    ];
-
-    for (case, json, problem, text) in cases {
-        let err = parse_str(&json).expect_err(case);
-        match &err {
-            SettingsError::Field {
-                index,
-                problem: got,
-                ..
-            } => {
-                assert_eq!(*index, 1, "{case}");
-                assert_eq!(got, &problem, "{case}");
-            }
-            other => panic!("{case}: {other:?}"),
-        }
-        assert_eq!(err.to_string(), text, "{case}");
-    }
-}
-
-#[test]
 fn the_first_problem_in_table_order_wins() {
-    let json = with_bad_field(
-        r#"{"name":"B","label":"L","type":"string","secret":true,"default":"x","options":["a"]}"#,
+    let json = second(
+        r#"{"name":"b","label":"L","type":"string","secret":true,"default":"x","options":["a"]}"#,
     );
-    let err = parse_str(&json).unwrap_err();
-    assert!(matches!(
-        err,
-        SettingsError::Field {
-            problem: FieldProblem::UnexpectedOptions,
-            ..
-        }
-    ));
-}
-
-#[test]
-fn secret_choice_is_allowed() {
-    let json = document(&[
-        r#"{"name":"B","label":"L","type":"choice","secret":true,"options":["a"]}"#.to_owned(),
-    ]);
-    assert!(parse_str(&json).is_ok());
+    let err = parse(json.as_bytes()).unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            SettingsError::Field {
+                path,
+                problem: FieldProblem::UnexpectedOptions,
+                ..
+            } if path == "fields[1]"
+        ),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -467,6 +300,90 @@ fn reserved_names() {
     }
     for name in ["PATHS", "TZ_NAME", "LD", "DATABASE_URL"] {
         assert!(!is_reserved(name), "{name}");
+    }
+}
+
+#[test]
+fn paths_are_resolved_against_the_declaration() {
+    let settings = parse(
+        document(&[
+            r#"{"name":"sei_url","label":"SEI address","type":"string","required":true,"env":"SEI_URL"}"#,
+            r#"{"name": "rules", "label": "Notification rules", "type": "list",
+               "items": {"type": "object", "fields": [
+                 {"name": "process", "label": "Process number (regular expression)", "type": "string", "required": true},
+                 {"name": "actions", "label": "Actions", "type": "list", "items": {"type": "choice", "options": ["urgent", "ignore"]}}
+               ]}}"#,
+        ])
+        .as_bytes(),
+    )
+    .unwrap();
+    let cases = [
+        ("", true),
+        ("sei_url", true),
+        ("rules", true),
+        ("rules[0]", true),
+        ("rules[12].process", true),
+        ("rules[99999999999999999999].process", true),
+        ("rules[3].actions", true),
+        ("rules[3].actions[0]", true),
+        ("rules.process", false),
+        ("rules[01].process", false),
+        ("rules[].process", false),
+        ("rules[0].", false),
+        ("rules[-1]", false),
+        ("sei_url[0]", false),
+        ("rules[0].other", false),
+        ("SEI_URL", false),
+        ("[0]", false),
+        ("sei_url.", false),
+    ];
+
+    for (path, want) in cases {
+        assert_eq!(settings.declares(path), want, "{path:?}");
+    }
+}
+
+#[derive(Deserialize)]
+struct DurationVectors {
+    parse: Vec<DurationCase>,
+}
+
+#[derive(Deserialize)]
+struct DurationCase {
+    input: String,
+    nanoseconds: Option<i64>,
+}
+
+#[test]
+fn durations_follow_go() {
+    let cases = [
+        ("15m", Some(900_000_000_000)),
+        ("1h30m", Some(5_400_000_000_000)),
+        ("-5m", Some(-300_000_000_000)),
+        (".5h", Some(1_800_000_000_000)),
+        ("300ms", Some(300_000_000)),
+        ("1µs", Some(1_000)),
+        ("0", Some(0)),
+        ("15", None),
+        ("", None),
+        ("1m-", None),
+        ("5 m", None),
+        ("9223372036h", None),
+    ];
+    for (input, want) in cases {
+        assert_eq!(parse_duration(input), want, "{input:?}");
+    }
+
+    let vectors: DurationVectors =
+        serde_json::from_str(include_str!("duration_parse.json")).expect("duration vectors");
+    assert!(!vectors.parse.is_empty());
+    for case in vectors.parse {
+        assert_eq!(
+            parse_duration(&case.input),
+            case.nanoseconds,
+            "{:?}",
+            case.input
+        );
     }
 }
 
@@ -502,13 +419,13 @@ fn answer_bytes_and_codes() {
 
     let mut out = Vec::new();
     let problems = [
-        Problem::new("WATCH_TERMS", "set at least one name"),
+        Problem::new("rules[2].process", "not a valid regular expression"),
         Problem::new("", "pick \"a\" or é"),
     ];
     assert_eq!(write_answer(&mut out, &problems), 1);
     assert_eq!(
         String::from_utf8(out).unwrap(),
-        "{\"problems\":[{\"name\":\"WATCH_TERMS\",\"message\":\"set at least one name\"},{\"name\":\"\",\"message\":\"pick \\\"a\\\" or é\"}]}\n"
+        "{\"problems\":[{\"path\":\"rules[2].process\",\"message\":\"not a valid regular expression\"},{\"path\":\"\",\"message\":\"pick \\\"a\\\" or é\"}]}\n"
     );
 
     assert_eq!(write_answer(&mut Failing, &[]), 2);
@@ -518,9 +435,14 @@ fn answer_bytes_and_codes() {
 
 #[test]
 fn answers_are_read_leniently() {
-    let answer: Answer =
-        serde_json::from_str(r#"{"problems":[{"message":"m","code":7}],"extra":true}"#).unwrap();
-    assert_eq!(answer.problems, vec![Problem::new("", "m")]);
+    for json in [
+        r#"{"problems":[{"message":"m","code":7}],"extra":true}"#,
+        r#"{"problems":[{"message":"m","name":"x"}]}"#,
+        r#"{"problems":[{"path":null,"message":"m"}]}"#,
+    ] {
+        let answer: Answer = serde_json::from_str(json).unwrap();
+        assert_eq!(answer.problems, vec![Problem::new("", "m")], "{json}");
+    }
 
     assert!(serde_json::from_str::<Answer>(r#"{"problems":null}"#).is_err());
     assert!(serde_json::from_str::<Answer>("{}").is_err());

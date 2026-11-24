@@ -64,8 +64,8 @@ func (d *decoder) field(path string, raw json.RawMessage) (Field, string) {
 	o.value("reason", &f.Reason)
 	o.value("group", &f.Group)
 	o.value("env", &f.Env)
-	f.Default = o.get("default")
 	if known {
+		f.Default = o.get("default")
 		o.value("options", &f.Options)
 		f.Fields = o.fields()
 		f.Items = o.item()

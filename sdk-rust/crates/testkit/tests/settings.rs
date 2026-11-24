@@ -6,7 +6,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
-use monitor_hub_sdk_testkit::settings::{assert_no_drift, check};
+use monitor_hub_sdk_testkit::settings::check;
 use tempfile::TempDir;
 
 #[path = "../../sdk/tests/support/example.rs"]
@@ -14,12 +14,10 @@ mod example;
 #[path = "support/leftovers.rs"]
 mod leftovers;
 
-const FIXED_SETTINGS: &str = include_str!("../../sdk/examples/fixed-monitor/settings.json");
-const EMPTY_SETTINGS: &str = r#"{"settings_version":1,"fields":[]}"#;
-const BAD_SETTINGS: &str =
-    r#"{"settings_version":1,"fields":[{"name":"events","label":"Events","type":"integer"}]}"#;
+const EMPTY_SETTINGS: &str = r#"{"settings_version":2,"fields":[]}"#;
+const BAD_SETTINGS: &str = r#"{"settings_version":2,"fields":[{"name":"Events","label":"Events","type":"integer","env":"EVENTS"}]}"#;
 const API_SETTINGS: &str =
-    r#"{"settings_version":1,"fields":[{"name":"API_URL","label":"API","type":"string"}]}"#;
+    r#"{"settings_version":2,"fields":[{"name":"api_url","label":"API","type":"string"}]}"#;
 const CLEAN_ENVIRONMENT: &str =
     r#"[ -z "${CARGO_MANIFEST_DIR:-}" ] && [ -f settings.json ] || exit 3; echo '{"problems":[]}'"#;
 const VALIDATOR: &str = "validator";
@@ -128,31 +126,6 @@ fn the_fixed_example_passes() {
 }
 
 #[test]
-fn the_fixed_example_declares_what_it_reads() {
-    assert_no_drift(
-        FIXED_SETTINGS,
-        &["EVENTS", "LOG_DEMO", "PANIC_DEMO", "PATH"],
-    );
-}
-
-#[test]
-#[should_panic(
-    expected = "settings.json and the configuration disagree:\n  read but not declared: EXTRA, OTHER\n  declared but not read: PANIC_DEMO"
-)]
-fn drift_names_both_sides() {
-    assert_no_drift(
-        FIXED_SETTINGS,
-        &["OTHER", "EVENTS", "LOG_DEMO", "EXTRA", "EXTRA"],
-    );
-}
-
-#[test]
-#[should_panic(expected = "settings.json is not valid")]
-fn drift_on_an_invalid_file_says_so() {
-    assert_no_drift("{}", &[]);
-}
-
-#[test]
 fn misbehaving_validators_are_reported() {
     let cases = [
         Case::new("clean environment", CLEAN_ENVIRONMENT, vec![]),
@@ -257,7 +230,7 @@ fn misbehaving_validators_are_reported() {
         ),
         Case::new(
             "no message",
-            r#"echo '{"problems":[{"name":"X"}]}'; exit 1"#,
+            r#"echo '{"problems":[{"path":"X"}]}'; exit 1"#,
             vec![Want::Prefix("validate-settings answer is invalid: ")],
         ),
         Case::new(
@@ -269,28 +242,28 @@ fn misbehaving_validators_are_reported() {
         ),
         Case::new(
             "empty message",
-            r#"echo '{"problems":[{"name":"X","message":""}]}'; exit 1"#,
+            r#"echo '{"problems":[{"path":"X","message":""}]}'; exit 1"#,
             vec![Want::Exact(
                 "validate-settings answer is invalid: problem 0 has an empty message",
             )],
         ),
         Case::new(
             "blank message",
-            r#"printf '{"problems":[{"name":"X","message":" \\t"}]}'; exit 1"#,
+            r#"printf '{"problems":[{"path":"X","message":" \\t"}]}'; exit 1"#,
             vec![Want::Exact(
                 "validate-settings answer is invalid: problem 0 has an empty message",
             )],
         ),
         Case::new(
             "empty message with code 0",
-            r#"echo '{"problems":[{"name":"X","message":""}]}'"#,
+            r#"echo '{"problems":[{"path":"X","message":""}]}'"#,
             vec![Want::Exact(
                 "validate-settings answer is invalid: problem 0 has an empty message",
             )],
         ),
         Case::new(
             "problems with code 0",
-            r#"echo '{"problems":[{"name":"X","message":"wrong"}]}'"#,
+            r#"echo '{"problems":[{"path":"X","message":"wrong"}]}'"#,
             vec![Want::Exact(
                 "validate-settings exited with code 0 but listed problems",
             )],
@@ -306,7 +279,7 @@ fn misbehaving_validators_are_reported() {
             settings: Some(API_SETTINGS),
             ..Case::new(
                 "declared names",
-                r#"echo '{"problems":[{"name":"API_URL","message":"set it"},{"name":"","message":"together"},{"message":"no name"}]}'; exit 1"#,
+                r#"echo '{"problems":[{"path":"api_url","message":"set it"},{"path":"","message":"together"},{"message":"no path"}]}'; exit 1"#,
                 vec![],
             )
         },
@@ -314,9 +287,9 @@ fn misbehaving_validators_are_reported() {
             settings: Some(API_SETTINGS),
             ..Case::new(
                 "undeclared name",
-                r#"echo '{"problems":[{"name":"API_URL","message":"set it"},{"name":"","message":"together"},{"name":"NOT_DECLARED","message":"m"}]}'; exit 1"#,
+                r#"echo '{"problems":[{"path":"api_url","message":"set it"},{"path":"","message":"together"},{"path":"not_declared","message":"m"}]}'; exit 1"#,
                 vec![Want::Exact(
-                    r#"validate-settings answer is invalid: problem 2 names "NOT_DECLARED", which settings.json does not declare"#,
+                    r#"validate-settings answer is invalid: problem 2 names the path "not_declared", which settings.json does not declare"#,
                 )],
             )
         },
@@ -324,7 +297,7 @@ fn misbehaving_validators_are_reported() {
             settings: Some(API_SETTINGS),
             ..Case::new(
                 "undeclared name with code 0",
-                r#"echo '{"problems":[{"name":"NOT_DECLARED","message":"m"}]}'"#,
+                r#"echo '{"problems":[{"path":"not_declared","message":"m"}]}'"#,
                 vec![Want::Exact(
                     "validate-settings exited with code 0 but listed problems",
                 )],
@@ -334,19 +307,31 @@ fn misbehaving_validators_are_reported() {
             settings: Some(API_SETTINGS),
             ..Case::new(
                 "undeclared name after an empty message",
-                r#"echo '{"problems":[{"name":"NOT_DECLARED","message":"m"},{"name":"API_URL","message":""}]}'; exit 1"#,
+                r#"echo '{"problems":[{"path":"not_declared","message":"m"},{"path":"api_url","message":""}]}'; exit 1"#,
                 vec![Want::Exact(
                     "validate-settings answer is invalid: problem 1 has an empty message",
                 )],
             )
         },
+        Case::new(
+            "undeclared path",
+            r#"echo '{"problems":[{"path":"rules[0].nope","message":"m"}]}'; exit 1"#,
+            vec![Want::Exact(
+                r#"validate-settings answer is invalid: problem 0 names the path "rules[0].nope", which settings.json does not declare"#,
+            )],
+        ),
+        Case::new(
+            "version 1 answer",
+            r#"echo '{"problems":[{"name":"X","message":"m"}]}'; exit 1"#,
+            vec![],
+        ),
         Case {
             settings: Some(BAD_SETTINGS),
             ..Case::new(
                 "undeclared name with a bad file",
-                r#"echo '{"problems":[{"name":"NOT_DECLARED","message":"m"}]}'; exit 1"#,
+                r#"echo '{"problems":[{"path":"not_declared","message":"m"}]}'; exit 1"#,
                 vec![Want::Exact(
-                    "settings.json: fields[0]: name \"events\" does not match ^[A-Z][A-Z0-9_]*$",
+                    "settings.json: fields[0]: name \"Events\" does not match ^[a-z][a-z0-9_]*$",
                 )],
             )
         },
@@ -356,7 +341,7 @@ fn misbehaving_validators_are_reported() {
                 "bad file",
                 CLEAN_ENVIRONMENT,
                 vec![Want::Exact(
-                    "settings.json: fields[0]: name \"events\" does not match ^[A-Z][A-Z0-9_]*$",
+                    "settings.json: fields[0]: name \"Events\" does not match ^[a-z][a-z0-9_]*$",
                 )],
             )
         },

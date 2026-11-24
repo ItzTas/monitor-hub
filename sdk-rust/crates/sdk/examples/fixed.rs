@@ -122,12 +122,13 @@ fn problems() -> Vec<Problem> {
     });
     let mut problems = Vec::new();
     if !events {
-        problems.push(Problem::new("EVENTS", "use a whole number of 0 or more"));
+        problems.push(Problem::new("events", "use a whole number of 0 or more"));
     }
-    for name in ["LOG_DEMO", "PANIC_DEMO"] {
-        let switch = env::var_os(name).is_none_or(|raw| ["", "0", "1"].iter().any(|ok| raw == *ok));
+    for (variable, path) in [("LOG_DEMO", "log_demo"), ("PANIC_DEMO", "panic_demo")] {
+        let switch =
+            env::var_os(variable).is_none_or(|raw| ["", "0", "1"].iter().any(|ok| raw == *ok));
         if !switch {
-            problems.push(Problem::new(name, "use 0 or 1"));
+            problems.push(Problem::new(path, "use 0 or 1"));
         }
     }
     problems

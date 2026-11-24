@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/ItzTas/monitor-hub/sdk-go/settings"
 )
 
 const (
@@ -29,8 +31,16 @@ type validatorAnswer struct {
 }
 
 type validatorProblem struct {
-	Name    string  `json:"name"`
+	Path    *string `json:"path"`
 	Message *string `json:"message"`
+}
+
+// path is empty, the whole document, when the answer leaves it out or writes null.
+func (p validatorProblem) path() string {
+	if p.Path == nil {
+		return ""
+	}
+	return *p.Path
 }
 
 type cappedBuffer struct {
@@ -43,12 +53,12 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func validatorViolation(ctx context.Context, dir, program string, declared map[string]bool, stderr io.Writer) string {
+func validatorViolation(ctx context.Context, dir, program string, declaration *settings.Declaration, stderr io.Writer) string {
 	state, stdout, violation := runValidator(ctx, dir, program, stderr)
 	if violation != "" {
 		return violation
 	}
-	return answerViolation(state, stdout, declared)
+	return answerViolation(state, stdout, declaration)
 }
 
 func runValidator(ctx context.Context, dir, program string, stderr io.Writer) (*os.ProcessState, []byte, string) {
@@ -96,7 +106,7 @@ func stopViolation(ctx context.Context) string {
 	return fmt.Sprintf("%s did not finish within %s", validateArg, validateLimit)
 }
 
-func answerViolation(state *os.ProcessState, stdout []byte, declared map[string]bool) string {
+func answerViolation(state *os.ProcessState, stdout []byte, declaration *settings.Declaration) string {
 	code, violation := exitViolation(state)
 	if violation != "" {
 		return violation
@@ -117,18 +127,18 @@ func answerViolation(state *os.ProcessState, stdout []byte, declared map[string]
 	if code == 1 && len(problems) == 0 {
 		return validateArg + " exited with code 1 but listed no problems"
 	}
-	return undeclaredViolation(problems, declared)
+	return undeclaredViolation(problems, declaration)
 }
 
-func undeclaredViolation(problems []validatorProblem, declared map[string]bool) string {
-	if declared == nil {
+func undeclaredViolation(problems []validatorProblem, declaration *settings.Declaration) string {
+	if declaration == nil {
 		return ""
 	}
-	i := slices.IndexFunc(problems, func(p validatorProblem) bool { return p.Name != "" && !declared[p.Name] })
+	i := slices.IndexFunc(problems, func(p validatorProblem) bool { return !declaration.Declares(p.path()) })
 	if i < 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s answer is invalid: problem %d names %q, which %s does not declare", validateArg, i, problems[i].Name, settingsFile)
+	return fmt.Sprintf("%s answer is invalid: problem %d names the path %q, which %s does not declare", validateArg, i, problems[i].path(), settingsFile)
 }
 
 func exitViolation(state *os.ProcessState) (int, string) {

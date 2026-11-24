@@ -32,7 +32,11 @@ func readVectors(t *testing.T) []vector {
 }
 
 func TestCheckFollowsTheSharedVectors(t *testing.T) {
-	for _, tt := range readVectors(t) {
+	vectors := readVectors(t)
+	if len(vectors) == 0 {
+		t.Fatal("the vector file has no cases")
+	}
+	for _, tt := range vectors {
 		t.Run(tt.Name, func(t *testing.T) {
 			var want []string
 			if tt.Problem != nil {

@@ -64,7 +64,7 @@ func validateSettings() int {
 		stdout string
 		code   int
 	}{
-		"problems":                 {`{"problems":[{"name":"EVENTS","message":"set EVENTS"}]}`, 1},
+		"problems":                 {`{"problems":[{"path":"events","message":"set events"}]}`, 1},
 		"log-first":                {"starting\n" + noProblems, 0},
 		"exit-2":                   {noProblems, 2},
 		"huge":                     {strings.Repeat(" ", 65537) + noProblems, 0},
@@ -73,14 +73,15 @@ func validateSettings() int {
 		"trailing-data":            {noProblems + "\n{}", 0},
 		"no-problems":              {`{}`, 0},
 		"wrong-type":               {`{"problems":"none"}`, 0},
-		"no-message":               {`{"problems":[{"name":"EVENTS"}]}`, 1},
-		"blank-message":            {`{"problems":[{"name":"EVENTS","message":" \t"}]}`, 1},
-		"empty-message":            {`{"problems":[{"name":"EVENTS","message":""}]}`, 1},
-		"mismatch":                 {`{"problems":[{"name":"EVENTS","message":"set EVENTS"}]}`, 0},
+		"no-message":               {`{"problems":[{"path":"events"}]}`, 1},
+		"blank-message":            {`{"problems":[{"path":"events","message":" \t"}]}`, 1},
+		"empty-message":            {`{"problems":[{"path":"events","message":""}]}`, 1},
+		"mismatch":                 {`{"problems":[{"path":"events","message":"set events"}]}`, 0},
 		"unlisted":                 {noProblems, 1},
-		"undeclared":               {`{"problems":[{"name":"EVENTS","message":"set EVENTS"},{"name":"","message":"together"},{"name":"NOT_DECLARED","message":"m"}]}`, 1},
-		"undeclared-0":             {`{"problems":[{"name":"NOT_DECLARED","message":"m"}]}`, 0},
-		"undeclared-empty-message": {`{"problems":[{"name":"NOT_DECLARED","message":"m"},{"name":"EVENTS","message":""}]}`, 1},
+		"undeclared":               {`{"problems":[{"path":"events","message":"set events"},{"path":"","message":"together"},{"path":"nope[0]","message":"m"}]}`, 1},
+		"undeclared-0":             {`{"problems":[{"path":"nope[0]","message":"m"}]}`, 0},
+		"undeclared-empty-message": {`{"problems":[{"path":"nope[0]","message":"m"},{"path":"events","message":""}]}`, 1},
+		"version-1":                {`{"problems":[{"name":"EVENTS","message":"m"}]}`, 1},
 	}
 	if answer, ok := answers[mode]; ok {
 		fmt.Println(answer.stdout)

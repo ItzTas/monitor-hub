@@ -190,9 +190,10 @@ func (c *fieldCheck) defaultValue() string {
 
 // value checks one default value, or one item of a list default, against the type t.
 func (c *fieldCheck) value(t Type, options []string, raw json.RawMessage) string {
-	// raw is JSON, so these accept exactly the numbers each type allows.
+	// raw is JSON, so these accept exactly the numbers each type allows. -0 is refused because
+	// serde_json, which the Rust SDK uses, reads it as a float.
 	literals := map[Type]func(string) bool{
-		Integer: func(s string) bool { _, err := strconv.ParseInt(s, 10, 64); return err == nil },
+		Integer: func(s string) bool { _, err := strconv.ParseInt(s, 10, 64); return err == nil && s != "-0" },
 		Number:  func(s string) bool { _, err := strconv.ParseFloat(s, 64); return err == nil },
 		Boolean: func(s string) bool { return s == "true" || s == "false" },
 	}

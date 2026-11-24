@@ -129,18 +129,20 @@ fn a_settings_violation_in_the_monitor_directory_fails_the_run() {
     let dir = TempDir::new().expect("create temp dir");
     fs::write(
         dir.path().join("settings.json"),
-        r#"{"settings_version":1,"fields":[{"name":"events","label":"Events","type":"integer"}]}"#,
+        r#"{"settings_version":2,"fields":[{"name":"Events","label":"Events","type":"integer","env":"EVENTS"}]}"#,
     )
     .expect("write settings.json");
     let mut conformance = conformance(setup, 2);
     conformance.monitor_dir = Some(dir.path().to_owned());
 
     let Outcome::Failed(output) = run(&conformance) else {
-        panic!("a lowercase setting name must fail the run");
+        panic!("an uppercase field name must fail the run");
     };
 
     assert!(
-        output.contains(r#"settings.json: fields[0]: name "events" does not match"#),
+        output.contains(
+            r#"settings.json: fields[0]: name "Events" does not match ^[a-z][a-z0-9_]*$"#
+        ),
         "{output}"
     );
 }
