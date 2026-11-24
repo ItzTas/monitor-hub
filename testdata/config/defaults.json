@@ -27,6 +27,13 @@
   {"name": "a list of objects", "fields": [{"name": "r", "label": "R", "type": "list", "items": {"type": "object", "fields": [
      {"name": "a", "label": "A", "type": "string", "default": "ra"}]}}],
    "document": {"r": [{"a": "z"}, {}, 3]}, "want": {"r": [{"a": "z"}, {"a": "ra"}, 3]}},
+  {"name": "a present false is kept", "fields": [{"name": "b", "label": "B", "type": "boolean", "default": true}],
+   "document": {"b": false}, "want": {"b": false}},
+  {"name": "a present zero is kept", "fields": [{"name": "n", "label": "N", "type": "integer", "default": 5}],
+   "document": {"n": 0}, "want": {"n": 0}},
+  {"name": "empty text in a list item takes the default", "fields": [{"name": "r", "label": "R", "type": "list", "items": {"type": "object", "fields": [
+     {"name": "a", "label": "A", "type": "string", "default": "ra"}]}}],
+   "document": {"r": [{"a": ""}]}, "want": {"r": [{"a": "ra"}]}},
   {"name": "a value of the wrong type is kept", "fields": [{"name": "s", "label": "S", "type": "string", "default": "d"}],
    "document": {"s": 5}, "want": {"s": 5}},
   {"name": "empty text in an object field is kept", "fields": [{"name": "o", "label": "O", "type": "object", "fields": [

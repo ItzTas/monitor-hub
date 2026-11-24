@@ -149,3 +149,42 @@ fn a_document_on_the_descriptor_wins_over_the_environment() {
     );
     assert_eq!(output.status.code(), Some(1));
 }
+
+#[test]
+fn a_value_the_configuration_type_refuses_gets_a_fixed_problem() {
+    let document = command_with_document(
+        example::fixed(),
+        &[VALIDATE_SETTINGS_ARG],
+        br#"{"events": "70123"}"#,
+    )
+    .expect("write the document");
+
+    let output = run(document.command);
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        concat!(
+            r#"{"problems":[{"path":"","message":"the configuration does not fit the monitor's configuration type"}]}"#,
+            "\n"
+        )
+    );
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("70123"));
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn starting_with_a_value_the_configuration_type_refuses_logs_a_fixed_problem() {
+    let document = command_with_document(example::fixed(), &[], br#"{"events": "70123"}"#)
+        .expect("write the document");
+
+    let output = run(document.command);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("the configuration does not fit the monitor's configuration type"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("70123"), "{stderr}");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("70123"));
+    assert_eq!(output.status.code(), Some(1));
+}

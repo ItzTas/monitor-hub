@@ -18,6 +18,9 @@ use tonic::{Request, Response, Status};
 const SETTINGS: &str = include_str!("fixed-monitor/settings.json");
 const BASE_TIME: i64 = 1_767_225_600;
 const DEFAULT_LIMIT: i64 = 100;
+// serde's errors quote the refused value, which may be a secret.
+const CONFIG_TYPE_MISMATCH: &str =
+    "the configuration does not fit the monitor's configuration type";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,7 +52,7 @@ impl Config {
 fn read_config() -> Result<Config, Vec<Problem>> {
     let document = config::load(SETTINGS).map_err(|err| err.problems())?;
     let config: Config = serde_json::from_value(Value::Object(document))
-        .map_err(|err| vec![Problem::new("", err.to_string())])?;
+        .map_err(|_| vec![Problem::new("", CONFIG_TYPE_MISMATCH)])?;
     let problems = config.problems();
     if !problems.is_empty() {
         return Err(problems);
