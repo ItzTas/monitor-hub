@@ -16,6 +16,7 @@ pub mod proto {
 #[path = "generated/plugin.rs"]
 mod controller;
 
+pub mod config;
 mod handshake;
 pub mod logging;
 mod monitor;
