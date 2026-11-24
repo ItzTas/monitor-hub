@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::iter;
 use std::os::fd::{FromRawFd, OwnedFd, RawFd};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Map, Value};
 
@@ -14,6 +15,8 @@ pub const DOCUMENT_LIMIT: usize = 65536;
 
 pub type Document = Map<String, Value>;
 
+static DESCRIPTOR_TAKEN: AtomicBool = AtomicBool::new(false);
+
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum LoadError {
@@ -21,6 +24,10 @@ pub enum LoadError {
     Settings(#[from] SettingsError),
     #[error("{CONFIG_FD_ENV} is {0:?}; it must be a descriptor number of 3 or more")]
     Descriptor(String),
+    #[error(
+        "{CONFIG_FD_ENV} was already read; the configuration document is read once per process"
+    )]
+    AlreadyTaken,
     #[error("cannot read the configuration document")]
     Read(#[source] io::Error),
     #[error("the configuration document is larger than {DOCUMENT_LIMIT} bytes")]
@@ -50,14 +57,20 @@ impl LoadError {
     }
 }
 
+/// Reads the document from the descriptor named by `MONITOR_HUB_CONFIG_FD`, once per process,
+/// or else builds it from the environment.
 pub fn load(settings_json: &str) -> Result<Document, LoadError> {
     let settings = settings::parse(settings_json.as_bytes())?;
     let Some(text) = std::env::var_os(CONFIG_FD_ENV).filter(|text| !text.is_empty()) else {
         return from_lookup(&settings, |name| std::env::var_os(name));
     };
     let number = descriptor_number(&text)?;
-    // SAFETY: the hub hands the monitor this descriptor and names it in CONFIG_FD_ENV; nothing
-    // else in the process owns it, so it is ours to read and close.
+    if DESCRIPTOR_TAKEN.swap(true, Ordering::SeqCst) {
+        return Err(LoadError::AlreadyTaken);
+    }
+    // SAFETY: the hub hands the monitor this descriptor and names it in CONFIG_FD_ENV, and
+    // DESCRIPTOR_TAKEN lets it be taken once per process; nothing else owns it, so it is ours to
+    // read and close.
     let fd = unsafe { OwnedFd::from_raw_fd(number) };
     from_descriptor(&settings, fd)
 }

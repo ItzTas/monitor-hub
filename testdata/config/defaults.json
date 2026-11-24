@@ -1,0 +1,45 @@
+{"cases": [
+  {"name": "every default and the object built", "fields": [
+     {"name": "s", "label": "S", "type": "string", "default": "d"},
+     {"name": "n", "label": "N", "type": "integer", "default": 5},
+     {"name": "x", "label": "X", "type": "number", "default": 1.5},
+     {"name": "b", "label": "B", "type": "boolean", "default": true},
+     {"name": "t", "label": "T", "type": "duration", "default": "15m"},
+     {"name": "c", "label": "C", "type": "choice", "options": ["full", "summary"], "default": "summary"},
+     {"name": "l", "label": "L", "type": "list", "items": {"type": "string"}, "default": ["a"]},
+     {"name": "o", "label": "O", "type": "object", "fields": [
+       {"name": "a", "label": "A", "type": "string", "default": "oa"},
+       {"name": "b", "label": "B", "type": "string"}]},
+     {"name": "r", "label": "R", "type": "list", "items": {"type": "object", "fields": [
+       {"name": "a", "label": "A", "type": "string", "default": "ra"}]}}],
+   "document": {},
+   "want": {"s": "d", "n": 5, "x": 1.5, "b": true, "t": "15m", "c": "summary", "l": ["a"], "o": {"a": "oa"}}},
+  {"name": "empty text takes the default", "fields": [{"name": "s", "label": "S", "type": "string", "default": "d"}],
+   "document": {"s": ""}, "want": {"s": "d"}},
+  {"name": "a present value is kept", "fields": [{"name": "s", "label": "S", "type": "string", "default": "d"}],
+   "document": {"s": "x"}, "want": {"s": "x"}},
+  {"name": "a present empty list is kept", "fields": [{"name": "l", "label": "L", "type": "list", "items": {"type": "string"}, "default": ["a"]}],
+   "document": {"l": []}, "want": {"l": []}},
+  {"name": "an object with a missing field", "fields": [{"name": "o", "label": "O", "type": "object", "fields": [
+     {"name": "a", "label": "A", "type": "string", "default": "oa"},
+     {"name": "b", "label": "B", "type": "string", "default": "ob"}]}],
+   "document": {"o": {"a": "y"}}, "want": {"o": {"a": "y", "b": "ob"}}},
+  {"name": "a list of objects", "fields": [{"name": "r", "label": "R", "type": "list", "items": {"type": "object", "fields": [
+     {"name": "a", "label": "A", "type": "string", "default": "ra"}]}}],
+   "document": {"r": [{"a": "z"}, {}, 3]}, "want": {"r": [{"a": "z"}, {"a": "ra"}, 3]}},
+  {"name": "a value of the wrong type is kept", "fields": [{"name": "s", "label": "S", "type": "string", "default": "d"}],
+   "document": {"s": 5}, "want": {"s": 5}},
+  {"name": "empty text in an object field is kept", "fields": [{"name": "o", "label": "O", "type": "object", "fields": [
+     {"name": "a", "label": "A", "type": "string", "default": "oa"}]}],
+   "document": {"o": ""}, "want": {"o": ""}},
+  {"name": "null is kept", "fields": [{"name": "s", "label": "S", "type": "string", "default": "d"}],
+   "document": {"s": null}, "want": {"s": null}},
+  {"name": "a secret never gets a default", "fields": [{"name": "p", "label": "P", "type": "string", "secret": true}],
+   "document": {}, "want": {}},
+  {"name": "an empty secret stays empty", "fields": [{"name": "p", "label": "P", "type": "string", "secret": true}],
+   "document": {"p": ""}, "want": {"p": ""}},
+  {"name": "an object inside an object built from defaults", "fields": [{"name": "o", "label": "O", "type": "object", "fields": [
+     {"name": "i", "label": "I", "type": "object", "fields": [
+       {"name": "a", "label": "A", "type": "string", "default": "x"}]}]}],
+   "document": {}, "want": {"o": {"i": {"a": "x"}}}}
+]}

@@ -12,6 +12,7 @@ use monitor_hub_sdk::config::{
 };
 use monitor_hub_sdk::settings::{Problem, Settings, parse};
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 fn settings(fields: Value) -> Settings {
@@ -34,12 +35,22 @@ fn environment_problems(err: LoadError) -> Vec<Problem> {
 }
 
 #[derive(Deserialize)]
-struct Vectors {
-    cases: Vec<Vector>,
+struct Vectors<T> {
+    cases: Vec<T>,
+}
+
+fn vectors<T: DeserializeOwned>(file: &str) -> Vec<T> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../testdata/config")
+        .join(file);
+    let vectors: Vectors<T> =
+        serde_json::from_slice(&fs::read(&path).expect("read the vectors")).expect("vectors");
+    assert!(!vectors.cases.is_empty(), "{} has no cases", path.display());
+    vectors.cases
 }
 
 #[derive(Deserialize)]
-struct Vector {
+struct EnvCase {
     name: String,
     fields: Value,
     env: HashMap<String, String>,
@@ -49,12 +60,7 @@ struct Vector {
 
 #[test]
 fn conversion_follows_the_shared_vectors() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../testdata/config/env.json");
-    let vectors: Vectors =
-        serde_json::from_slice(&fs::read(&path).expect("read the vectors")).expect("vectors");
-    assert!(!vectors.cases.is_empty(), "{} has no cases", path.display());
-
-    for case in vectors.cases {
+    for case in vectors::<EnvCase>("env.json") {
         let want = match (case.document, case.problems) {
             (Some(document), None) => Ok(document),
             (None, Some(problems)) => Err(problems),
@@ -97,40 +103,20 @@ fn text_that_is_not_utf8() {
     }
 }
 
+#[derive(Deserialize)]
+struct DefaultsCase {
+    name: String,
+    fields: Value,
+    document: Document,
+    want: Document,
+}
+
 #[test]
-fn defaults_fill_only_what_is_missing() {
-    let settings = settings(json!([
-        {"name": "s", "label": "S", "type": "string", "default": "d"},
-        {"name": "o", "label": "O", "type": "object", "fields": [
-            {"name": "a", "label": "A", "type": "string", "default": "oa"},
-            {"name": "b", "label": "B", "type": "string", "default": "ob"},
-            {"name": "c", "label": "C", "type": "string"}
-        ]},
-        {"name": "l", "label": "L", "type": "list", "items": {"type": "object", "fields": [
-            {"name": "a", "label": "A", "type": "string", "default": "la"}
-        ]}},
-        {"name": "p", "label": "P", "type": "string", "secret": true}
-    ]));
-    let built = json!({"a": "oa", "b": "ob"});
-    let cases = [
-        (json!({}), json!({"s": "d", "o": built})),
-        (json!({"s": ""}), json!({"s": "d", "o": built})),
-        (json!({"s": "x"}), json!({"s": "x", "o": built})),
-        (
-            json!({"o": {"a": "y"}}),
-            json!({"s": "d", "o": {"a": "y", "b": "ob"}}),
-        ),
-        (
-            json!({"l": [{"a": "z"}, {}, 3]}),
-            json!({"s": "d", "o": built, "l": [{"a": "z"}, {"a": "la"}, 3]}),
-        ),
-        (json!({"s": 5}), json!({"s": 5, "o": built})),
-    ];
+fn defaults_follow_the_shared_vectors() {
+    for case in vectors::<DefaultsCase>("defaults.json") {
+        let got = with_defaults(&settings(case.fields), case.document);
 
-    for (document, want) in cases {
-        let got = with_defaults(&settings, object(document.clone()));
-
-        assert_eq!(got, object(want), "{document}");
+        assert_eq!(got, case.want, "{}", case.name);
     }
 }
 
