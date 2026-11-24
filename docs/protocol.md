@@ -301,106 +301,175 @@ On top of that, go-plugin adds `MONITOR_HUB_MONITOR` and the `PLUGIN_*` variable
 
 Nothing else from the hub's environment is passed. A monitor cannot read the hub's database URL, notification tokens or another monitor's settings.
 
+A later hub release changes this for a monitor whose `settings.json` has `settings_version` 2. That hub will pass `MONITOR_HUB_CONFIG_FD`, the descriptor of the monitor's [configuration document](#the-configuration-document). It will also stop passing the prefixed variables that a field names in `env`, because their values go into the document. The hub in this release does neither.
+
 ## Settings
 
 A monitor can declare its settings in two parts that go together: a `settings.json` file and a `validate-settings` argument. The hub's settings page will draw the monitor's form from the file, and run the monitor with the argument to check new values before it saves them.
 
 That page comes in a later release. The hub in this release does not read `settings.json`, and neither does an older hub, so a monitor can ship the file now. Both parts are optional. A monitor without the file keeps working as before, but nothing about it will be editable from the page.
 
+This section describes version 2 of the file. The Rust SDK and the conformance command refuse any other `settings_version`, 1 included.
+
 ### `settings.json`
 
-The file sits next to `monitor.json`, in the monitor directory. An example:
+The file sits next to `monitor.json`, in the monitor directory. It declares the monitor's settings as fields, and the monitor reads their values from one [configuration document](#the-configuration-document). An example:
 
 ```json
 {
-  "settings_version": 1,
+  "settings_version": 2,
   "fields": [
-    {
-      "name": "WATCH_TERMS",
-      "label": "Watch terms",
-      "help": "Names or registration numbers to look for in each edition, separated by commas.",
-      "type": "list",
-      "required": true
-    },
-    {
-      "name": "CHECK_INTERVAL_MINUTES",
-      "label": "Check interval (minutes)",
-      "type": "number",
-      "default": "30"
-    },
-    {
-      "name": "DATABASE_URL",
-      "label": "Database address",
-      "type": "string",
-      "secret": true,
-      "required": true
-    }
+    {"name": "watch_terms", "label": "Watch terms", "type": "list", "items": {"type": "string"},
+     "help": "Names or registration numbers to look for in each edition.", "required": true, "env": "WATCH_TERMS"},
+    {"name": "check_interval", "label": "Check interval", "type": "duration", "default": "30m", "env": "CHECK_INTERVAL"},
+    {"name": "database_url", "label": "Database address", "type": "string", "secret": true, "required": true,
+     "env": "DATABASE_URL"},
+    {"name": "password_command", "label": "Password command", "type": "string", "secret": true,
+     "editable": false, "reason": "It makes the monitor run a program inside the hub's container.",
+     "env": "PASSWORD_CMD"},
+    {"name": "rules", "label": "Notification rules", "type": "list",
+     "items": {"type": "object", "fields": [
+       {"name": "process", "label": "Process number (regular expression)", "type": "string", "required": true},
+       {"name": "actions", "label": "Actions", "type": "list", "items": {"type": "choice", "options": ["urgent", "ignore"]}}
+     ]}}
   ]
 }
 ```
 
+A document for this file could be:
+
+```json
+{"watch_terms": ["Paulo Santos", "0034712k"], "check_interval": "30m", "database_url": "postgres://db.example/diario",
+ "rules": [{"process": "^0034", "actions": ["urgent"]}]}
+```
+
 | Key | Type | Meaning |
 |---|---|---|
-| `settings_version` | number | Must be `1`. |
-| `fields` | array | One object per setting. It may be empty. |
+| `settings_version` | number | Must be `2`. |
+| `fields` | array | The top-level fields, one object each. It may be empty. |
 
 Each field has these attributes:
 
 | Attribute | Type | Required | Meaning |
 |---|---|---|---|
-| `name` | string | yes | The environment variable the monitor reads, without the hub's prefix. |
+| `name` | string | yes | The field's key in the document. It matches `^[a-z][a-z0-9_]*$` and differs from the names of the other fields at the same level. |
 | `label` | string | yes | The field's label. |
 | `help` | string | no | One or two sentences shown under the field. |
-| `type` | string | yes | `string`, `list`, `integer`, `number`, `duration` or `choice`. A `choice` field becomes a list of options. The other types become a text box, and the type only hints at the keyboard and the example. A `list` is the comma-separated text the monitor reads. |
-| `secret` | boolean | no | `true`: the hub never shows or returns the value. It works with any type. |
+| `type` | string | yes | One of the types in the next table. |
+| `secret` | boolean | no | `true`: the hub never shows or returns the value. Not for an `object` or a `list`, and not inside a list item. |
 | `required` | boolean | no | Only marks the field on the page. The monitor's validation decides whether something is missing. |
-| `default` | string | no | The value the monitor uses when the field is empty. The page only shows it. |
+| `default` | a value of the field's type | no | The value the document gets when nothing else sets the field. Not for an `object` or a list of objects. |
 | `options` | string array | for `choice` | The accepted values. |
-| `group` | string | no | A section title. Fields with the same `group` are shown together. |
-| `editable` | boolean | no | `false`: the page shows the field and where its value comes from, but cannot change it. The default is `true`. |
+| `fields` | array | for `object` | The object's fields, with the same attributes. |
+| `items` | object | for `list` | What each item of the list is. |
+| `group` | string | no, top level only | A section title. Fields with the same `group` are shown together. |
+| `editable` | boolean | no, top level only | `false`: the page shows the field and where its value comes from, but cannot change it. The field then needs `env`. The default is `true`. |
 | `reason` | string | with `editable: false` | Why the field cannot be edited. The page shows it. |
+| `env` | string | no, top level only | The environment variable that holds the value when there is no document, without the hub's prefix. See [The env bridge](#the-env-bridge). |
 
-The file is UTF-8 without a byte order mark and holds exactly one JSON object. Whitespace around the object is fine. Anything else after it is an error. `settings_version` and `fields` must be present, and so must `name`, `label` and `type` in every field.
+An item has a `type`, which is required, plus `options` for a `choice` or `fields` for an `object`, with the meanings above. An item cannot be a `list`.
 
-`null` counts as absent for `help`, `default`, `options`, `group` and `reason`. For `secret`, `required` and `editable` it is an error: write `true` or `false`, or leave the attribute out. Keys must match exactly, letter case included, so `"Secret"` is an unknown attribute.
+| Type | In the document |
+|---|---|
+| `string` | A string. |
+| `integer` | An integer that fits in a signed 64-bit integer. |
+| `number` | A number. |
+| `boolean` | `true` or `false`. |
+| `duration` | A string in the syntax of Go's `time.ParseDuration`, such as `15m`, `1h30m`, `-5m` or `300ms`. The monitor parses it. |
+| `choice` | A string. The page offers only the `options`. |
+| `object` | An object whose keys are the `name`s of its `fields`. |
+| `list` | An array of items. |
 
-Each field must follow these rules. A broken rule is reported as `settings.json: fields[<index>]: ` followed by the text in the second column. `<index>` counts from 0.
+A `default` is written the way the document holds the value: `"15m"` for a duration, `5` for an integer, `true` for a boolean, `["a", "b"]` for a list of strings.
+
+The file is UTF-8 without a byte order mark and holds exactly one JSON object. Whitespace around the object is fine. Anything else after it is an error. `settings_version` and `fields` must be present, and so must `name`, `label` and `type` in every field and `type` in every item.
+
+`null` counts as absent for `help`, `default`, `options`, `group`, `reason`, `env`, `fields` and `items`. For `secret`, `required` and `editable` it is an error: write `true` or `false`, or leave the attribute out. Keys must match exactly, letter case included, so `"Secret"` is an error. A key written twice in one object is an error too.
+
+Each field must follow these rules, at every level. A broken rule is reported as `settings.json: <path>: ` followed by the text in the second column. The path says where the field is: `fields[1]` is the second top-level field, `fields[2].fields[0]` is the first field of the object `fields[2]`, `fields[2].items` is the item of the list `fields[2]`, and `fields[2].items.fields[0]` is the first field of that item. Indexes count from 0. A broken rule about an item, such as its options, is reported at the item's path.
 
 | Rule | Text |
 |---|---|
-| `name` matches `^[A-Z][A-Z0-9_]*$`. Any other character breaks the rule, a trailing newline included. | `name "x" does not match ^[A-Z][A-Z0-9_]*$` |
-| `name` is not reserved. The reserved names are `PATH`, `TZ`, `TMPDIR` and every name that starts with `MONITOR_HUB_`, `PLUGIN_` or `LD_`. | `name "PATH" is reserved by the hub` |
-| No two fields have the same `name`. | `name "X" is declared more than once` |
+| `name` matches `^[a-z][a-z0-9_]*$`. Any other character breaks the rule, a trailing newline included. | `name "X" does not match ^[a-z][a-z0-9_]*$` |
+| No two fields at the same level have the same `name`. | `name "x" is declared more than once` |
 | `label` holds more than whitespace. | `label is empty` |
-| A `choice` field has at least one option. | `a choice field needs at least one option` |
-| Only a `choice` field has `options`, even an empty list. | `options are only for choice fields` |
+| A `choice` has at least one option. | `a choice needs at least one option` |
+| Only a `choice` has `options`, even an empty list. | `options are only for choice` |
 | Every option holds more than whitespace. | `an option is empty` |
 | No option is listed twice. | `option "a" is listed more than once` |
-| The `default` of a `choice` field is one of its options. | `default "z" is not one of the options` |
+| An `object` has at least one field. | `an object needs at least one field` |
+| Only an `object` has `fields`. | `fields are only for object` |
+| A `list` has `items`. | `a list needs items` |
+| Only a `list` has `items`. | `items are only for list` |
+| An item is not a `list`. | `a list cannot hold lists` |
+| Fields nest at most 4 levels deep. A top-level field is at level 1, and the `fields` of an object, or of an item of a list of objects, are one level below it. | `fields nest more than 4 levels deep` |
+| An `object` or a list of objects has no `default`. | `an object or a list of objects cannot have a default` |
+| A `default` has the field's type: a string for `string`, `duration` and `choice`, an integer that fits in a signed 64-bit integer for `integer` (no fraction, no exponent, not `-0`), any number for `number`, `true` or `false` for `boolean`, and an array of such values for a `list`. | `default does not fit the field type` |
+| The `default` of a `choice`, and each value in the `default` of a list of `choice`, is one of the options. | `default "z" is not one of the options` |
+| The `default` of a `duration`, and each value in the `default` of a list of `duration`, follows Go's duration syntax. | `default "15" is not a duration such as 15m` |
 | A `secret` field has no `default`, not even `""`. | `a secret field cannot have a default` |
+| An `object` or a `list` is not `secret`. | `an object or a list cannot be secret` |
+| No field inside a list item is `secret`, at any depth. | `a field inside a list item cannot be secret` |
 | A field with `editable: false` has a `reason` that holds more than whitespace. | `editable: false needs a non-empty reason` |
 | Only a field with `editable: false` has a `reason`, even an empty one. | `reason is only for fields with editable: false` |
+| A field with `editable: false` has `env`. | `editable: false needs env` |
+| Only a top-level field has `env`, `group` or `editable`. | `env is only for top-level fields`, with `group` or `editable` in place of `env` |
+| `env` matches `^[A-Z][A-Z0-9_]*$`. | `env "x" does not match ^[A-Z][A-Z0-9_]*$` |
+| `env` is not reserved. The reserved names are `PATH`, `TZ`, `TMPDIR` and every name that starts with `MONITOR_HUB_`, `PLUGIN_` or `LD_`. | `env "PATH" is reserved by the hub` |
+| No two fields have the same `env`. | `env "X" is used by more than one field` |
+| Only a field of a simple type, a `choice`, or a list of those has `env`. | `env is only for fields of a simple type, choice, or a list of those` |
 | A `group`, when present, holds more than whitespace. | `group is empty` |
 
-Options are compared exactly, character by character. `"a"` and `"A"`, or `"a"` and `"a "`, are two different options, and a `default` must be equal to one of them. Only the first broken rule of a field is reported.
+Options are compared exactly, character by character. `"a"` and `"A"`, or `"a"` and `"a "`, are two different options, and a `default` must be equal to one of them. The fields are checked depth first: a field, then the fields under it, then the next field. Only the first broken rule of a field is reported, in the order of the table.
 
-The Rust SDK and the conformance command reject an unknown attribute and an unknown `type`, so that a typo such as `secert` cannot leave a secret on show. The hub's reader will ignore them instead and treat an unknown `type` as `string`, so that a new optional attribute does not break an older hub. A change that an older hub cannot safely ignore raises `settings_version`. The hub will treat a monitor whose `settings_version` it does not know as one that declares nothing.
-
-The hub will apply the `options` rules only to the types it knows. For a `type` it does not know, it reads the field as `string` and ignores `options`, so a later type can carry options without raising `settings_version`.
-
-An older Rust SDK or conformance command rejects a file that uses an attribute or a type added later, so check such a file with the release that added it. A new optional attribute does not affect a file written for an older release.
+The Rust SDK and the conformance command reject an unknown attribute and an unknown `type`, so that a typo such as `secert` cannot leave a secret on show. An older Rust SDK or conformance command rejects a file that uses an attribute or a type added later, so check such a file with the release that added it.
 
 The hub does not check values against these attributes, beyond what the form control allows: a `choice` field offers only its options. Rules such as "set exactly one of these three" belong in the monitor's `validate-settings`.
 
-Every value is text, the same text the monitor reads from its environment. A `list` value is separated by commas. An empty value means "not set": the page can save an empty value to hide one that comes from `.env`, so read an empty variable as a missing one.
+The Rust SDK's reader and the conformance command apply the same rules and give the same text for every rule in the table above. They differ in a few places, so write the file so that both accept it.
 
-A `settings.json` that cannot be read, or that breaks a rule, will not stop the hub or the monitor. The hub will log the error and treat the monitor as if it declared nothing.
-
-The Rust SDK's reader and the conformance command apply the same rules and give the same text for every rule in the table above. They differ in a few places, and the Rust reader is the stricter one. Write the file so that both accept it.
-
-- A key repeated in one object, such as two `name` keys in a field, and a lone surrogate escape in a string, such as `"\ud800"`, are errors in Rust. The conformance command accepts both.
 - Rust stops at the first broken field. The conformance command reports every broken field, one line each.
-- When the JSON itself is wrong (bad syntax, a wrong value type, an unknown attribute), each side writes `settings.json is not valid: ` followed by its own decoder's message, so the details differ. Rust reports an unknown `type` the same way. The conformance command reports it as a field rule: `type "password" is not one of string, list, integer, number, duration, choice`. A missing key, a negative `settings_version`, and `null` inside `options` or `fields` are errors on both sides, but each side words them its own way.
+- A lone surrogate escape in a string, such as `"\ud800"`, is an error in Rust. The conformance command accepts it.
+- A problem with the file's format stops both readers at once. Such problems are a byte order mark, bytes that are not UTF-8, bad JSON, a value of the wrong JSON type, a missing or unknown attribute, a key written twice or in another letter case, an unknown `type` and a `settings_version` other than `2`. Each side words some of them its own way. When the JSON itself is wrong, each side writes `settings.json is not valid: ` followed by its own decoder's message. Rust reports an unknown `type` that way too. The conformance command writes `type "password" is not one of string, integer, number, boolean, duration, choice, object, list`.
+
+### The configuration document
+
+A monitor that ships `settings.json` reads its settings from one JSON document. The document is an object whose keys are the `name`s of the top-level fields, with values as in the table of types. A field without a value is left out. The document is at most 64 KiB (65536 bytes).
+
+The document arrives as a file the monitor inherits, already open: an anonymous file with no path on disk. `MONITOR_HUB_CONFIG_FD` holds the number of its descriptor, 3 or more. The hub and the monitors run as the same user, so another monitor could read a file with a path, even one with mode `0600`. Read the document once, when the monitor starts, and close the descriptor, so that a program the monitor runs does not inherit it. New settings take effect when the monitor restarts.
+
+A field's value comes from the settings page first, then from the `.env` variable its `env` names, then from its `default`:
+
+- An empty string, `""`, means not set, so it takes the `default` too.
+- A missing object is built from the defaults of its fields. It goes into the document if it ends up with at least one key.
+- An object, or an item of a list of objects, that lacks a field with a `default` gets that default.
+- A secret field never has a default.
+- Any other value stays as it is, including `null` and a value of the wrong type, and the monitor refuses it.
+
+Without a descriptor, when `MONITOR_HUB_CONFIG_FD` is unset or empty, the monitor builds the same document from its environment through the [env bridge](#the-env-bridge), and applies the defaults the same way. That is how a monitor runs by hand, in tests, under the conformance command and under the hub in this release. `monitor_hub_sdk::config::load` does both; see [`sdk-rust/README.md`](../sdk-rust/README.md).
+
+The shared vectors in [`testdata/config/`](../testdata/config) pin these rules for every implementation: `env.json` for the bridge, and `defaults.json` for the defaults.
+
+### The env bridge
+
+A top-level field of a simple type, a `choice`, or a list of those can name an environment variable in `env`, without the hub's prefix. When there is no descriptor, the field's value comes from that variable, converted to the field's type:
+
+- An unset or empty variable leaves the field out, so its `default` applies.
+- `string`, `duration` and `choice` take the text as it is, without trimming. A `choice` is not checked against its options, so the monitor has to refuse a wrong one itself.
+- `integer` takes `^[+-]?[0-9]+$` within a signed 64-bit integer. `+3` and `03` become `3`, while `" 3"` and `3.0` are problems.
+- `number` takes `^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$` when the value is finite. `NaN`, `inf`, `1e999` and `1_0` are problems.
+- `boolean` takes exactly `true` or `false`.
+- A `list` cuts the text at each `,`, trims Unicode whitespace from each piece, drops the empty pieces and converts each one by the item's type. `" a , b ,,"` becomes `["a", "b"]`.
+
+In a field that is not `secret`, text that is not UTF-8 has each maximal invalid subpart replaced with one U+FFFD, as Rust's `String::from_utf8_lossy` does. So `a\xffb` becomes `a\u{fffd}b`, and `a\xff\xffb` becomes `a\u{fffd}\u{fffd}b`.
+
+Text that does not convert is a problem. It is never dropped, and never replaced with the default. Every such problem is reported, in the order of the fields:
+
+- `path` is the field's path. For a list it ends with the item's index, which counts only the pieces kept, so `N=1, ,x` gives `n[1]`.
+- `message` is `<VAR> is not an integer (<text>)`, `is not a number (<text>)` or `is not true or false (<text>)`. `<VAR>` is the variable's name, and `<text>` is the text quoted as a JSON string, or the trimmed piece for a list.
+- In a `secret` field the message leaves the text out, as in `PIN is not an integer`. Text that is not UTF-8 there gives `PIN is not valid UTF-8`.
+
+Written as `path: message`, `N=three` gives `n: N is not an integer ("three")`.
 
 ### `validate-settings`
 
@@ -408,12 +477,12 @@ A monitor that ships `settings.json` must also accept `<command[0]> validate-set
 
 So `command[0]` must be the monitor's own program. A monitor started through an interpreter, such as [`examples/python-monitor`](../examples/python-monitor) with `["python3", "main.py"]`, would get `python3 validate-settings`. Before such a monitor ships `settings.json`, it needs an executable of its own, for example a script with a shebang line.
 
-The values to check arrive in the environment, under the names the monitor reads when it starts. The hub will build that environment the same way it builds the one the monitor runs with. The magic cookie may be missing, so look for `validate-settings` before anything checks the cookie.
+The values to check arrive as a configuration document, through `MONITOR_HUB_CONFIG_FD`, as at start. Without a descriptor, the monitor builds the document from its environment through the env bridge, as at start too. The magic cookie may be missing, so look for `validate-settings` before anything checks the cookie.
 
 The monitor writes one JSON object on stdout and exits:
 
 ```json
-{"problems": [{"name": "WATCH_TERMS", "message": "set at least one name or registration number"}]}
+{"problems": [{"path": "rules[2].process", "message": "not a valid regular expression"}]}
 ```
 
 | Exit code | `problems` | Meaning |
@@ -422,9 +491,10 @@ The monitor writes one JSON object on stdout and exits:
 | `1` | at least one | The values are invalid. |
 | anything else | | The validator failed. |
 
-A validator that exits with `0` but lists problems, exits with `1` but lists none, prints something other than one JSON object, names a field the file does not declare, or runs for more than 5 seconds has failed too. When the validator fails, the hub will save nothing and say that the monitor could not validate the values.
+A validator has failed too if it exits with `0` but lists problems, exits with `1` but lists none, prints something other than one JSON object, names a path the file does not declare, or runs for more than 5 seconds. When the validator fails, the hub will save nothing and say that the monitor could not validate the values.
 
-- `problems` is required. Each problem has a `message` that is not empty or only spaces, and a `name` that is either a field the file declares or empty, for a problem with several fields together. `name` may be left out. Other keys are ignored.
+- `problems` is required. Each problem has a `message` that is not empty or only spaces, and a `path` that is either declared by the file or empty. An empty `path` is for a problem with several fields together or with the whole document. `path` may be left out or `null`, which both count as empty. Other keys are ignored, so a problem in the version 1 form, with `name` and no `path`, counts as a problem with the whole document.
+- A path starts with the `name` of a top-level field. `.name` goes into an object or an item of a list of objects, and `[index]` picks an item of a list. The index is `0` or digits without a leading zero. `rules`, `rules[2]`, `rules[2].process` and `rules[2].actions[0]` are paths of the example file. `rules.process` and `rules[02]` are not.
 - List every problem at once, not only the first.
 - Finish within 5 seconds. A validator past the limit is killed without warning, so it must not depend on cleaning up.
 - Write the answer and nothing else on stdout, in UTF-8 and at most 64 KiB (65536 bytes). Whitespace around the object is fine. Logs go to stderr.
@@ -435,11 +505,11 @@ Validation cannot prove everything. A wrong password or an unreachable database 
 
 With the Rust SDK, `monitor_hub_sdk::settings::answer` writes the answer and returns the exit code. See [`sdk-rust/README.md`](../sdk-rust/README.md).
 
-The Rust testkit and the conformance command read the answer with the same checks, and they differ in a few cases. The conformance command accepts keys in any letter case, such as `"Problems"`, and a `null` `name`; the Rust testkit rejects both. Inside a problem, the conformance command also reads `Name` or `NAME` as `name` and checks it against the declared names, while the Rust testkit ignores such a key. Write the keys in lower case, and leave `name` out or empty instead of `null`. The Rust testkit also rejects bytes that are not UTF-8 and a lone surrogate escape, such as `"\ud800"`, anywhere in the answer, while the conformance command accepts them. When the answer is not valid JSON, or a value has the wrong type, each side quotes its own decoder's message or names the problem that is not an object.
+The Rust testkit and the conformance command read the answer with the same checks, and they differ in a few cases. The conformance command accepts keys in any letter case, such as `"Problems"`. Inside a problem, it also reads `Path` or `PATH` as `path` and checks it against the file, while the Rust testkit ignores such a key. Write the keys in lower case. The Rust testkit also rejects bytes that are not UTF-8 and a lone surrogate escape, such as `"\ud800"`, anywhere in the answer, while the conformance command accepts them. When the answer is not valid JSON, or a value has the wrong type, each side quotes its own decoder's message or names the problem that is not an object.
 
 ### Variables the file does not declare
 
-The page will also let its user set variables the file does not declare, such as a proxy variable that a library reads. Only monitors that ship `settings.json` get them. Without the file, the hub cannot tell which names are dangerous, so nothing is editable. Such a name must match `^[A-Z][A-Z0-9_]*$`, must not be reserved, and must not be a field the file declares with `editable: false`.
+The page will also let its user set variables the file does not declare, such as a proxy variable that a library reads. Only monitors that ship `settings.json` get them. Without the file, the hub cannot tell which names are dangerous, so nothing is editable. Such a name must match `^[A-Z][A-Z0-9_]*$`, must not be reserved, and must not be a name a field declares in `env`.
 
 Declare every variable that makes the monitor run a program or read a file as `editable: false`, with a `reason`. Examples are a command that prints a password and the path of a password file. If the page could change them, anyone who can use the page could run a program inside the hub's container. Those variables stay in `.env`.
 
@@ -447,9 +517,9 @@ When a new version of the monitor declares a variable that was saved as an undec
 
 ### Keeping the file and the code in step
 
-Add a test that fails when the code reads a variable that `settings.json` does not declare, or when the file declares one the code does not read. Keep the names your configuration code reads in one list, so the test can compare that list with the file.
+Add a test that fails when the code and the file disagree. A document with every declared field must load into the monitor's configuration, and a document with a key the file does not declare must be refused, at every level. So make the configuration refuse unknown keys.
 
-In Rust, `monitor_hub_sdk_testkit::settings::assert_no_drift` makes that comparison, and `monitor_hub_sdk_testkit::settings::check` checks the file and runs the validator with an empty environment. See [`sdk-rust/README.md`](../sdk-rust/README.md). In other languages, run `monitor-conformance` with `-monitor-dir` (see [Conformance](#conformance)). It checks the file and the validator, and the comparison with the code is a test you write yourself.
+In Rust, `monitor_hub_sdk_testkit::settings::assert_no_drift::<T>` runs that test against your configuration type `T`. `full_document` builds the document with every field, and `undeclared_documents` builds one document with an extra key for each object. `check` checks the file and runs the validator with an empty environment and no descriptor. `command_with_document` runs the monitor with a document on a descriptor, the way the hub will hand it over. See [`sdk-rust/README.md`](../sdk-rust/README.md). In other languages, run `monitor-conformance` with `-monitor-dir` (see [Conformance](#conformance)). It checks the file and the validator, and the comparison with the code is a test you write yourself.
 
 ## Image layout
 
@@ -469,7 +539,7 @@ The hub image build copies that directory to `/opt/monitor-hub/monitors/<name>/`
 The `monitor-conformance` command starts your monitor through go-plugin, as the hub does, calls it over gRPC, and reports every rule it breaks. The start is not identical to the hub's: [What the monitor receives](#what-the-monitor-receives) lists the differences. Build the command from this repository, or run it at a released version:
 
 ```
-go run github.com/ItzTas/monitor-hub/sdk-go/cmd/monitor-conformance@v0.6.0 \
+go run github.com/ItzTas/monitor-hub/sdk-go/cmd/monitor-conformance@v0.7.0 \
   -min-events 2 -ready-timeout 10s -monitor-dir . -env EVENTS=2 -- ./my-monitor
 ```
 
@@ -497,6 +567,7 @@ Pass whatever configuration the monitor requires to produce events.
 With `-monitor-dir`, the command first runs the validator, which receives:
 
 - No environment variables at all: no `PATH`, no magic cookie and none of the `-env` variables.
+- No configuration document: no descriptor and no `MONITOR_HUB_CONFIG_FD`. The monitor builds its document from the empty environment through the [env bridge](#the-env-bridge).
 - `DIR` as its working directory.
 - The first word after `--`, with `validate-settings` as its only argument. The command finds that program as it finds the monitor: a path counts from the current directory, and a bare name is looked up in the command's own `PATH`, never in `DIR`. The hub looks in the monitor directory first, so pass the program as a path.
 
@@ -530,8 +601,8 @@ The suite checks that:
 
 With `-monitor-dir`, when `DIR` holds `settings.json`, the suite also checks that:
 
-- The file can be read and follows every rule in [`settings.json`](#settingsjson). Each broken field is one violation, for its first broken rule, except that a field without `name`, `label` or `type` gives one line for each attribute it lacks.
-- `validate-settings`, run as described in [What the monitor receives](#what-the-monitor-receives), finishes within 5 seconds, exits with `0` or `1`, writes at most 64 KiB on stdout, and prints one JSON object whose `problems` agree with its exit code, each with a `message` that is not empty or only spaces. An answer with exit code `1` that lists problems passes: a monitor with required settings is expected to answer that way to the empty environment. When the file follows every rule, each problem's `name` must also be empty or a field the file declares; that check comes last. A validator that waits for the magic cookie prints nothing and fails. Only the first problem with the validator is reported.
+- The file can be read and follows every rule in [`settings.json`](#settingsjson). Each broken field is one violation, for its first broken rule, with the text of the rules table. A problem with the file's format, such as bad JSON or a field without `name`, stops the reading and is the only violation for the file.
+- `validate-settings`, run as described in [What the monitor receives](#what-the-monitor-receives), finishes within 5 seconds, exits with `0` or `1`, writes at most 64 KiB on stdout, and prints one JSON object whose `problems` agree with its exit code, each with a `message` that is not empty or only spaces. An answer with exit code `1` that lists problems passes: a monitor with required settings is expected to answer that way to the empty environment. When the file follows every rule, each problem's `path` must also be empty or a path the file declares; that check comes last. A validator that waits for the magic cookie prints nothing and fails. Only the first problem with the validator is reported.
 
 When `DIR` has no `settings.json`, the suite checks nothing more and does not run the validator.
 
@@ -705,4 +776,5 @@ Generate the stubs from `monitor.proto` with your language's protoc plugin. Pin 
 - Implement `plugin.GRPCController/Shutdown`, or be ready to be killed after 2 seconds.
 - Give every event a non-empty `title` and an `occurred_at`, and pass `monitor-conformance`.
 - If you ship `settings.json`, answer `validate-settings` and keep both in step with the code.
+- Read your configuration once, at start, from the document (`MONITOR_HUB_CONFIG_FD` or the env bridge), and close the descriptor.
 - Write the reason for a failed start as the `error` attribute of an `error` line, with no secret in it.

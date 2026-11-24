@@ -2,8 +2,8 @@
 
 Two crates for writing monitor-hub monitors in Rust. The monitor protocol itself is described in [`docs/protocol.md`](../docs/protocol.md).
 
-- `monitor-hub-sdk` runs the monitor side of the protocol: the magic cookie check, the Unix socket, the handshake line, the gRPC health service, `Watch` and shutdown. It also writes logs in the format the hub reads, and answers `validate-settings` for monitors that declare their settings.
-- `monitor-hub-sdk-testkit` is for your tests: a runner for the hub's conformance suite, and checks for `settings.json` and `validate-settings`.
+- `monitor-hub-sdk` runs the monitor side of the protocol: the magic cookie check, the Unix socket, the handshake line, the gRPC health service, `Watch` and shutdown. It also writes logs in the format the hub reads, reads the configuration document, and answers `validate-settings` for monitors that declare their settings.
+- `monitor-hub-sdk-testkit` is for your tests: a runner for the hub's conformance suite, and checks for `settings.json`, `validate-settings` and the configuration that reads them.
 
 ## Setup
 
@@ -11,14 +11,14 @@ Both crates are versioned together and published as git tags of this repository.
 
 ```toml
 [dependencies]
-monitor-hub-sdk = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.4.0" }
+monitor-hub-sdk = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.5.0" }
 prost-types = "0.14.4"
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
 tonic = { version = "0.14.8", default-features = false, features = ["codegen"] }
 tracing = "0.1.44"
 
 [dev-dependencies]
-monitor-hub-sdk-testkit = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.4.0" }
+monitor-hub-sdk-testkit = { git = "https://github.com/ItzTas/monitor-hub", tag = "sdk-rust/v0.5.0" }
 ```
 
 Your crate implements the SDK's `Monitor` trait with `#[tonic::async_trait]` and builds messages with prost, so it needs its own `tonic` and `prost-types` dependencies, in the same 0.14 series as the SDK. This workspace uses `tonic` 0.14.8 and `prost-types` 0.14.4. `tracing` is what you log with.
@@ -26,6 +26,17 @@ Your crate implements the SDK's `Monitor` trait with `#[tonic::async_trait]` and
 Both crates build on Unix systems only.
 
 The SDK pins its toolchain in [`rust-toolchain.toml`](rust-toolchain.toml): Rust 1.99.1 with `rustfmt` and `clippy`, edition 2024. Pin the same version in your monitor's repository so both build with the same compiler.
+
+## Changes from 0.4
+
+0.5 reads `settings.json` version 2 and adds the [`config`](#reading-the-configuration) module, which reads the configuration document. These changes break code written for 0.4:
+
+- `settings::parse` refuses `settings_version` 1 with `SettingsError::UnsupportedVersion`, like every version other than 2.
+- `Problem` has `path` in place of `name`, and an answer writes `path`.
+- `Field.default` is a `serde_json::Value`, not a string, and `Field.editable` is an `Option<bool>`.
+- `SettingsError::Field` has a `path` such as `fields[2].fields[0]` in place of an `index`.
+- `FieldProblem` follows the version 2 rules. For example, `ReservedName` is now `EnvReserved`, about `env`.
+- The testkit's `assert_no_drift` takes your configuration type, `assert_no_drift::<Config>(settings_json)`, in place of a list of names.
 
 ## A minimal monitor
 
@@ -325,41 +336,60 @@ Only `tracing` events are captured. Crates that log through the `log` crate writ
 
 ## Settings
 
-A monitor can declare its settings in a `settings.json` file next to `monitor.json` and check a set of values when it is run with the `validate-settings` argument. [Settings](../docs/protocol.md#settings) in the protocol document has the file's format and the rules for the answer. The `monitor_hub_sdk::settings` module covers the Rust side.
+A monitor can declare its settings in a `settings.json` file next to `monitor.json`, read their values from one configuration document, and check a set of values when it is run with the `validate-settings` argument. [Settings](../docs/protocol.md#settings) in the protocol document has the file's format, the document and the rules for the answer. The `monitor_hub_sdk::config` module reads the document, and `monitor_hub_sdk::settings` covers the file and the answer.
 
-### Answering `validate-settings`
+### Reading the configuration
 
-Look for the argument first in `main`, before logging starts and before anything checks the magic cookie, because the validator runs without the cookie. The [`fixed`](crates/sdk/examples/fixed.rs) example does the same:
+Embed `settings.json` in the binary, give it to `config::load`, and turn the document into a struct of your own with `serde_json::from_value`. Your crate needs `serde` with the `derive` feature and `serde_json` for that; this workspace uses 1.0.229 and 1.0.154. Look for `validate-settings` first in `main`, before logging starts and before anything checks the magic cookie, because the validator runs without the cookie. The [`fixed`](crates/sdk/examples/fixed.rs) example does the same:
 
 ```rust
 use std::env;
 use std::process::ExitCode;
 
 use monitor_hub_sdk::settings::{self, Problem, VALIDATE_SETTINGS_ARG};
-use monitor_hub_sdk::{Notifier, ServeError, logging, serve};
+use monitor_hub_sdk::{Notifier, ServeError, config, logging, serve};
+use serde::Deserialize;
+use serde_json::Value;
 
-fn problems() -> Vec<Problem> {
-    let mut problems = Vec::new();
-    match env::var("CHECK_INTERVAL_MINUTES").as_deref() {
-        Err(env::VarError::NotPresent) | Ok("") => {}
-        Ok(raw) if raw.parse::<u32>().is_ok() => {}
-        _ => problems.push(Problem::new(
-            "CHECK_INTERVAL_MINUTES",
-            "use a whole number of minutes",
-        )),
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Config {
+    #[serde(default)]
+    watch_terms: Vec<String>,
+    check_interval: String,
+}
+
+fn read_config() -> Result<Config, Vec<Problem>> {
+    let document = config::load(include_str!("../settings.json")).map_err(|err| err.problems())?;
+    let config: Config = serde_json::from_value(Value::Object(document))
+        .map_err(|err| vec![Problem::new("", err.to_string())])?;
+    if config.watch_terms.is_empty() {
+        return Err(vec![Problem::new("watch_terms", "set at least one term")]);
     }
-    problems
+    Ok(config)
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
     if env::args_os().skip(1).eq([VALIDATE_SETTINGS_ARG]) {
-        return settings::answer(&problems());
+        return settings::answer(&read_config().err().unwrap_or_default());
     }
     if let Err(err) = logging::init("info") {
         eprintln!("cannot start logging: {err}");
         return ExitCode::FAILURE;
     }
+    let config = match read_config() {
+        Ok(config) => config,
+        Err(problems) => {
+            let reasons: Vec<String> = problems
+                .iter()
+                .map(|problem| format!("{}: {}", problem.path, problem.message))
+                .collect();
+            tracing::error!(error = %reasons.join("; "), "invalid configuration");
+            return ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(terms = config.watch_terms.len(), interval = %config.check_interval, "configured");
     let notifier = Notifier::new();
     notifier.events_recorded(1);
     match serve(Ping, notifier).await {
@@ -373,22 +403,46 @@ async fn main() -> ExitCode {
 }
 ```
 
-`Ping` is the monitor from [A minimal monitor](#a-minimal-monitor). `Problem::new(name, message)` builds one problem: `name` is the declared field it is about, or `""` for a problem with several fields together. Collect every problem before you answer, and never put the value of a secret field in a message.
+`Ping` is the monitor from [A minimal monitor](#a-minimal-monitor), and the file declares `watch_terms` as a list of strings and `check_interval` as a duration with a default. `include_str!` takes a path relative to the source file, so `../settings.json` fits a file in `src/` and a `settings.json` at the crate root.
 
-`answer` writes `{"problems":[...]}` and a newline on stdout, flushes it, and returns the exit code: `0` when the list is empty, `1` when it is not, and `2` when stdout cannot be written. Write nothing else on stdout. `write_answer(out, problems)` does the same into any `Write` and returns the code as a `u8`. `VALIDATE_SETTINGS_LIMIT` (5 seconds) and `ANSWER_LIMIT` (65536 bytes) hold the protocol's limits.
+`config::load(settings_json)` parses the file. Then it reads the document from the descriptor that `MONITOR_HUB_CONFIG_FD` names, and closes the descriptor. When that variable is unset or empty, it builds the document from the environment through the env bridge instead. It applies the defaults either way and returns a `config::Document`, which is a `serde_json` map. The descriptor is read once per process: a second `load` that finds `MONITOR_HUB_CONFIG_FD` returns `LoadError::AlreadyTaken`, so load once and keep the result.
+
+`load` does not check the values against their types, so a value of the wrong type stays in the document until `serde_json::from_value` refuses it. Put `#[serde(deny_unknown_fields)]` on every struct, so a key the file does not declare is refused too. The testkit then proves that the struct and the file agree (see [the testkit's Settings](#settings-1)). A field without a default that the document may leave out, such as `watch_terms` above, needs `#[serde(default)]` or an `Option`. Then your own check can report the missing value with its path, instead of `serde` failing with a general error.
+
+`load` returns a `LoadError`:
+
+- `Settings(error)`: the file does not parse.
+- `Descriptor(text)`: `MONITOR_HUB_CONFIG_FD` is not a number of 3 or more.
+- `AlreadyTaken`: the process has already read the descriptor.
+- `Read(error)`: the descriptor cannot be read.
+- `TooLarge`: the document is larger than 64 KiB.
+- `NotAnObject`: the document is not a JSON object.
+- `Environment(problems)`: environment variables hold text that does not convert, one `Problem` each.
+
+`err.problems()` returns the `Environment` problems as they are. Any other error becomes one problem with an empty path, with the error and its causes as the message. Either way the result is ready for `settings::answer`. `LoadError` is `#[non_exhaustive]`, so a `match` on it needs a wildcard arm.
+
+The steps of `load` are public too. `from_descriptor(settings, fd)` reads a document from a descriptor you own. `from_lookup(settings, lookup)` builds one through the bridge from any lookup, such as `|name| std::env::var_os(name)`. `with_defaults(settings, document)` applies the defaults, and `descriptor_number(text)` reads the variable's value. `CONFIG_FD_ENV` holds the variable's name and `DOCUMENT_LIMIT` the 64 KiB limit.
+
+### Answering `validate-settings`
+
+`settings::answer(problems)` writes `{"problems":[...]}` and a newline on stdout, flushes it, and returns the exit code: `0` when the list is empty, `1` when it is not, and `2` when stdout cannot be written. Write nothing else on stdout. `write_answer(out, problems)` does the same into any `Write` and returns the code as a `u8`. `VALIDATE_SETTINGS_LIMIT` (5 seconds) and `ANSWER_LIMIT` (65536 bytes) hold the protocol's limits.
+
+`Problem::new(path, message)` builds one problem. `path` names the value it is about, such as `watch_terms` or `rules[2].process`, or is `""` for a problem with several fields together or with the whole document. Collect every problem before you answer, and never put the value of a secret field in a message.
 
 ### Reading the file
 
 `parse(bytes)` reads a `settings.json` by the protocol's rules. It returns `Settings`, with `settings_version` and `fields`, or the first error it finds as a `SettingsError`:
 
 - `ByteOrderMark`: the file starts with a UTF-8 byte order mark.
-- `Format(error)`: the JSON itself is wrong, for example an unknown attribute or `type`. The `serde_json` error is its source.
-- `UnsupportedVersion(version)`: `settings_version` is not 1.
-- `Field { index, problem }`: field `index` breaks a rule, described by a `FieldProblem`.
+- `Format(error)`: the JSON itself is wrong, for example an unknown attribute or `type`, a key written twice, or an array where an object belongs. The `serde_json` error is its source.
+- `UnsupportedVersion(version)`: `settings_version` is not 2.
+- `Field { path, problem }`: the field at `path`, such as `fields[2].items.fields[0]`, breaks a rule, described by a `FieldProblem`.
 
-`is_reserved(name)` says whether the hub reserves a name. A monitor does not need `parse` at run time, because the file is for the hub. The testkit uses it.
+A `Field` holds the file's attributes, with `kind` for `type`. Its `default` is a `serde_json::Value`, and its `editable` is an `Option<bool>` that `is_editable()` reads. `fields` and `items` hold the fields of an object and the `Item` of a list, which has `kind`, `options` and `fields`. `SETTINGS_VERSION` is 2 and `MAX_DEPTH` is 4.
 
-`Settings`, `Field`, `FieldType`, `SettingsError`, `FieldProblem`, `Problem` and `Answer` are `#[non_exhaustive]`. A `match` on `FieldType`, `SettingsError` or `FieldProblem` needs a wildcard arm, a pattern on `SettingsError::Field` needs `..`, and other crates build a `Problem` with `Problem::new`.
+`Settings::declares(path)` says whether a path, such as `rules[2].process`, names a value of the document. The empty path does. `parse_duration(text)` reads Go's duration syntax, such as `1h30m`, into nanoseconds, or returns `None`; the rules use it to check a `duration` default. `is_reserved(name)` says whether the hub reserves an environment variable name.
+
+`Settings`, `Field`, `Item`, `FieldType`, `SettingsError`, `FieldProblem`, `Problem` and `Answer` are `#[non_exhaustive]`. A `match` on `FieldType`, `SettingsError` or `FieldProblem` needs a wildcard arm, a pattern on `SettingsError::Field` needs `..`, and other crates build a `Problem` with `Problem::new`.
 
 ## Testing with the testkit
 
@@ -427,7 +481,7 @@ fn the_monitor_conforms() {
 `run` finds the command in this order:
 
 1. The `MONITOR_CONFORMANCE` environment variable: the path of an already built `monitor-conformance` binary.
-2. `go install github.com/ItzTas/monitor-hub/sdk-go/cmd/monitor-conformance@v0.6.0`, when `go` is on `PATH`. The Go tag is `sdk-go/v0.6.0`, and the constant `SDK_GO_VERSION` holds it. The binary goes to `monitor-hub/monitor-conformance/v0.6.0/` under a cache base: `$XDG_CACHE_HOME` when it is an absolute path, otherwise `$HOME/.cache` when `HOME` is absolute.
+2. `go install github.com/ItzTas/monitor-hub/sdk-go/cmd/monitor-conformance@v0.7.0`, when `go` is on `PATH`. The Go tag is `sdk-go/v0.7.0`, and the constant `SDK_GO_VERSION` holds it. The binary goes to `monitor-hub/monitor-conformance/v0.7.0/` under a cache base: `$XDG_CACHE_HOME` when it is an absolute path, otherwise `$HOME/.cache` when `HOME` is absolute.
    - `run` uses the base only when it exists or can be created, is a real directory and not a symbolic link, belongs to you, and is not writable by group or others. It creates a missing base with mode 0700. Each directory below the base must belong to you too, and `run` sets it to mode 0700. `run` checks the base itself but not its parents: a base inside a directory that other users can rename is your responsibility.
    - The binary is installed once per version. Later test runs reuse it while it is a regular file that you own and can execute; otherwise `run` installs it again. `go install` writes to a staging directory next to the binary, which is then renamed into place, so test processes that install at the same time do not corrupt each other. `go install` is stopped after ten minutes, and the next install removes staging directories older than that, such as those left by a killed run.
    - In every other case the binary goes to a private temporary directory, one per test process, which stays behind after the process ends: when neither variable gives an absolute path, or when the base or a directory below it fails the checks above, for example `HOME=/` in a container started with `--user`. `run` then says once on stderr why it did not use the cache. Unsetting both `XDG_CACHE_HOME` and `HOME` always selects the temporary directory; `go` itself then needs `GOCACHE` and `GOPATH` set.
@@ -444,7 +498,7 @@ Of the command's stderr, and of the Go tool's output, only the last 1 MiB is kep
 
 ### Settings
 
-`monitor_hub_sdk_testkit::settings` has two checks for a monitor that ships `settings.json`. The first runs your built binary, so put it in `tests/`:
+`monitor_hub_sdk_testkit::settings` has checks for a monitor that ships `settings.json`. The first runs your built binary, so put it in `tests/`:
 
 ```rust
 use monitor_hub_sdk_testkit::settings::check;
@@ -459,26 +513,45 @@ fn the_settings_contract_holds() {
 }
 ```
 
-`check(dir, program)` reads `dir/settings.json` with `parse`, then runs `program validate-settings` in `dir` with an empty environment. It returns one line per violation, and an empty list when both pass. It reports at most one problem with the file and one with the validator. A validator that exits with code 1 and lists problems passes: with an empty environment, that is the expected answer of a monitor with required settings. What the validator writes to stderr is read and thrown away. The file must exist: without it, `check` reports that it cannot read it. `check` stops a validator that runs longer than 5 seconds, together with its process group: it sends SIGTERM, then SIGKILL five seconds later, so a validator that ignores SIGTERM makes `check` take about 11 seconds.
+`check(dir, program)` reads `dir/settings.json` with `parse`, then runs `program validate-settings` in `dir` with an empty environment and no descriptor, so the monitor builds its document from nothing through the env bridge. It returns one line per violation, and an empty list when both pass. It reports at most one problem with the file and one with the validator. A validator that exits with code 1 and lists problems passes: with an empty environment, that is the expected answer of a monitor with required settings. When the file parses, each problem's path must be empty or declared by the file. What the validator writes to stderr is read and thrown away. The file must exist: without it, `check` reports that it cannot read it. `check` stops a validator that runs longer than 5 seconds, together with its process group: it sends SIGTERM, then SIGKILL five seconds later, so a validator that ignores SIGTERM makes `check` take about 11 seconds.
 
 `check` runs `program` exactly as given, made absolute against the current directory. A bare name such as `validator` becomes `<current directory>/validator` and is not looked up in `PATH`, so pass a full path, for example `env!("CARGO_BIN_EXE_<name>")`.
 
-`assert_no_drift(settings_json, read)` compares the file with the list of names your configuration code reads. When they disagree, it panics and names what is read but not declared and what is declared but not read. Reserved names in the list, such as `PATH`, are ignored, and so are repeats. It also panics when the file does not parse. Keep the list in your configuration module and test it there:
+`assert_no_drift::<T>(settings_json)` proves that your configuration type `T` and the file agree. It panics unless `T` reads a document with a value for every declared field and refuses every document that adds a key the file does not declare. There is one such document for each object in the full document, nested ones included. It also panics when the file does not parse. Test it next to your configuration:
 
 ```rust
-pub const NAMES: &[&str] = &["CHECK_INTERVAL_MINUTES", "DATABASE_URL", "WATCH_TERMS"];
-
 #[cfg(test)]
 mod tests {
     #[test]
     fn settings_json_declares_what_the_configuration_reads() {
         let settings = include_str!("../settings.json");
-        monitor_hub_sdk_testkit::settings::assert_no_drift(settings, super::NAMES);
+        monitor_hub_sdk_testkit::settings::assert_no_drift::<super::Config>(settings);
     }
 }
 ```
 
-`include_str!` takes a path relative to the source file, so `../settings.json` fits a module in `src/` and a file at the crate root.
+The second half can only pass when every struct of `T` has `#[serde(deny_unknown_fields)]`. For tests of your own, `full_document(settings_json)` returns the document with every field, and `undeclared_documents(settings_json)` returns the documents with an extra key, each with the path of that key. In the full document, a field holds its `default`, or else a sample of its type: `"x"`, `1`, `1.5`, `true`, `"1m"`, the first option, an object with every field, or a list of one item.
+
+`command_with_document(program, args, document)` runs the monitor with a document on a descriptor, the way the hub will hand it over:
+
+```rust
+use monitor_hub_sdk_testkit::settings::command_with_document;
+
+#[test]
+fn the_validator_reads_the_document() {
+    let document = br#"{"watch_terms": ["Paulo Santos"]}"#;
+    let mut run = command_with_document(
+        env!("CARGO_BIN_EXE_my-monitor"),
+        &["validate-settings"],
+        document,
+    )
+    .unwrap();
+    let output = run.command.output().unwrap();
+    assert_eq!(output.status.code(), Some(0));
+}
+```
+
+It returns a `DocumentCommand`, whose `command` field is a `std::process::Command`. That command runs `program` with `args` through `/bin/sh`, with the document on descriptor 3 and `MONITOR_HUB_CONFIG_FD=3`. The environment starts empty: add variables with `env` or `envs`, and never call `env_clear`, which would remove `MONITOR_HUB_CONFIG_FD`. The document is a temporary file that goes away with the `DocumentCommand`, so keep that alive until the command has started.
 
 The conformance command reads the file with its own rules, which accept a few things `parse` rejects (see [Settings](../docs/protocol.md#settings)). To run that check too, set `monitor_dir` on the conformance run.
 
