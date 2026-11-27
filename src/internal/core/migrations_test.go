@@ -269,6 +269,10 @@ func TestMigration00005CascadesAndConstraints(t *testing.T) {
 	expectCode(t, db, "same token grant twice", `INSERT INTO token_grants (token_id, monitor, action) SELECT id, 'sei', 'view' FROM tokens`, "23505")
 	expectCode(t, db, "same token grant for all twice", `INSERT INTO token_grants (token_id, monitor, action) SELECT id, NULL, 'view' FROM tokens UNION ALL SELECT id, NULL, 'view' FROM tokens`, "23505")
 	expectCode(t, db, "same credential grant twice", `INSERT INTO credential_grants (credential_id, monitor, action) SELECT id, 'sei', 'hook' FROM credentials`, "23505")
+	expectCode(t, db, "same credential grant for all twice", `INSERT INTO credential_grants (credential_id, monitor, action) SELECT id, NULL, 'hook' FROM credentials UNION ALL SELECT id, NULL, 'hook' FROM credentials`, "23505")
+	expectCode(t, db, "same login twice", `INSERT INTO users (login, password_hash) VALUES ('paulo-santos', 'other-hash')`, "23505")
+	expectCode(t, db, "same token hash twice", `INSERT INTO tokens (user_id, label, hash) SELECT id, 'feed', 'token-hash' FROM users`, "23505")
+	expectCode(t, db, "same credential username twice", `INSERT INTO credentials (user_id, label, username, secret_hash) SELECT id, 'other', 'sei-hook', 'other-hash' FROM users`, "23505")
 	expectCode(t, db, "grant on a missing monitor", `INSERT INTO user_grants (user_id, monitor, action) SELECT id, 'nobody', 'view' FROM users`, "23503")
 
 	execAll(t, db, `DELETE FROM monitors WHERE name = 'sei'`)
@@ -277,7 +281,15 @@ func TestMigration00005CascadesAndConstraints(t *testing.T) {
 	expect(t, "credential grants", count(t, db, "credential_grants"), 0)
 
 	execAll(t, db,
+		`INSERT INTO credential_grants (credential_id, monitor, action) SELECT id, NULL, 'hook' FROM credentials`,
+		`DELETE FROM credentials`,
+	)
+	expect(t, "credential grants of a deleted credential", count(t, db, "credential_grants"), 0)
+
+	execAll(t, db,
 		`INSERT INTO token_grants (token_id, monitor, action) SELECT id, NULL, 'check' FROM tokens`,
+		`INSERT INTO credentials (user_id, label, username, secret_hash) SELECT id, 'hook', 'sei-hook', 'secret-hash' FROM users`,
+		`INSERT INTO credential_grants (credential_id, monitor, action) SELECT id, NULL, 'hook' FROM credentials`,
 		`DELETE FROM users`,
 	)
 	for _, table := range []string{"user_grants", "tokens", "token_grants", "credentials", "credential_grants", "sessions"} {
