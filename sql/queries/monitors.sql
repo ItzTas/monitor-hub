@@ -26,3 +26,11 @@ UPDATE monitors SET baselined_at = now() WHERE name = $1 AND baselined_at IS NUL
 SELECT name, display_name, version, state, message, last_check_started_at, last_success_at, next_check_at, status_seen_at
 FROM monitors
 ORDER BY name;
+
+-- name: EnsureMonitors :exec
+INSERT INTO monitors (name, display_name, version)
+SELECT unnest(sqlc.arg(names)::text[]), '', ''
+ON CONFLICT (name) DO NOTHING;
+
+-- name: MonitorNames :many
+SELECT name FROM monitors ORDER BY name;

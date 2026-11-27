@@ -32,6 +32,7 @@ type command func(ctx context.Context, args, environ []string, term terminal) er
 func Run(ctx context.Context, args, environ []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	commands := map[string]command{
 		"consumers":     consumersCommand,
+		"users":         usersCommand,
 		"serve":         serve,
 		"whatsapp-pair": whatsAppPair,
 	}

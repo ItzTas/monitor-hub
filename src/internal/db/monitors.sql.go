@@ -37,6 +37,17 @@ func (q *Queries) CompleteMonitorBaseline(ctx context.Context, name string) erro
 	return err
 }
 
+const ensureMonitors = `-- name: EnsureMonitors :exec
+INSERT INTO monitors (name, display_name, version)
+SELECT unnest($1::text[]), '', ''
+ON CONFLICT (name) DO NOTHING
+`
+
+func (q *Queries) EnsureMonitors(ctx context.Context, names []string) error {
+	_, err := q.db.Exec(ctx, ensureMonitors, names)
+	return err
+}
+
 const listMonitors = `-- name: ListMonitors :many
 SELECT name, display_name, version, state, message, last_check_started_at, last_success_at, next_check_at, status_seen_at
 FROM monitors
@@ -99,6 +110,30 @@ func (q *Queries) MonitorCursor(ctx context.Context, name string) (MonitorCursor
 	var i MonitorCursorRow
 	err := row.Scan(&i.Cursor, &i.BaselinedAt)
 	return i, err
+}
+
+const monitorNames = `-- name: MonitorNames :many
+SELECT name FROM monitors ORDER BY name
+`
+
+func (q *Queries) MonitorNames(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, monitorNames)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const saveMonitorDescription = `-- name: SaveMonitorDescription :exec
