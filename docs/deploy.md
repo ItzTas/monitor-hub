@@ -816,4 +816,4 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
 
 ## 10. Known issues
 
-The hub is built with the Go version pinned in the repository. That version carries two standard-library advisories, GO-2026-6859 and GO-2026-6809, and the hub's dependencies carry two more that its code does not call (`golang.org/x/net` 0.61.0 and `golang.org/x/crypto` 0.58.0). Raising the pinned Go version is the owner's decision.
+The hub's dependencies carry three advisories that its code does not call: GO-2026-6866 and GO-2026-6860 in `golang.org/x/net` 0.61.0, both fixed in 0.62.0, and GO-2026-5932 in `golang.org/x/crypto` 0.58.0, about its unmaintained `openpgp` package. `govulncheck ./...` lists them among the modules the hub requires.
