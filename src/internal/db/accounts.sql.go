@@ -8,6 +8,8 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countAdmins = `-- name: CountAdmins :one
@@ -19,6 +21,24 @@ func (q *Queries) CountAdmins(ctx context.Context) (int64, error) {
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteExpiredSessions = `-- name: DeleteExpiredSessions :exec
+DELETE FROM sessions WHERE expires_at <= $1
+`
+
+func (q *Queries) DeleteExpiredSessions(ctx context.Context, expiresAt time.Time) error {
+	_, err := q.db.Exec(ctx, deleteExpiredSessions, expiresAt)
+	return err
+}
+
+const deleteSession = `-- name: DeleteSession :exec
+DELETE FROM sessions WHERE id_hash = $1
+`
+
+func (q *Queries) DeleteSession(ctx context.Context, idHash string) error {
+	_, err := q.db.Exec(ctx, deleteSession, idHash)
+	return err
 }
 
 const deleteUser = `-- name: DeleteUser :execrows
@@ -33,12 +53,36 @@ func (q *Queries) DeleteUser(ctx context.Context, login string) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const deleteUserGrants = `-- name: DeleteUserGrants :exec
+DELETE FROM user_grants WHERE user_id = $1
+`
+
+func (q *Queries) DeleteUserGrants(ctx context.Context, userID int64) error {
+	_, err := q.db.Exec(ctx, deleteUserGrants, userID)
+	return err
+}
+
 const deleteUserSessions = `-- name: DeleteUserSessions :exec
 DELETE FROM sessions WHERE user_id = $1
 `
 
 func (q *Queries) DeleteUserSessions(ctx context.Context, userID int64) error {
 	_, err := q.db.Exec(ctx, deleteUserSessions, userID)
+	return err
+}
+
+const insertSession = `-- name: InsertSession :exec
+INSERT INTO sessions (id_hash, user_id, expires_at) VALUES ($1, $2, $3)
+`
+
+type InsertSessionParams struct {
+	IDHash    string
+	UserID    int64
+	ExpiresAt time.Time
+}
+
+func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
+	_, err := q.db.Exec(ctx, insertSession, arg.IDHash, arg.UserID, arg.ExpiresAt)
 	return err
 }
 
@@ -66,6 +110,22 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (int64, 
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const insertUserGrant = `-- name: InsertUserGrant :exec
+INSERT INTO user_grants (user_id, monitor, action) VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING
+`
+
+type InsertUserGrantParams struct {
+	UserID  int64
+	Monitor pgtype.Text
+	Action  string
+}
+
+func (q *Queries) InsertUserGrant(ctx context.Context, arg InsertUserGrantParams) error {
+	_, err := q.db.Exec(ctx, insertUserGrant, arg.UserID, arg.Monitor, arg.Action)
+	return err
 }
 
 const listUsers = `-- name: ListUsers :many
@@ -113,6 +173,31 @@ SELECT pg_advisory_xact_lock(1836019305)
 func (q *Queries) LockAccess(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, lockAccess)
 	return err
+}
+
+const sessionPerson = `-- name: SessionPerson :one
+SELECT u.id, u.login, u.admin
+FROM sessions s
+JOIN users u ON u.id = s.user_id
+WHERE s.id_hash = $1 AND s.expires_at > $2::timestamptz AND u.disabled_at IS NULL
+`
+
+type SessionPersonParams struct {
+	IDHash string
+	Now    time.Time
+}
+
+type SessionPersonRow struct {
+	ID    int64
+	Login string
+	Admin bool
+}
+
+func (q *Queries) SessionPerson(ctx context.Context, arg SessionPersonParams) (SessionPersonRow, error) {
+	row := q.db.QueryRow(ctx, sessionPerson, arg.IDHash, arg.Now)
+	var i SessionPersonRow
+	err := row.Scan(&i.ID, &i.Login, &i.Admin)
+	return i, err
 }
 
 const setUserAdmin = `-- name: SetUserAdmin :exec
@@ -183,6 +268,31 @@ func (q *Queries) UserByLogin(ctx context.Context, login string) (UserByLoginRow
 		&i.Admin,
 		&i.DisabledAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const userForLogin = `-- name: UserForLogin :one
+SELECT id, login, admin, disabled_at, password_hash FROM users WHERE login = $1
+`
+
+type UserForLoginRow struct {
+	ID           int64
+	Login        string
+	Admin        bool
+	DisabledAt   *time.Time
+	PasswordHash string
+}
+
+func (q *Queries) UserForLogin(ctx context.Context, login string) (UserForLoginRow, error) {
+	row := q.db.QueryRow(ctx, userForLogin, login)
+	var i UserForLoginRow
+	err := row.Scan(
+		&i.ID,
+		&i.Login,
+		&i.Admin,
+		&i.DisabledAt,
+		&i.PasswordHash,
 	)
 	return i, err
 }

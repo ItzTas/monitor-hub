@@ -37,3 +37,28 @@ SELECT count(*) FROM users WHERE admin AND disabled_at IS NULL;
 
 -- name: DeleteUserSessions :exec
 DELETE FROM sessions WHERE user_id = $1;
+
+-- name: UserForLogin :one
+SELECT id, login, admin, disabled_at, password_hash FROM users WHERE login = $1;
+
+-- name: InsertSession :exec
+INSERT INTO sessions (id_hash, user_id, expires_at) VALUES ($1, $2, $3);
+
+-- name: SessionPerson :one
+SELECT u.id, u.login, u.admin
+FROM sessions s
+JOIN users u ON u.id = s.user_id
+WHERE s.id_hash = sqlc.arg(id_hash) AND s.expires_at > sqlc.arg(now)::timestamptz AND u.disabled_at IS NULL;
+
+-- name: DeleteSession :exec
+DELETE FROM sessions WHERE id_hash = $1;
+
+-- name: DeleteExpiredSessions :exec
+DELETE FROM sessions WHERE expires_at <= $1;
+
+-- name: DeleteUserGrants :exec
+DELETE FROM user_grants WHERE user_id = $1;
+
+-- name: InsertUserGrant :exec
+INSERT INTO user_grants (user_id, monitor, action) VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING;
