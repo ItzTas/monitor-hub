@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -188,5 +189,28 @@ func TestEveryRouteDeclaresAGate(t *testing.T) {
 	}
 	if routes == 0 {
 		t.Fatal("no route registered")
+	}
+}
+
+func TestNoErrorEchoesARequestValue(t *testing.T) {
+	const value = "a value from the request"
+	mux := http.NewServeMux()
+	humaAPI := humago.New(mux, HumaConfig(slog.New(slog.DiscardHandler), "test", "test"))
+	huma.Register(humaAPI, huma.Operation{OperationID: "refuse", Method: http.MethodGet, Path: "/refuse"}, func(context.Context, *struct{}) (*struct{}, error) {
+		return nil, huma.Error422UnprocessableEntity("refused", &huma.ErrorDetail{Message: "not accepted", Location: "body.field", Value: value})
+	})
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/refuse", nil))
+
+	var model struct {
+		Errors []map[string]any `json:"errors"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &model); err != nil || rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("refuse = %d (%v), want 422", rec.Code, err)
+	}
+	want := []map[string]any{{"message": "not accepted", "location": "body.field"}}
+	if !reflect.DeepEqual(model.Errors, want) || strings.Contains(rec.Body.String(), value) {
+		t.Errorf("the error details = %v, want %v without the value", model.Errors, want)
 	}
 }
