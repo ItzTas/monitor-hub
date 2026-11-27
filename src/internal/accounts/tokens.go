@@ -115,10 +115,18 @@ func newToken(owner access.Principal, req TokenRequest, now time.Time) Token {
 	return Token{
 		Owner:       owner.Login(),
 		Label:       req.Label,
-		Permissions: slices.Clone(req.Permissions),
+		Permissions: sorted(req.Permissions),
 		CreatedAt:   now,
 		ExpiresAt:   req.ExpiresAt,
 	}
+}
+
+// sorted orders by slug and drops repeats, like Me: the database orders by
+// monitor name in its own collation.
+func sorted(perms []access.Permission) []access.Permission {
+	out := slices.Clone(perms)
+	slices.SortFunc(out, func(a, b access.Permission) int { return strings.Compare(a.String(), b.String()) })
+	return slices.Compact(out)
 }
 
 // Tokens lists the tokens of userID, or of everyone when userID is 0.
@@ -145,7 +153,7 @@ func (s *Service) Tokens(ctx context.Context, userID int64) ([]Token, error) {
 			ID:          r.ID,
 			Owner:       r.Login,
 			Label:       r.Label,
-			Permissions: permissions[r.ID],
+			Permissions: sorted(permissions[r.ID]),
 			CreatedAt:   r.CreatedAt,
 			ExpiresAt:   r.ExpiresAt,
 			LastUsedAt:  r.LastUsedAt,

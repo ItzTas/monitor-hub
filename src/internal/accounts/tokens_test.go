@@ -360,3 +360,40 @@ func TestRevokeFindsOnlyTheOwnersTokens(t *testing.T) {
 		list("everyone's after the revocations", 0, item("paulo-santos", "later"))
 	}
 }
+
+func TestCreateReturnsThePermissionsAsListed(t *testing.T) {
+	s, _ := newService(t)
+	if err := s.Prepare(t.Context(), []string{"sei", "sei-x"}); err != nil {
+		t.Fatal(err)
+	}
+	create(t, s, "ana-lima", true)
+	ana := principalOf(t, s, "ana-lima")
+	given := permissions(t, "monitor:sei:hook", "monitor:sei-x:hook", "monitor:*:hook", "monitor:sei:hook")
+	want := permissions(t, "monitor:*:hook", "monitor:sei-x:hook", "monitor:sei:hook")
+
+	token, _ := createToken(t, s, ana, TokenRequest{Label: "rss", Permissions: given})
+	credential, _, err := s.CreateCredential(t.Context(), ana, "alerts-ana", TokenRequest{Label: "alerts", Permissions: given})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens, err := s.Tokens(t.Context(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := s.Credentials(t.Context(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string][]access.Permission{
+		"the created token":      token.Permissions,
+		"the listed token":       tokens[0].Permissions,
+		"the created credential": credential.Permissions,
+		"the listed credential":  credentials[0].Permissions,
+	}
+	for name, perms := range got {
+		if !reflect.DeepEqual(perms, want) {
+			t.Errorf("%s has %v; want %v, sorted by slug without repeats", name, perms, want)
+		}
+	}
+}
