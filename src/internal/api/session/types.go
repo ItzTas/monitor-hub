@@ -20,14 +20,10 @@ func (r *request) Resolve(ctx huma.Context) []error {
 
 type CreateInput struct {
 	request
-	Body Credentials
-}
-
-// Credentials takes missing and unknown fields: huma's error for them would echo the body, password included.
-type Credentials struct {
-	_        struct{} `additionalProperties:"true"`
-	Login    string   `json:"login" required:"false" doc:"The person's login."`
-	Password string   `json:"password" required:"false" doc:"The person's password."`
+	Body struct {
+		Login    string `json:"login" doc:"The person's login."`
+		Password string `json:"password" doc:"The person's password."`
+	}
 }
 
 type CreateOutput struct {

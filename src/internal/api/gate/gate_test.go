@@ -45,7 +45,8 @@ func onlyAdmins(ctx context.Context, input *struct{}) (*callerOutput, error) {
 }
 
 // newMux serves /anyone, /identified and /session at their level for every
-// method, /unmarked without a level and /admin behind NeedAdmin.
+// method, /unmarked without a level, /unknown with a level the gate does not
+// know and /admin behind NeedAdmin.
 func newMux(resolver Resolver) *http.ServeMux {
 	mux := http.NewServeMux()
 	config := huma.DefaultConfig("test", "1.0.0")
@@ -59,6 +60,7 @@ func newMux(resolver Resolver) *http.ServeMux {
 		}
 	}
 	huma.Register(api, huma.Operation{OperationID: "unmarked", Method: http.MethodGet, Path: "/unmarked"}, answer)
+	huma.Register(api, huma.Operation{OperationID: "unknown", Method: http.MethodGet, Path: "/unknown", Metadata: Meta("everyone")}, answer)
 	huma.Register(api, huma.Operation{OperationID: "admin", Method: http.MethodGet, Path: "/admin", Metadata: Meta(Session)}, onlyAdmins)
 	return mux
 }
@@ -170,6 +172,7 @@ func TestEachLevelLetsInWhoItShould(t *testing.T) {
 		"nobody":              nil,
 		"a session":           {cookie(f.session)},
 		"a token":             {bearer(f.token)},
+		"a lowercase bearer":  {func(r *http.Request) { r.Header.Set("Authorization", "bearer "+f.token) }},
 		"an admin session":    {cookie(f.adminSession)},
 		"the token of admins": {bearer(f.adminToken)},
 	}
@@ -189,12 +192,16 @@ func TestEachLevelLetsInWhoItShould(t *testing.T) {
 		{"/identified", "nobody", http.StatusUnauthorized, 0},
 		{"/identified", "a session", http.StatusOK, access.Session},
 		{"/identified", "a token", http.StatusOK, access.Token},
+		{"/identified", "a lowercase bearer", http.StatusOK, access.Token},
 		{"/session", "nobody", http.StatusUnauthorized, 0},
 		{"/session", "a session", http.StatusOK, access.Session},
 		{"/session", "a token", http.StatusForbidden, 0},
 		{"/unmarked", "nobody", http.StatusUnauthorized, 0},
 		{"/unmarked", "a session", http.StatusOK, access.Session},
 		{"/unmarked", "a token", http.StatusForbidden, 0},
+		{"/unknown", "nobody", http.StatusUnauthorized, 0},
+		{"/unknown", "a session", http.StatusOK, access.Session},
+		{"/unknown", "a token", http.StatusForbidden, 0},
 	}
 	for _, tt := range tests {
 		rec := serve(t, mux, http.MethodGet, tt.path, callers[tt.who]...)

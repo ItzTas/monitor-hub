@@ -64,6 +64,16 @@ func (l *Logins) take(ctx context.Context) error {
 	}
 }
 
+// statusClientClosed answers a client that left: no one reads it, and it is no server error to log.
+const statusClientClosed = 499
+
+func failure(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return huma.NewError(statusClientClosed, "the client closed the request")
+	}
+	return huma.Error500InternalServerError("internal error", err)
+}
+
 type Handler struct {
 	accounts Accounts
 	logins   *Logins
@@ -86,18 +96,18 @@ func (h *Handler) Create(ctx context.Context, input *CreateInput) (*CreateOutput
 		return nil, huma.ErrorWithHeaders(huma.Error401Unauthorized(err.Error()), gate.Challenge())
 	}
 	if err != nil {
-		return nil, huma.Error500InternalServerError("internal error", err)
+		return nil, failure(ctx, err)
 	}
 	me, err := h.accounts.Me(ctx, principal)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("internal error", err)
+		return nil, failure(ctx, err)
 	}
 	return &CreateOutput{SetCookie: gate.Cookie(input.ctx, session.ID, session.ExpiresAt), Body: me}, nil
 }
 
 func (h *Handler) Delete(ctx context.Context, input *DeleteInput) (*DeleteOutput, error) {
 	if err := h.accounts.Logout(ctx, input.Session); err != nil {
-		return nil, huma.Error500InternalServerError("internal error", err)
+		return nil, failure(ctx, err)
 	}
 	return &DeleteOutput{SetCookie: gate.ClearCookie(input.ctx)}, nil
 }
@@ -105,7 +115,7 @@ func (h *Handler) Delete(ctx context.Context, input *DeleteInput) (*DeleteOutput
 func (h *Handler) Me(ctx context.Context, _ *struct{}) (*MeOutput, error) {
 	me, err := h.accounts.Me(ctx, access.FromContext(ctx))
 	if err != nil {
-		return nil, huma.Error500InternalServerError("internal error", err)
+		return nil, failure(ctx, err)
 	}
 	return &MeOutput{Body: me}, nil
 }

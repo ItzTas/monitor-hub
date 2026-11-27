@@ -53,10 +53,7 @@ func Middleware(api huma.API, resolver Resolver, publicURL string) func(huma.Con
 		publicOrigin = u.Scheme + "://" + u.Host
 	}
 	return func(ctx huma.Context, next func(huma.Context)) {
-		level := Session
-		if l, ok := ctx.Operation().Metadata["gate"].(Level); ok {
-			level = l
-		}
+		level := routeLevel(ctx.Operation())
 		p, refused, err := identify(ctx, resolver, level)
 		if err != nil {
 			_ = huma.WriteErr(api, ctx, http.StatusInternalServerError, "internal error", err)
@@ -70,10 +67,21 @@ func Middleware(api huma.API, resolver Resolver, publicURL string) func(huma.Con
 			return
 		}
 		if refused.status == http.StatusUnauthorized {
-			ctx.SetHeader("WWW-Authenticate", "Bearer")
+			for name, values := range Challenge() {
+				ctx.SetHeader(name, strings.Join(values, ", "))
+			}
 		}
 		_ = huma.WriteErr(api, ctx, refused.status, refused.msg)
 	}
+}
+
+// routeLevel takes Session for a route without a level or with one it does not know.
+func routeLevel(op *huma.Operation) Level {
+	level, _ := op.Metadata["gate"].(Level)
+	if level == Anyone || level == Identified {
+		return level
+	}
+	return Session
 }
 
 // identify reads the Authorization header, or else the session cookie. A
@@ -82,8 +90,8 @@ func Middleware(api huma.API, resolver Resolver, publicURL string) func(huma.Con
 func identify(ctx huma.Context, resolver Resolver, level Level) (access.Principal, *refusal, error) {
 	invalid := &refusal{http.StatusUnauthorized, accounts.ErrUnauthenticated.Error()}
 	if auth := ctx.Header("Authorization"); auth != "" {
-		secret, ok := strings.CutPrefix(auth, "Bearer ")
-		if !ok {
+		scheme, secret, _ := strings.Cut(auth, " ")
+		if !strings.EqualFold(scheme, "Bearer") {
 			return access.Principal{}, &refusal{http.StatusUnauthorized, msgNobody}, nil
 		}
 		p, err := resolver.ByToken(ctx.Context(), secret)

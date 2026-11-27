@@ -1,9 +1,11 @@
-package session
+package session_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -12,13 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
 	"github.com/ItzTas/monitor-hub/src/internal/access"
 	"github.com/ItzTas/monitor-hub/src/internal/accounts"
 	"github.com/ItzTas/monitor-hub/src/internal/accounts/accountstest"
+	"github.com/ItzTas/monitor-hub/src/internal/api"
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
+	"github.com/ItzTas/monitor-hub/src/internal/api/session"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 )
 
@@ -32,6 +35,7 @@ var testNow = time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
 type journal struct {
 	mu      sync.Mutex
 	entries []string
+	onLogin func(login string) // set before the first request
 }
 
 func (j *journal) add(entry string) {
@@ -54,6 +58,9 @@ type recorder struct {
 
 func (r recorder) Login(ctx context.Context, login, password string) (accounts.Session, access.Principal, error) {
 	r.journal.add("login " + login)
+	if r.journal.onLogin != nil {
+		r.journal.onLogin(login)
+	}
 	return r.Service.Login(ctx, login, password)
 }
 
@@ -81,8 +88,27 @@ func (a *fakeAfter) all() []time.Duration {
 	return slices.Clone(a.durations)
 }
 
+// lockedBuffer collects the logs of requests that may run at the same time.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
 type bench struct {
 	mux     *http.ServeMux
+	logs    *lockedBuffer
 	svc     *accounts.Service
 	journal *journal
 	after   *fakeAfter
@@ -93,6 +119,7 @@ func newBench(t *testing.T) *bench {
 	t.Helper()
 	b := &bench{
 		mux:     http.NewServeMux(),
+		logs:    &lockedBuffer{},
 		svc:     accounts.NewService(coretest.Pool(t), func() time.Time { return testNow }),
 		journal: &journal{},
 		after:   &fakeAfter{called: make(chan struct{}, 1), fire: make(chan time.Time)},
@@ -100,15 +127,13 @@ func newBench(t *testing.T) *bench {
 	}
 	accountstest.Person(t, b.svc, "paulo-santos", "monitor:sei:view")
 	accountstest.Person(t, b.svc, "ana-lima")
-	config := huma.DefaultConfig("test", "1.0.0")
-	config.CreateHooks = nil
-	api := humago.New(b.mux, config)
-	api.UseMiddleware(gate.Middleware(api, b.svc, ""))
+	humaAPI := humago.New(b.mux, api.HumaConfig(slog.New(slog.NewTextHandler(b.logs, nil)), "test", "test"))
+	humaAPI.UseMiddleware(gate.Middleware(humaAPI, b.svc, ""))
 	waiting := func() {
 		b.journal.add("waiting")
 		b.waited <- struct{}{}
 	}
-	RegisterRoutes(api, NewHandler(recorder{Service: b.svc, journal: b.journal}, NewLogins(b.after.after, waiting)))
+	session.RegisterRoutes(humaAPI, session.NewHandler(recorder{Service: b.svc, journal: b.journal}, session.NewLogins(b.after.after, waiting)))
 	return b
 }
 
@@ -139,6 +164,20 @@ func (b *bench) serve(ctx context.Context, method, path, body string, edits ...e
 	rec := httptest.NewRecorder()
 	b.mux.ServeHTTP(rec, request)
 	return rec
+}
+
+// shown is the body of rec for a failure message. A password in it is an error
+// of its own, and the copy shown has it replaced.
+func shown(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	body := rec.Body.String()
+	for _, password := range []string{accountstest.Password, wrongPassword} {
+		if strings.Contains(body, password) {
+			t.Error("a response body carries a password")
+			body = strings.ReplaceAll(body, password, "[password]")
+		}
+	}
+	return body
 }
 
 func sessionCookie(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
@@ -176,7 +215,7 @@ func TestSignInSetsTheCookie(t *testing.T) {
 	rec := b.serve(t.Context(), http.MethodPost, "/api/session", signIn(t, "paulo-santos", accountstest.Password))
 
 	if rec.Code != http.StatusOK || !sameJSON(t, rec.Body.String(), pauloMe) {
-		t.Fatalf("sign in = %d %s, want 200 %s", rec.Code, rec.Body.String(), pauloMe)
+		t.Fatalf("sign in = %d %s, want 200 %s", rec.Code, shown(t, rec), pauloMe)
 	}
 	c := sessionCookie(t, rec)
 	if c.Value == "" || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.MaxAge != 43200 || c.Path != "/" || c.Secure {
@@ -185,7 +224,7 @@ func TestSignInSetsTheCookie(t *testing.T) {
 	}
 	me := b.serve(t.Context(), http.MethodGet, "/api/me", "", withCookie(c.Value))
 	if me.Code != http.StatusOK || !sameJSON(t, me.Body.String(), pauloMe) {
-		t.Errorf("GET /api/me with the new cookie = %d %s, want 200 %s", me.Code, me.Body.String(), pauloMe)
+		t.Errorf("GET /api/me with the new cookie = %d %s, want 200 %s", me.Code, shown(t, me), pauloMe)
 	}
 
 	secure := map[string]edit{
@@ -207,7 +246,7 @@ func TestSignOutEndsTheSession(t *testing.T) {
 	rec := b.serve(t.Context(), http.MethodDelete, "/api/session", "", withCookie(id))
 
 	if rec.Code != http.StatusNoContent {
-		t.Fatalf("sign out = %d %s, want 204", rec.Code, rec.Body.String())
+		t.Fatalf("sign out = %d %s, want 204", rec.Code, shown(t, rec))
 	}
 	if c := sessionCookie(t, rec); c.Value != "" || c.MaxAge >= 0 {
 		t.Errorf("sign out sets a session cookie with Max-Age %d, want it cleared", c.MaxAge)
@@ -254,10 +293,10 @@ func TestWrongPasswordsWaitAndQueue(t *testing.T) {
 	recA, recB := <-answeredA, <-answeredB
 
 	if recA.Code != http.StatusUnauthorized || !strings.Contains(recA.Body.String(), `"wrong login or password"`) {
-		t.Errorf("the wrong password = %d %s, want 401 wrong login or password", recA.Code, recA.Body.String())
+		t.Errorf("the wrong password = %d %s, want 401 wrong login or password", recA.Code, shown(t, recA))
 	}
 	if recB.Code != http.StatusOK {
-		t.Errorf("the right password = %d %s, want 200", recB.Code, recB.Body.String())
+		t.Errorf("the right password = %d %s, want 200", recB.Code, shown(t, recB))
 	}
 	if want := []string{"login paulo-santos", "waiting", "release", "login ana-lima"}; !slices.Equal(b.journal.all(), want) {
 		t.Errorf("the sign-ins ran as %v, want %v", b.journal.all(), want)
@@ -267,31 +306,46 @@ func TestWrongPasswordsWaitAndQueue(t *testing.T) {
 	}
 }
 
-func TestACanceledSignInLeavesTheQueue(t *testing.T) {
+func TestAClientThatLeavesIsNotAServerError(t *testing.T) {
 	b := newBench(t)
 	ctxA, cancelA := context.WithCancel(t.Context())
 	ctxB, cancelB := context.WithCancel(t.Context())
+	ctxC, cancelC := context.WithCancel(t.Context())
+	b.journal.onLogin = func(login string) {
+		if login == "ana-lima" {
+			cancelC()
+		}
+	}
 	answeredA, answeredB := make(chan *httptest.ResponseRecorder, 1), make(chan *httptest.ResponseRecorder, 1)
-
-	wrong, right := signIn(t, "paulo-santos", wrongPassword), signIn(t, "ana-lima", accountstest.Password)
+	wrong, right := signIn(t, "paulo-santos", wrongPassword), signIn(t, "paulo-santos", accountstest.Password)
 
 	go func() { answeredA <- b.serve(ctxA, http.MethodPost, "/api/session", wrong) }()
 	<-b.after.called
 	go func() { answeredB <- b.serve(ctxB, http.MethodPost, "/api/session", right) }()
 	<-b.waited
 	cancelB()
-	<-answeredB
+	recB := <-answeredB
 	cancelA()
 	recA := <-answeredA
+	recC := b.serve(ctxC, http.MethodPost, "/api/session", signIn(t, "ana-lima", accountstest.Password))
 
-	if recA.Code != http.StatusUnauthorized {
-		t.Errorf("the canceled wrong password = %d %s, want 401", recA.Code, recA.Body.String())
+	gone := map[string]*httptest.ResponseRecorder{"while queued": recB, "during the sign-in": recC}
+	for name, rec := range gone {
+		if rec.Code != 499 {
+			t.Errorf("a client gone %s got %d %s, want 499", name, rec.Code, shown(t, rec))
+		}
 	}
-	if want := []string{"login paulo-santos", "waiting"}; !slices.Equal(b.journal.all(), want) {
+	if recA.Code != http.StatusUnauthorized {
+		t.Errorf("a wrong password whose client left during the delay = %d %s, want 401", recA.Code, shown(t, recA))
+	}
+	if want := []string{"login paulo-santos", "waiting", "login ana-lima"}; !slices.Equal(b.journal.all(), want) {
 		t.Errorf("the sign-ins ran as %v, want %v", b.journal.all(), want)
 	}
+	if strings.Contains(b.logs.String(), "API request failed") {
+		t.Errorf("a client that left was logged as a failure:\n%s", b.logs.String())
+	}
 	if rec := b.serve(t.Context(), http.MethodPost, "/api/session", right); rec.Code != http.StatusOK {
-		t.Errorf("a sign-in after both left = %d %s, want 200", rec.Code, rec.Body.String())
+		t.Errorf("a sign-in after the others left = %d %s, want 200", rec.Code, shown(t, rec))
 	}
 }
 
@@ -302,17 +356,20 @@ func TestTheResponsesNeverCarryThePassword(t *testing.T) {
 		body     string
 		password string
 	}{
-		"the right password":        {signIn(t, "paulo-santos", accountstest.Password), accountstest.Password},
-		"a wrong password":          {signIn(t, "paulo-santos", wrongPassword), wrongPassword},
-		"an unknown login":          {signIn(t, "nobody-here", wrongPassword), wrongPassword},
-		"no login":                  {`{"password":"` + wrongPassword + `"}`, wrongPassword},
-		"a login of the wrong type": {`{"login":7,"password":"` + wrongPassword + `"}`, wrongPassword},
-		"an unknown field":          {`{"login":"paulo-santos","password":"` + wrongPassword + `","extra":true}`, wrongPassword},
+		"the right password":           {signIn(t, "paulo-santos", accountstest.Password), accountstest.Password},
+		"a wrong password":             {signIn(t, "paulo-santos", wrongPassword), wrongPassword},
+		"an unknown login":             {signIn(t, "nobody-here", wrongPassword), wrongPassword},
+		"no login":                     {`{"password":"` + wrongPassword + `"}`, wrongPassword},
+		"a login of the wrong type":    {`{"login":7,"password":"` + wrongPassword + `"}`, wrongPassword},
+		"an unknown field":             {`{"login":"paulo-santos","password":"` + wrongPassword + `","extra":true}`, wrongPassword},
+		"a password of the wrong type": {`{"login":"paulo-santos","password":["` + wrongPassword + `"]}`, wrongPassword},
+		"an array body":                {`["paulo-santos","` + wrongPassword + `"]`, wrongPassword},
+		"a string body":                {`"` + wrongPassword + `"`, wrongPassword},
 	}
 	for name, c := range bodies {
 		rec := b.serve(t.Context(), http.MethodPost, "/api/session", c.body)
-		if rec.Code == http.StatusOK && name != "the right password" {
-			t.Errorf("sign in with %s = 200", name)
+		if name != "the right password" && (rec.Code < 400 || rec.Code >= 500) {
+			t.Errorf("sign in with %s = %d, want a 4xx", name, rec.Code)
 		}
 		if strings.Contains(rec.Body.String(), c.password) {
 			t.Errorf("the response body to %s carries the password", name)

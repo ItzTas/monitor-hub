@@ -41,7 +41,7 @@ func RegisterRoutes(api huma.API, h *Handler) {
 		Method:      http.MethodGet,
 		Path:        "/api/me",
 		Summary:     "Show who is signed in",
-		Description: "The signed-in person and whether they are an admin. permissions holds only the grants given to the person directly. monitors holds what this session can do on each monitor right now, so an admin has every action even without grants.",
+		Description: "The signed-in person and whether they are an admin. The `permissions` field lists only the grants given to the person directly. The `monitors` field lists what this session can do on each monitor right now, so an admin gets every action even with no grants.",
 		Tags:        []string{"session"},
 		Metadata:    gate.Meta(gate.Session),
 		Errors:      []int{http.StatusUnauthorized, http.StatusForbidden},

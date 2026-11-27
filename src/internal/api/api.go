@@ -52,7 +52,7 @@ func HumaConfig(log *slog.Logger, description, credential string) huma.Config {
 		securityScheme: {Type: "http", Scheme: "bearer", Description: credential},
 	}
 	cfg.Security = []map[string][]string{{securityScheme: {}}}
-	cfg.Transformers = append(cfg.Transformers, serverErrors(log))
+	cfg.Transformers = append(cfg.Transformers, withoutValues, serverErrors(log))
 	return cfg
 }
 
@@ -66,6 +66,23 @@ func bearerAuth(api huma.API, token string) func(huma.Context, func(huma.Context
 		}
 		next(ctx)
 	}
+}
+
+// withoutValues drops the request values huma's validation puts in each error
+// detail, so no route ever echoes what it was sent, a password included.
+func withoutValues(_ huma.Context, _ string, v any) (any, error) {
+	model, ok := v.(*huma.ErrorModel)
+	if !ok || len(model.Errors) == 0 {
+		return v, nil
+	}
+	clean := *model
+	clean.Errors = make([]*huma.ErrorDetail, 0, len(model.Errors))
+	for _, detail := range model.Errors {
+		stripped := *detail
+		stripped.Value = nil
+		clean.Errors = append(clean.Errors, &stripped)
+	}
+	return &clean, nil
 }
 
 func serverErrors(log *slog.Logger) huma.Transformer {
