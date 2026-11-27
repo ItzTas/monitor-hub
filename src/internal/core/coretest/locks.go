@@ -8,9 +8,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// WaitForAdvisoryWaiter returns once a backend of pool's database waits on an
-// advisory lock, or done is closed. It fails t if neither happens in 30 s.
-func WaitForAdvisoryWaiter(t testing.TB, pool *pgxpool.Pool, done <-chan struct{}) {
+// WaitForAdvisoryWaiters returns once at least n backends of pool's database wait
+// on an advisory lock, or done is closed. It fails t if neither happens in 30 s.
+func WaitForAdvisoryWaiters(t testing.TB, pool *pgxpool.Pool, n int, done <-chan struct{}) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -27,7 +27,7 @@ func WaitForAdvisoryWaiter(t testing.TB, pool *pgxpool.Pool, done <-chan struct{
 		if err != nil {
 			t.Fatalf("coretest: no backend waited on an advisory lock: %v", err)
 		}
-		if waiting > 0 {
+		if waiting >= n {
 			return
 		}
 	}

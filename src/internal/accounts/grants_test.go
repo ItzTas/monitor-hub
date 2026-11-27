@@ -125,7 +125,7 @@ func TestSetPermissionsWaitsForTheAccessLock(t *testing.T) {
 		defer close(done)
 		setErr = s.SetPermissions(t.Context(), "ana-lima", everyCheck)
 	}()
-	coretest.WaitForAdvisoryWaiter(t, pool, done)
+	coretest.WaitForAdvisoryWaiters(t, pool, 1, done)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}

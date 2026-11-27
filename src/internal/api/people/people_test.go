@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ItzTas/monitor-hub/src/internal/access"
 	"github.com/ItzTas/monitor-hub/src/internal/accounts"
@@ -24,6 +25,7 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/api/people"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
+	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
 
 const (
@@ -59,6 +61,7 @@ func (l *lockedBuffer) String() string {
 
 type bench struct {
 	mux  *http.ServeMux
+	pool *pgxpool.Pool
 	svc  *accounts.Service
 	logs *lockedBuffer
 }
@@ -66,9 +69,11 @@ type bench struct {
 // newBench has paulo-santos as the only admin and sei as a monitor.
 func newBench(t *testing.T) *bench {
 	t.Helper()
+	pool := coretest.Pool(t)
 	b := &bench{
 		mux:  http.NewServeMux(),
-		svc:  accounts.NewService(coretest.Pool(t), func() time.Time { return testNow }),
+		pool: pool,
+		svc:  accounts.NewService(pool, func() time.Time { return testNow }),
 		logs: &lockedBuffer{},
 	}
 	if err := b.svc.Prepare(t.Context(), []string{"sei"}); err != nil {
@@ -117,13 +122,17 @@ func (b *bench) serve(t *testing.T, method, path, body string, edits ...edit) *h
 func shown(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 	body := rec.Body.String()
-	for _, password := range passwords {
-		if strings.Contains(body, password) {
-			t.Error("a response body carries a password")
-			body = strings.ReplaceAll(body, password, "[password]")
-		}
+	if redacted(body) != body {
+		t.Error("a response body carries a password")
 	}
-	return body
+	return redacted(body)
+}
+
+func redacted(text string) string {
+	for _, password := range passwords {
+		text = strings.ReplaceAll(text, password, "[password]")
+	}
+	return text
 }
 
 func jsonBody(t *testing.T, fields map[string]any) string {
@@ -283,9 +292,17 @@ func TestCreateDisableAndDelete(t *testing.T) {
 		t.Errorf("GET /api/users = %+v, want %+v", page.Items, want)
 	}
 
-	session, _, err := b.svc.Login(t.Context(), "ana-lima", anaPassword)
+	if rec := b.serve(t, http.MethodPut, "/api/users/ana-lima/permissions", `{"permissions":["monitor:sei:view"]}`, withSession(paulo)); rec.Code != http.StatusOK {
+		t.Fatalf("give ana-lima monitor:sei:view = %d %s, want 200", rec.Code, shown(t, rec))
+	}
+	ana.Permissions = []string{"monitor:sei:view"}
+	session, principal, err := b.svc.Login(t.Context(), "ana-lima", anaPassword)
 	if err != nil {
 		t.Fatalf("ana-lima signing in after she was created: %v", err)
+	}
+	_, token, err := b.svc.CreateToken(t.Context(), principal, accounts.TokenRequest{Label: "rss", Permissions: []access.Permission{{Monitor: "sei", Action: access.View}}})
+	if err != nil {
+		t.Fatalf("create a token of ana-lima: %v", err)
 	}
 
 	disable := b.serve(t, http.MethodPatch, "/api/users/ana-lima", `{"disabled":true}`, withSession(paulo))
@@ -302,6 +319,9 @@ func TestCreateDisableAndDelete(t *testing.T) {
 	if rec := b.serve(t, http.MethodGet, "/api/me", "", withSession(session.ID)); rec.Code != http.StatusUnauthorized {
 		t.Errorf("the session ana-lima opened before she was disabled = %d %s, want 401", rec.Code, shown(t, rec))
 	}
+	if rec := b.serve(t, http.MethodGet, "/api/me", "", withBearer(token)); rec.Code != http.StatusUnauthorized {
+		t.Errorf("the token of ana-lima while she is disabled = %d %s, want 401", rec.Code, shown(t, rec))
+	}
 
 	enable := b.serve(t, http.MethodPatch, "/api/users/ana-lima", `{"disabled":false}`, withSession(paulo))
 	ana.Disabled = false
@@ -310,6 +330,10 @@ func TestCreateDisableAndDelete(t *testing.T) {
 	}
 	if rec := b.signIn(t, "ana-lima", anaPassword); rec.Code != http.StatusOK {
 		t.Errorf("ana-lima signing in once enabled again = %d %s, want 200", rec.Code, shown(t, rec))
+	}
+	later, _, err := b.svc.Login(t.Context(), "ana-lima", anaPassword)
+	if err != nil {
+		t.Fatalf("ana-lima signing in before she is deleted: %v", err)
 	}
 
 	if rec := b.serve(t, http.MethodDelete, "/api/users/ana-lima", "", withSession(paulo)); rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
@@ -330,11 +354,14 @@ func TestCreateDisableAndDelete(t *testing.T) {
 	if _, ok := b.person(t, "ana-lima"); ok {
 		t.Error("ana-lima is still listed after she was deleted")
 	}
+	if rec := b.serve(t, http.MethodGet, "/api/me", "", withSession(later.ID)); rec.Code != http.StatusUnauthorized {
+		t.Errorf("the session ana-lima opened before she was deleted = %d %s, want 401", rec.Code, shown(t, rec))
+	}
 }
 
 func TestPermissionsAreReplacedAndApplied(t *testing.T) {
 	b := newBench(t)
-	if err := b.svc.Prepare(t.Context(), []string{"diario"}); err != nil {
+	if err := b.svc.Prepare(t.Context(), []string{"diario", "sei-b"}); err != nil {
 		t.Fatal(err)
 	}
 	accountstest.Person(t, b.svc, "ana-lima", "monitor:diario:check")
@@ -357,7 +384,10 @@ func TestPermissionsAreReplacedAndApplied(t *testing.T) {
 		monitors    map[string][]string
 	}{
 		{[]string{"monitor:sei:view", "monitor:sei:check", "monitor:sei:view", "monitor:*:hook"}, []string{"monitor:*:hook", "monitor:sei:check", "monitor:sei:view"},
-			map[string][]string{"diario": {"hook"}, "sei": {"view", "check", "hook"}}},
+			map[string][]string{"diario": {"hook"}, "sei": {"view", "check", "hook"}, "sei-b": {"hook"}}},
+		// The database lists sei before sei-b; as slugs, "-" sorts before ":".
+		{[]string{"monitor:sei:view", "monitor:sei-b:view"}, []string{"monitor:sei-b:view", "monitor:sei:view"},
+			map[string][]string{"sei": {"view"}, "sei-b": {"view"}}},
 		{[]string{"monitor:sei:view"}, []string{"monitor:sei:view"}, map[string][]string{"sei": {"view"}}},
 		{[]string{}, []string{}, map[string][]string{}},
 	}
@@ -439,30 +469,49 @@ func TestTwoAdminsRemovingEachOtherLeaveOne(t *testing.T) {
 	}
 	targets := map[string]string{"paulo-santos": "ana-lima", "ana-lima": "paulo-santos"}
 
-	start := make(chan struct{})
-	answers := make(chan *httptest.ResponseRecorder, len(targets))
-	for by, target := range targets {
-		go func() {
-			<-start
-			answers <- serve(t.Context(), b.mux, http.MethodPatch, "/api/users/"+target, `{"admin":false}`, withSession(sessions[by]))
-		}()
+	// The test holds the access lock, so both changes pass the gate as admins and queue behind it.
+	tx, err := b.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
 	}
-	close(start)
+	defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
+	if err := db.New(tx).LockAccess(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	answers := make(chan *httptest.ResponseRecorder, len(targets))
+	var wg sync.WaitGroup
+	for by, target := range targets {
+		wg.Go(func() {
+			answers <- serve(t.Context(), b.mux, http.MethodPatch, "/api/users/"+target, `{"admin":false}`, withSession(sessions[by]))
+		})
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	coretest.WaitForAdvisoryWaiters(t, b.pool, len(targets), done)
+	select {
+	case <-done:
+		t.Fatal("both changes were answered without queuing on the access lock")
+	default:
+	}
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	<-done
 
 	codes := map[int]int{}
 	for range targets {
 		rec := <-answers
 		codes[rec.Code]++
-		refusals := map[int]string{
-			http.StatusConflict:  "this is the last person with admin",
-			http.StatusForbidden: "you do not have permission for this",
-		}
-		if want, refused := refusals[rec.Code]; refused && detail(t, rec) != want {
-			t.Errorf("a refused removal = %d %s, want the detail %q", rec.Code, shown(t, rec), want)
+		if rec.Code == http.StatusConflict && detail(t, rec) != "this is the last person with admin" {
+			t.Errorf("the refused removal = 409 %s, want the detail %q", shown(t, rec), "this is the last person with admin")
 		}
 	}
-	if codes[http.StatusOK] != 1 || codes[http.StatusConflict]+codes[http.StatusForbidden] != 1 {
-		t.Errorf("two admins removing each other got the statuses %v, want one 200 and one 409 or 403", codes)
+	if want := map[int]int{http.StatusOK: 1, http.StatusConflict: 1}; !maps.Equal(codes, want) {
+		t.Errorf("two admins removing each other got the statuses %v, want one 200 and one 409", codes)
 	}
 	if got := b.admins(t); len(got) != 1 {
 		t.Errorf("the admins after two admins removed each other = %v, want exactly one", got)
@@ -582,37 +631,6 @@ func withAccounts(t *testing.T, client people.Accounts, logs *bytes.Buffer) (*ht
 	return mux, accountstest.Session(t, svc, "paulo-santos")
 }
 
-// listing holds people as a database whose collation sorts monitors apart from slugs.
-type listing struct {
-	people.Accounts
-	users []accounts.User
-}
-
-func (l listing) ListUsers(context.Context) ([]accounts.User, error) {
-	return l.users, nil
-}
-
-func TestPermissionsAreListedBySlug(t *testing.T) {
-	perms := []access.Permission{
-		{Monitor: "sei-b", Action: access.View},
-		{Monitor: "seia", Action: access.View},
-		{Monitor: access.Every, Action: access.Hook},
-	}
-	client := listing{users: []accounts.User{{Login: "ana-lima", CreatedAt: testNow, Permissions: perms}}}
-	mux, paulo := withAccounts(t, client, &bytes.Buffer{})
-
-	rec := serve(t.Context(), mux, http.MethodGet, "/api/users", "", withSession(paulo))
-	var page struct {
-		Items []item `json:"items"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &page); rec.Code != http.StatusOK || err != nil || len(page.Items) != 1 {
-		t.Fatalf("GET /api/users = %d %s (%v), want 200 with one person", rec.Code, shown(t, rec), err)
-	}
-	if got, want := page.Items[0].Permissions, []string{"monitor:*:hook", "monitor:sei-b:view", "monitor:seia:view"}; !slices.Equal(got, want) {
-		t.Errorf("the listed permissions = %v, want %v", got, want)
-	}
-}
-
 func TestAClientThatLeavesIsNotAServerError(t *testing.T) {
 	var logs bytes.Buffer
 	client := &leaving{}
@@ -635,6 +653,6 @@ func TestAClientThatLeavesIsNotAServerError(t *testing.T) {
 		}
 	}
 	if strings.Contains(logs.String(), "API request failed") {
-		t.Errorf("a client that left was logged as a failure:\n%s", logs.String())
+		t.Errorf("a client that left was logged as a failure:\n%s", redacted(logs.String()))
 	}
 }

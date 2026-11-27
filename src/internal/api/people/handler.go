@@ -54,7 +54,7 @@ func user(u accounts.User) User {
 	for _, p := range u.Permissions {
 		slugs = append(slugs, p.String())
 	}
-	// The database orders by monitor name in its own collation, not by slug.
+	// The database orders by monitor name, so even under C it puts sei before sei-b; as slugs, sei-b comes first.
 	slices.Sort(slugs)
 	return User{Login: u.Login, Admin: u.Admin, Disabled: u.Disabled, CreatedAt: u.CreatedAt, Permissions: slugs}
 }
