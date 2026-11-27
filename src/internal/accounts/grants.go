@@ -15,7 +15,7 @@ var ErrUnknownMonitor = errors.New("no monitor has this name")
 
 const (
 	foreignKeyViolation = "23503"
-	grantMonitorKey     = "user_grants_monitor_fkey"
+	uniqueViolation     = "23505"
 )
 
 // SetPermissions replaces the direct grants of login. The caller checks Admin.
@@ -33,7 +33,7 @@ func (s *Service) SetPermissions(ctx context.Context, login string, perms []acce
 			return err
 		}
 		for _, p := range perms {
-			if err := q.InsertUserGrant(ctx, grantRow(user.ID, p)); err != nil {
+			if err := q.InsertUserGrant(ctx, db.InsertUserGrantParams{UserID: user.ID, Monitor: grantMonitor(p), Action: string(p.Action)}); err != nil {
 				return unknownMonitor(err)
 			}
 		}
@@ -41,15 +41,19 @@ func (s *Service) SetPermissions(ctx context.Context, login string, perms []acce
 	})
 }
 
-// grantRow writes Every as a NULL monitor.
-func grantRow(userID int64, p access.Permission) db.InsertUserGrantParams {
-	monitor := pgtype.Text{String: p.Monitor, Valid: p.Monitor != access.Every}
-	return db.InsertUserGrantParams{UserID: userID, Monitor: monitor, Action: string(p.Action)}
+// grantMonitor writes Every as a NULL monitor.
+func grantMonitor(p access.Permission) pgtype.Text {
+	return pgtype.Text{String: p.Monitor, Valid: p.Monitor != access.Every}
 }
 
 func unknownMonitor(err error) error {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolation && pgErr.ConstraintName == grantMonitorKey {
+	monitorKeys := map[string]bool{
+		"user_grants_monitor_fkey":       true,
+		"token_grants_monitor_fkey":      true,
+		"credential_grants_monitor_fkey": true,
+	}
+	if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolation && monitorKeys[pgErr.ConstraintName] {
 		return ErrUnknownMonitor
 	}
 	return err

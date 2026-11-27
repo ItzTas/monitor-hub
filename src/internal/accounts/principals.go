@@ -24,7 +24,7 @@ func (s *Service) person(ctx context.Context, id int64, login string, admin bool
 	}
 	granted := make([]access.Permission, 0, len(grants))
 	for _, g := range grants {
-		granted = append(granted, permission(g))
+		granted = append(granted, permission(g.Monitor, g.Action))
 	}
 	return access.Person{ID: id, Login: login, Admin: admin, Granted: granted}, nil
 }
@@ -49,7 +49,7 @@ func (s *Service) Me(ctx context.Context, p access.Principal) (Me, error) {
 		Monitors:    map[string][]access.Action{},
 	}
 	for _, grant := range grants {
-		me.Permissions = append(me.Permissions, permission(grant).String())
+		me.Permissions = append(me.Permissions, permission(grant.Monitor, grant.Action).String())
 	}
 	// The database orders by monitor name in its own collation, not by slug.
 	slices.Sort(me.Permissions)

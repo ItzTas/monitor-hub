@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/ItzTas/monitor-hub/src/internal/access"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
@@ -106,7 +107,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	}
 	permissions := make(map[int64][]access.Permission, len(rows))
 	for _, g := range grants {
-		permissions[g.UserID] = append(permissions[g.UserID], permission(g))
+		permissions[g.UserID] = append(permissions[g.UserID], permission(g.Monitor, g.Action))
 	}
 	users := make([]User, 0, len(rows))
 	for _, r := range rows {
@@ -122,10 +123,9 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 // permission reads a grant row, where a NULL monitor means every monitor.
-func permission(g db.UserGrant) access.Permission {
-	monitor := access.Every
-	if g.Monitor.Valid {
-		monitor = g.Monitor.String
+func permission(monitor pgtype.Text, action string) access.Permission {
+	if !monitor.Valid {
+		return access.Permission{Monitor: access.Every, Action: access.Action(action)}
 	}
-	return access.Permission{Monitor: monitor, Action: access.Action(g.Action)}
+	return access.Permission{Monitor: monitor.String, Action: access.Action(action)}
 }
