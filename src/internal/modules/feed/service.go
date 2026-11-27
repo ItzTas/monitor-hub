@@ -21,8 +21,9 @@ func NewService(repo Repository, opts Options) *Service {
 	return &Service{repo: repo, opts: opts}
 }
 
-func (s *Service) Render(ctx context.Context, monitor string) ([]byte, error) {
-	events, err := s.repo.RecentEvents(ctx, monitor, maxItems)
+// Render lists only the events of the visible monitors.
+func (s *Service) Render(ctx context.Context, monitor string, visible []string) ([]byte, error) {
+	events, err := s.repo.RecentEvents(ctx, monitor, visible, maxItems)
 	if err != nil {
 		return nil, fmt.Errorf("feed: read the events: %w", err)
 	}

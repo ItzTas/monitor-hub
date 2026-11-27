@@ -6,7 +6,6 @@ import (
 )
 
 type Options struct {
-	Token     string
 	PublicURL string
 }
 

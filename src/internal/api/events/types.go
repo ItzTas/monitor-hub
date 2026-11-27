@@ -41,4 +41,5 @@ type Filter struct {
 	Kind    string
 	Before  int64
 	Limit   int
+	Visible []string
 }

@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	apiToken = "api-token-0123456789abcdef"
-	wait     = 5 * time.Second
+	personalToken = "mht_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	wait          = 5 * time.Second
 )
 
 type hub struct {
@@ -244,11 +244,11 @@ func TestTheContractRequiresAConsumerToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	headers := map[string]string{
-		"no header":     "",
-		"unknown token": "Bearer " + unknown,
-		"the API token": "Bearer " + apiToken,
-		"basic":         "Basic " + token,
-		"no scheme":     token,
+		"no header":        "",
+		"unknown token":    "Bearer " + unknown,
+		"a personal token": "Bearer " + personalToken,
+		"basic":            "Basic " + token,
+		"no scheme":        token,
 	}
 	for _, route := range []struct{ method, path, body string }{
 		{http.MethodGet, streamPath, ""},

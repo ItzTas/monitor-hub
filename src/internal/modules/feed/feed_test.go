@@ -13,6 +13,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ItzTas/monitor-hub/src/internal/access"
+	"github.com/ItzTas/monitor-hub/src/internal/accounts"
+	"github.com/ItzTas/monitor-hub/src/internal/accounts/accountstest"
+	"github.com/ItzTas/monitor-hub/src/internal/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
@@ -41,13 +45,31 @@ func seed(t *testing.T, pool *pgxpool.Pool, events ...event) {
 	}
 }
 
-func serveFeed(t *testing.T, pool *pgxpool.Pool, opts Options, target string) *httptest.ResponseRecorder {
+func serveFeed(t *testing.T, pool *pgxpool.Pool, opts Options, tokens Tokens, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	Configure(mux, pool, opts, slog.New(slog.DiscardHandler))
+	Configure(mux, pool, opts, tokens, slog.New(slog.DiscardHandler))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
 	return rec
+}
+
+type reader func(t *testing.T, opts Options, target string) *httptest.ResponseRecorder
+
+// viewAll reads the feed with the token of an admin that views every monitor.
+func viewAll(t *testing.T, pool *pgxpool.Pool) reader {
+	t.Helper()
+	svc := accounts.NewService(pool, time.Now)
+	accountstest.Admin(t, svc, "paulo-santos")
+	token := accountstest.Token(t, svc, "paulo-santos", "monitor:*:view")
+	return func(t *testing.T, opts Options, target string) *httptest.ResponseRecorder {
+		t.Helper()
+		separator := "?"
+		if strings.Contains(target, "?") {
+			separator = "&"
+		}
+		return serveFeed(t, pool, opts, svc, target+separator+"token="+token)
+	}
 }
 
 func decode(t *testing.T, rec *httptest.ResponseRecorder) RSS {
@@ -70,33 +92,77 @@ func guids(document RSS) []string {
 	return values
 }
 
-func TestFeedRequiresTokenWhenSet(t *testing.T) {
+func TestTheFeedFollowsTheToken(t *testing.T) {
 	pool := coretest.Pool(t)
-	seed(t, pool, event{monitor: "sei", id: "e1", title: "ping 1"})
-	cases := map[string]struct {
-		token  string
-		target string
-		want   int
-	}{
-		"token set, none given":    {"feed-token", "/feed.xml", http.StatusNotFound},
-		"token set, wrong one":     {"feed-token", "/feed.xml?token=feed-tokem", http.StatusNotFound},
-		"token set, right one":     {"feed-token", "/feed.xml?token=feed-token", http.StatusOK},
-		"no token set, none given": {"", "/feed.xml", http.StatusOK},
-		"no token set, one given":  {"", "/feed.xml?token=anything", http.StatusOK},
-		"token set, prefix of it":  {"feed-token", "/feed.xml?token=feed", http.StatusNotFound},
-		"token set, empty one":     {"feed-token", "/feed.xml?token=", http.StatusNotFound},
+	seed(t, pool, event{monitor: "sei", id: "a", title: "one"}, event{monitor: "diario", id: "b", title: "two"}, event{monitor: "sei", id: "c", title: "three"})
+	svc := accounts.NewService(pool, time.Now)
+	accountstest.Admin(t, svc, "paulo-santos")
+	accountstest.Person(t, svc, "ana-lima", "monitor:*:view")
+	everything := accountstest.Token(t, svc, "paulo-santos", "monitor:*:view")
+	sei := accountstest.Token(t, svc, "ana-lima", "monitor:sei:view")
+	diario := accountstest.Token(t, svc, "ana-lima", "monitor:diario:view")
+
+	_, owner, err := svc.Login(t.Context(), "ana-lima", accountstest.Password)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			rec := serveFeed(t, pool, Options{Token: tc.token}, tc.target)
-			if rec.Code != tc.want {
-				t.Fatalf("status = %d, want %d", rec.Code, tc.want)
-			}
-			if tc.want == http.StatusNotFound && strings.Contains(rec.Body.String(), "ping 1") {
-				t.Errorf("a refused request got the events: %s", rec.Body.String())
-			}
-		})
+	expiry := time.Now().Add(time.Hour)
+	_, expiring, err := svc.CreateToken(t.Context(), owner, accounts.TokenRequest{Label: "rss", Permissions: []access.Permission{{Monitor: "sei", Action: access.View}}, ExpiresAt: &expiry})
+	if err != nil {
+		t.Fatal(err)
 	}
+	revokedToken, revoked, err := svc.CreateToken(t.Context(), owner, accounts.TokenRequest{Label: "old", Permissions: []access.Permission{{Monitor: "sei", Action: access.View}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RevokeToken(t.Context(), revokedToken.ID, owner.UserID()); err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := consumers.NewService(pool).Add(t.Context(), "desk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := accounts.NewService(pool, func() time.Time { return expiry.Add(time.Minute) })
+
+	t.Run("allowed", func(t *testing.T) {
+		cases := map[string]struct {
+			target string
+			want   []string
+		}{
+			"view on sei":                    {"/feed.xml?token=" + sei, []string{"sei:c", "sei:a"}},
+			"view on diario, asking for sei": {"/feed.xml?monitor=sei&token=" + diario, []string{}},
+			"view on every monitor":          {"/feed.xml?token=" + everything, []string{"sei:c", "diario:b", "sei:a"}},
+			"an expiring token in time":      {"/feed.xml?token=" + expiring, []string{"sei:c", "sei:a"}},
+		}
+		for name, tc := range cases {
+			t.Run(name, func(t *testing.T) {
+				if got := guids(decode(t, serveFeed(t, pool, Options{}, svc, tc.target))); !reflect.DeepEqual(got, tc.want) {
+					t.Errorf("the feed lists %v, want %v", got, tc.want)
+				}
+			})
+		}
+	})
+	t.Run("refused", func(t *testing.T) {
+		cases := map[string]struct {
+			tokens Tokens
+			target string
+		}{
+			"no token":         {svc, "/feed.xml"},
+			"an empty token":   {svc, "/feed.xml?token="},
+			"an invalid token": {svc, "/feed.xml?token=mht_" + strings.Repeat("x", 43)},
+			"an expired token": {later, "/feed.xml?token=" + expiring},
+			"a revoked token":  {svc, "/feed.xml?token=" + revoked},
+			"a consumer token": {svc, "/feed.xml?token=" + consumer},
+		}
+		for name, tc := range cases {
+			t.Run(name, func(t *testing.T) {
+				rec := serveFeed(t, pool, Options{}, tc.tokens, tc.target)
+				if rec.Code != http.StatusUnauthorized || strings.TrimSpace(rec.Body.String()) != "missing, invalid or expired token" {
+					t.Errorf("feed = %d %q, want 401 missing, invalid or expired token", rec.Code, rec.Body.String())
+				}
+			})
+		}
+	})
 }
 
 func TestFeedListsTheNewestEventsFirst(t *testing.T) {
@@ -106,7 +172,7 @@ func TestFeedListsTheNewestEventsFirst(t *testing.T) {
 		event{monitor: "diario", id: "b", title: "second"},
 	)
 
-	document := decode(t, serveFeed(t, pool, Options{PublicURL: "https://hub.example.org"}, "/feed.xml"))
+	document := decode(t, viewAll(t, pool)(t, Options{PublicURL: "https://hub.example.org"}, "/feed.xml"))
 
 	want := Channel{
 		Title:       "monitor-hub",
@@ -125,6 +191,7 @@ func TestFeedListsTheNewestEventsFirst(t *testing.T) {
 func TestFeedFiltersByMonitor(t *testing.T) {
 	pool := coretest.Pool(t)
 	seed(t, pool, event{monitor: "sei", id: "a", title: "one"}, event{monitor: "diario", id: "b", title: "two"}, event{monitor: "sei", id: "c", title: "three"})
+	read := viewAll(t, pool)
 	cases := map[string]struct {
 		target string
 		title  string
@@ -135,7 +202,7 @@ func TestFeedFiltersByMonitor(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			document := decode(t, serveFeed(t, pool, Options{}, tc.target))
+			document := decode(t, read(t, Options{}, tc.target))
 			if got := guids(document); !reflect.DeepEqual(got, tc.want) || document.Channel.Title != tc.title {
 				t.Errorf("feed %q lists %v, want %q listing %v", document.Channel.Title, got, tc.title, tc.want)
 			}
@@ -151,7 +218,7 @@ func TestFeedKeepsTheNewest100Events(t *testing.T) {
 	}
 	seed(t, pool, events...)
 
-	got := guids(decode(t, serveFeed(t, pool, Options{}, "/feed.xml")))
+	got := guids(decode(t, viewAll(t, pool)(t, Options{}, "/feed.xml")))
 
 	if len(got) != 100 || got[0] != "sei:e101" || got[99] != "sei:e2" {
 		t.Errorf("feed lists %d items from %s to %s, want 100 from sei:e101 to sei:e2", len(got), got[0], got[len(got)-1])
@@ -168,7 +235,7 @@ func TestFeedEscapesMonitorText(t *testing.T) {
 		event{monitor: "sei", id: "js", title: "script link", url: "javascript:alert(1)"},
 	)
 
-	rec := serveFeed(t, pool, Options{}, "/feed.xml")
+	rec := viewAll(t, pool)(t, Options{}, "/feed.xml")
 	raw := rec.Body.String()
 	for _, unsafe := range []string{"<script>", "<b>", "]]>", "<![CDATA[", "javascript:"} {
 		if strings.Contains(raw, unsafe) {

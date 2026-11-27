@@ -32,16 +32,14 @@ func TestServeTakesNoArguments(t *testing.T) {
 func TestServeStopsOnAnInvalidConfiguration(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run(t.Context(), nil, []string{"API_TOKEN=api-secret-value", "FEED_TOKEN=feed-secret-value"}, strings.NewReader(""), &stdout, &stderr)
+	code := Run(t.Context(), nil, []string{"NTFY_URL=https://ntfy.example.org/hub-topic", "NTFY_TOKEN=ntfy-secret-value"}, strings.NewReader(""), &stdout, &stderr)
 
 	output := stdout.String() + stderr.String()
 	if code != 1 || !strings.Contains(output, "DATABASE_URL is empty") {
 		t.Errorf("exit %d, output %q", code, output)
 	}
-	for _, secret := range []string{"api-secret-value", "feed-secret-value"} {
-		if strings.Contains(output, secret) {
-			t.Errorf("the output shows %q: %s", secret, output)
-		}
+	if strings.Contains(output, "ntfy-secret-value") {
+		t.Error("the output shows the value of NTFY_TOKEN")
 	}
 }
 

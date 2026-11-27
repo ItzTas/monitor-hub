@@ -66,10 +66,10 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 	registry := stream.NewRegistry()
 	mux := http.NewServeMux()
 	health.Configure(mux, pool, logger)
-	feed.Configure(mux, pool, feed.Options{Token: cfg.FeedToken, PublicURL: cfg.PublicURL}, logger)
+	feed.Configure(mux, pool, feed.Options{PublicURL: cfg.PublicURL}, accountService, logger)
 	icons.Register(mux)
 	consumerapi.Register(mux, consumerapi.Deps{Consumers: consumerService, Stream: stream.NewService(stream.NewPostgres(pool), signal, registry), Log: logger})
-	api.Register(mux, api.Deps{Pool: pool, Monitors: monitors, Token: cfg.APIToken, Log: logger, Consumers: consumerService, Registry: registry})
+	api.Register(mux, api.Deps{Pool: pool, Monitors: monitors, Accounts: accountService, PublicURL: cfg.PublicURL, Log: logger, Consumers: consumerService, Registry: registry})
 	api.RegisterAccess(mux, api.AccessDeps{Accounts: accountService, Log: logger, PublicURL: cfg.PublicURL, After: time.After})
 	dispatcher := notify.NewDispatcher(notify.NewOutbox(pool), channels, logger, notify.WithClock(now, time.After))
 	return &application{

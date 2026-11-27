@@ -7,8 +7,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func Configure(mux *http.ServeMux, pool *pgxpool.Pool, opts Options, log *slog.Logger) {
-	RegisterRoutes(mux, &Handler{service: NewService(NewPostgres(pool), opts), token: opts.Token, log: log})
+func Configure(mux *http.ServeMux, pool *pgxpool.Pool, opts Options, tokens Tokens, log *slog.Logger) {
+	repo := NewPostgres(pool)
+	RegisterRoutes(mux, &Handler{service: NewService(repo, opts), repo: repo, tokens: tokens, log: log})
 }
 
 func RegisterRoutes(mux *http.ServeMux, h *Handler) {

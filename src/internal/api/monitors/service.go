@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
+	"github.com/ItzTas/monitor-hub/src/internal/access"
 )
 
 const checkTimeout = 10 * time.Second
@@ -33,7 +34,8 @@ func NewService(repo Repository, supervisor Supervisor) *Service {
 	return &Service{repo: repo, supervisor: supervisor}
 }
 
-func (s *Service) List(ctx context.Context) ([]Monitor, error) {
+// List gives only the monitors p can view.
+func (s *Service) List(ctx context.Context, p access.Principal) ([]Monitor, error) {
 	rows, err := s.repo.ListMonitors(ctx)
 	if err != nil {
 		return nil, err
@@ -47,8 +49,9 @@ func (s *Service) List(ctx context.Context) ([]Monitor, error) {
 		monitor.State = stateName(row.State)
 		byName[row.Name] = monitor
 	}
-	monitors := make([]Monitor, 0, len(byName))
-	for _, name := range slices.Sorted(maps.Keys(byName)) {
+	visible := access.Visible(p, slices.Sorted(maps.Keys(byName)))
+	monitors := make([]Monitor, 0, len(visible))
+	for _, name := range visible {
 		monitor := byName[name]
 		_, monitor.Running = s.supervisor.Client(name)
 		monitors = append(monitors, monitor)

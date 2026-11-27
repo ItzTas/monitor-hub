@@ -11,8 +11,6 @@ type Config struct {
 	DatabaseURL string
 	HTTPAddress string
 	PublicURL   string
-	APIToken    string
-	FeedToken   string
 	MonitorsDir string
 	DataDir     string
 	LogLevel    slog.Level
@@ -24,33 +22,22 @@ const databaseHint = "set the Postgres address"
 func Load(environ []string, readFile func(string) ([]byte, error)) (Config, error) {
 	r := newReader(environ, readFile)
 	env := r.env
-	secrets := map[string]Secret{}
-	for _, name := range []string{"DATABASE_URL", "API_TOKEN", "FEED_TOKEN"} {
-		secrets[name] = r.secret(name)
-	}
+	databaseURL := r.secret("DATABASE_URL")
 	channels := r.channels()
 	if err := r.err(); err != nil {
 		return Config{}, err
 	}
-	required := map[string]string{
-		"DATABASE_URL": databaseHint,
-		"API_TOKEN":    "set the bearer token the API requires",
-	}
-	for key, hint := range required {
-		if secrets[key].IsZero() {
-			return Config{}, missing(key, hint)
-		}
+	if databaseURL.IsZero() {
+		return Config{}, missing("DATABASE_URL", databaseHint)
 	}
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(envOr(env, "LOG_LEVEL", "info"))); err != nil {
 		return Config{}, fmt.Errorf("LOG_LEVEL must be debug, info, warn or error: %q", env["LOG_LEVEL"])
 	}
 	cfg := Config{
-		DatabaseURL: secrets["DATABASE_URL"].Reveal(),
+		DatabaseURL: databaseURL.Reveal(),
 		HTTPAddress: envOr(env, "HTTP_ADDRESS", ":8080"),
 		PublicURL:   strings.TrimRight(env["PUBLIC_URL"], "/"),
-		APIToken:    secrets["API_TOKEN"].Reveal(),
-		FeedToken:   secrets["FEED_TOKEN"].Reveal(),
 		MonitorsDir: filepath.Clean(envOr(env, "MONITORS_DIR", "/opt/monitor-hub/monitors")),
 		DataDir:     filepath.Clean(envOr(env, "DATA_DIR", "/data")),
 		LogLevel:    level,

@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,5 +36,20 @@ func TestStreamsCanExtendTheirWriteDeadline(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the handler did not run within 5s")
+	}
+}
+
+func TestRequestLogsShowThePathWithoutTheQuery(t *testing.T) {
+	const token = "mht_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+	var logs bytes.Buffer
+	handler := withMiddleware(http.NotFoundHandler(), slog.New(slog.NewTextHandler(&logs, nil)))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/feed.xml?monitor=sei&token="+token, nil))
+
+	if !strings.Contains(logs.String(), "path=/feed.xml status=404") {
+		t.Errorf("the request log misses the path and status")
+	}
+	if strings.Contains(logs.String(), token) || strings.Contains(logs.String(), "monitor=sei") {
+		t.Error("the request log shows the query string, token included")
 	}
 }

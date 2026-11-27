@@ -11,18 +11,14 @@ import (
 func TestLoadReadsSecretsFromTheirFiles(t *testing.T) {
 	read := files(map[string]string{
 		"/run/secrets/database": "postgres://hub:pw@db/hub\n",
-		"/run/secrets/api":      "api-token\r\n",
-		"/run/secrets/feed":     "feed-token",
 		"/run/secrets/telegram": "123456789:AAEabcdefghijklmnopqrstuvwx\n",
 		"/run/secrets/ntfy":     "tk_0123456789\n\n",
 		"/run/secrets/smtp":     " smtp pw \n",
-		"/run/secrets/webhook":  "0123456789abcdef\n",
+		"/run/secrets/webhook":  "0123456789abcdef\r\n",
 	})
 
 	cfg, err := Load([]string{
 		"DATABASE_URL_FILE=/run/secrets/database",
-		"API_TOKEN_FILE=/run/secrets/api",
-		"FEED_TOKEN_FILE=/run/secrets/feed",
 		"TELEGRAM_TOKEN_FILE=/run/secrets/telegram",
 		"TELEGRAM_CHAT_ID=-1001234567890",
 		"NTFY_URL=https://ntfy.example.org/hub-topic",
@@ -41,8 +37,6 @@ func TestLoadReadsSecretsFromTheirFiles(t *testing.T) {
 
 	got := map[string]string{
 		"DATABASE_URL":   cfg.DatabaseURL,
-		"API_TOKEN":      cfg.APIToken,
-		"FEED_TOKEN":     cfg.FeedToken,
 		"TELEGRAM_TOKEN": cfg.Channels.Telegram.Token.Reveal(),
 		"NTFY_TOKEN":     cfg.Channels.Ntfy.Token.Reveal(),
 		"SMTP_PASSWORD":  cfg.Channels.Email.Password.Reveal(),
@@ -50,8 +44,6 @@ func TestLoadReadsSecretsFromTheirFiles(t *testing.T) {
 	}
 	want := map[string]string{
 		"DATABASE_URL":   "postgres://hub:pw@db/hub",
-		"API_TOKEN":      "api-token",
-		"FEED_TOKEN":     "feed-token",
 		"TELEGRAM_TOKEN": "123456789:AAEabcdefghijklmnopqrstuvwx",
 		"NTFY_TOKEN":     "tk_0123456789\n",
 		"SMTP_PASSWORD":  " smtp pw ",
@@ -80,11 +72,11 @@ func TestLoadRejectsBadSecretFiles(t *testing.T) {
 		environ []string
 		want    string
 	}{
-		"both set":          {environ("API_TOKEN_FILE=/run/secrets/api"), "set either API_TOKEN or API_TOKEN_FILE, not both"},
+		"both set":          {environ("DATABASE_URL_FILE=/run/secrets/api"), "set either DATABASE_URL or DATABASE_URL_FILE, not both"},
 		"both set, channel": {environ("TELEGRAM_TOKEN=123456789:AAEabcdefghijklmnopqrstuvwx", "TELEGRAM_TOKEN_FILE=/run/secrets/api", "TELEGRAM_CHAT_ID=42"), "set either TELEGRAM_TOKEN or TELEGRAM_TOKEN_FILE, not both"},
-		"empty file":        {[]string{"DATABASE_URL=postgres://db", "API_TOKEN_FILE=/run/secrets/empty"}, "API_TOKEN_FILE: /run/secrets/empty is empty"},
-		"missing file":      {[]string{"DATABASE_URL_FILE=/run/secrets/database", "API_TOKEN=secret"}, "DATABASE_URL_FILE: /run/secrets/database does not exist"},
-		"unreadable file":   {environ("FEED_TOKEN_FILE=/run/secrets/locked"), "FEED_TOKEN_FILE: no permission to read /run/secrets/locked"},
+		"empty file":        {[]string{"DATABASE_URL_FILE=/run/secrets/empty"}, "DATABASE_URL_FILE: /run/secrets/empty is empty"},
+		"missing file":      {[]string{"DATABASE_URL_FILE=/run/secrets/database"}, "DATABASE_URL_FILE: /run/secrets/database does not exist"},
+		"unreadable file":   {environ("TELEGRAM_TOKEN_FILE=/run/secrets/locked", "TELEGRAM_CHAT_ID=42"), "TELEGRAM_TOKEN_FILE: no permission to read /run/secrets/locked"},
 		"not a file":        {environ("WEBHOOK_URL=https://hooks.example.org/in", "WEBHOOK_SECRET_FILE=/run/secrets/dir"), "WEBHOOK_SECRET_FILE: could not read /run/secrets/dir"},
 	}
 	for name, tc := range cases {
@@ -107,7 +99,8 @@ func TestSecretFileProblemsNeverShowSecrets(t *testing.T) {
 	_, err := Load([]string{
 		"DATABASE_URL=database-direct-secret-4",
 		"DATABASE_URL_FILE=/run/secrets/database",
-		"API_TOKEN_FILE=/run/secrets/missing",
+		"NTFY_URL=https://ntfy.example.org/hub-topic",
+		"NTFY_TOKEN_FILE=/run/secrets/missing",
 		"TELEGRAM_TOKEN_FILE=/run/secrets/telegram",
 		"TELEGRAM_CHAT_ID=42",
 		"WEBHOOK_URL=https://hooks.example.org/in",
@@ -116,7 +109,7 @@ func TestSecretFileProblemsNeverShowSecrets(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error")
 	}
-	for _, want := range []string{"DATABASE_URL", "API_TOKEN_FILE", "TELEGRAM_TOKEN", "WEBHOOK_SECRET"} {
+	for _, want := range []string{"DATABASE_URL", "NTFY_TOKEN_FILE", "TELEGRAM_TOKEN", "WEBHOOK_SECRET"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error does not report %s:\n%v", want, err)
 		}

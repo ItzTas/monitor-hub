@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
+	"github.com/ItzTas/monitor-hub/src/internal/access"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
@@ -49,12 +50,23 @@ func seed(t *testing.T, pool *pgxpool.Pool, events ...db.InsertEventParams) {
 	}
 }
 
+var admin = access.NewSession(access.Person{ID: 1, Login: "paulo-santos", Admin: true})
+
 func list(t *testing.T, pool *pgxpool.Pool, query string) (int, page) {
+	t.Helper()
+	return listAs(t, pool, admin, query)
+}
+
+func listAs(t *testing.T, pool *pgxpool.Pool, p access.Principal, query string) (int, page) {
 	t.Helper()
 	mux := http.NewServeMux()
 	config := huma.DefaultConfig("test", "1.0.0")
 	config.CreateHooks = nil
-	Configure(humago.New(mux, config), pool)
+	api := humago.New(mux, config)
+	api.UseMiddleware(func(ctx huma.Context, next func(huma.Context)) {
+		next(huma.WithContext(ctx, access.WithPrincipal(ctx.Context(), p)))
+	})
+	Configure(api, pool)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/events"+query, nil))
 	var body page
@@ -156,6 +168,39 @@ func TestEventsLimit(t *testing.T) {
 			code, body := list(t, pool, tc.query)
 			if code != tc.code || len(body.Items) != tc.count {
 				t.Errorf("events%s = %d with %d items, want %d with %d", tc.query, code, len(body.Items), tc.code, tc.count)
+			}
+		})
+	}
+}
+
+func TestEventsOfHiddenMonitorsStayHidden(t *testing.T) {
+	pool := coretest.Pool(t)
+	seed(t, pool,
+		db.InsertEventParams{Monitor: "sei"},
+		db.InsertEventParams{Monitor: "diario"},
+		db.InsertEventParams{Monitor: "sei"},
+		db.InsertEventParams{Monitor: "anhanguera"},
+	)
+	seiOnly := access.NewSession(access.Person{ID: 2, Login: "ana-lima", Granted: []access.Permission{{Monitor: "sei", Action: access.View}}})
+	diarioOnly := access.NewSession(access.Person{ID: 2, Login: "ana-lima", Granted: []access.Permission{{Monitor: "diario", Action: access.View}}})
+	cases := map[string]struct {
+		principal access.Principal
+		query     string
+		seqs      []float64
+		next      *int64
+	}{
+		"view on sei":                    {seiOnly, "", []float64{3, 1}, nil},
+		"view on sei, filtered by sei":   {seiOnly, "?monitor=sei", []float64{3, 1}, nil},
+		"view on diario, asking for sei": {diarioOnly, "?monitor=sei", []float64{}, nil},
+		"view on sei, paging":            {seiOnly, "?limit=1", []float64{3}, new(int64(3))},
+		"check without view":             {access.NewSession(access.Person{Granted: []access.Permission{{Monitor: access.Every, Action: access.Check}}}), "", []float64{}, nil},
+		"a token carrying less":          {access.NewToken(access.Person{Admin: true}, []access.Permission{{Monitor: "diario", Action: access.View}}), "", []float64{2}, nil},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			code, body := listAs(t, pool, tc.principal, tc.query)
+			if code != http.StatusOK || !reflect.DeepEqual(seqs(body), tc.seqs) || !reflect.DeepEqual(body.NextBefore, tc.next) {
+				t.Errorf("events%s = %d %v next %v, want %v next %v", tc.query, code, seqs(body), body.NextBefore, tc.seqs, tc.next)
 			}
 		})
 	}

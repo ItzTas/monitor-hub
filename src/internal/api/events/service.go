@@ -1,6 +1,10 @@
 package events
 
-import "context"
+import (
+	"context"
+
+	"github.com/ItzTas/monitor-hub/src/internal/access"
+)
 
 const maxLimit = 200
 
@@ -12,9 +16,15 @@ func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) List(ctx context.Context, input ListInput) (Page, error) {
+// List gives only the events of the monitors p can view.
+func (s *Service) List(ctx context.Context, p access.Principal, input ListInput) (Page, error) {
+	names, err := s.repo.MonitorNames(ctx)
+	if err != nil {
+		return Page{}, err
+	}
 	limit := min(input.Limit, maxLimit)
-	events, err := s.repo.ListEvents(ctx, Filter{Monitor: input.Monitor, Kind: input.Kind, Before: input.Before, Limit: limit + 1})
+	filter := Filter{Monitor: input.Monitor, Kind: input.Kind, Before: input.Before, Limit: limit + 1, Visible: access.Visible(p, names)}
+	events, err := s.repo.ListEvents(ctx, filter)
 	if err != nil {
 		return Page{}, err
 	}

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ItzTas/monitor-hub/src/internal/accounts/accountstest"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/icons"
 )
@@ -22,10 +23,11 @@ func TestHubEndToEnd(t *testing.T) {
 	startSupervisor(t, app)
 	ctx := t.Context()
 
+	token := adminToken(t, app)
 	app.ingest.PollOnce(ctx)
 	app.dispatcher.RunOnce(ctx)
 
-	if titles := eventTitles(t, app); strings.Join(titles, ",") != "ping 2,ping 1" {
+	if titles := eventTitles(t, app, token); strings.Join(titles, ",") != "ping 2,ping 1" {
 		t.Errorf("events after the baseline = %q, want ping 2, ping 1", titles)
 	}
 	if got := b.ntfy.messages(); len(got) != 0 {
@@ -40,17 +42,17 @@ func TestHubEndToEnd(t *testing.T) {
 	if got := b.ntfy.messages(); len(got) != 1 || got[0] != want[0] {
 		t.Errorf("ntfy received %+v, want %+v", got, want)
 	}
-	feed := request(t, app, http.MethodGet, "/feed.xml?token="+feedToken, "")
+	feed := request(t, app, http.MethodGet, "/feed.xml?token="+token, "")
 	if feed.Code != http.StatusOK || !strings.Contains(feed.Body.String(), "ping 3") {
 		t.Errorf("feed = %d, want it to list ping 3:\n%s", feed.Code, feed.Body.String())
 	}
-	monitors := request(t, app, http.MethodGet, "/api/monitors", apiToken)
+	monitors := request(t, app, http.MethodGet, "/api/monitors", token)
 	for _, part := range []string{`"name":"testmonitor"`, `"display_name":"Test monitor"`, `"running":true`, `"state":"idle"`} {
 		if !strings.Contains(monitors.Body.String(), part) {
 			t.Errorf("monitors = %d %s, want it to contain %s", monitors.Code, monitors.Body.String(), part)
 		}
 	}
-	check := request(t, app, http.MethodPost, "/api/monitors/testmonitor/check", apiToken)
+	check := request(t, app, http.MethodPost, "/api/monitors/testmonitor/check", token)
 	if check.Code != http.StatusOK || strings.TrimSpace(check.Body.String()) != `{"accepted":true,"message":""}` {
 		t.Errorf("check = %d %s", check.Code, check.Body.String())
 	}
@@ -68,6 +70,11 @@ func TestRunStopsEverythingAndLogsNoSecret(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx) }()
 	waitForMonitor(t, app)
+	token := adminToken(t, app)
+	cookie := signIn(t, app)
+	if feed := request(t, app, http.MethodGet, "/feed.xml?token="+token, ""); feed.Code != http.StatusOK {
+		t.Errorf("feed = %d, want 200", feed.Code)
+	}
 
 	cancel()
 	select {
@@ -79,19 +86,63 @@ func TestRunStopsEverythingAndLogsNoSecret(t *testing.T) {
 		t.Fatal("Run did not return within 15s of the cancellation")
 	}
 
+	secrets := map[string]string{
+		"the personal token": token,
+		"the password":       accountstest.Password,
+		"the session cookie": cookie.Value,
+		"the ntfy token":     ntfyToken,
+	}
+	redacted := logs.String()
+	for name, secret := range secrets {
+		if strings.Contains(redacted, secret) {
+			t.Errorf("the logs contain %s", name)
+		}
+		redacted = strings.ReplaceAll(redacted, secret, "<"+name+">")
+	}
 	if _, ok := app.supervisor.Client("testmonitor"); ok {
 		t.Error("the monitor is still connected after Run returned")
 	}
-	for _, part := range []string{"monitor-hub starting", "monitors=testmonitor", "channels=ntfy", "monitor=testmonitor"} {
-		if !strings.Contains(logs.String(), part) {
-			t.Errorf("the logs miss %q:\n%s", part, logs.String())
+	for _, part := range []string{"monitor-hub starting", "monitors=testmonitor", "channels=ntfy", "monitor=testmonitor", "path=/feed.xml status=200"} {
+		if !strings.Contains(redacted, part) {
+			t.Errorf("the logs miss %q:\n%s", part, redacted)
 		}
 	}
-	for _, secret := range []string{apiToken, feedToken, ntfyToken} {
-		if strings.Contains(logs.String(), secret) {
-			t.Errorf("the logs contain %q:\n%s", secret, logs.String())
-		}
+}
+
+func TestAPersonalTokenLosesWhatItsOwnerLoses(t *testing.T) {
+	b := newBench(t)
+	app := b.assemble(slog.New(slog.DiscardHandler))
+	accountstest.Person(t, app.accounts, "ana-lima", "monitor:*:view")
+	token := accountstest.Token(t, app.accounts, "ana-lima", "monitor:*:view")
+	cookie := signIn(t, app)
+
+	if got := monitorNames(t, app, token); !slices.Equal(got, []string{"testmonitor"}) {
+		t.Fatalf("the token of ana-lima lists %v, want testmonitor", got)
 	}
+	if rec := sendSigned(t, app, http.MethodPut, "/api/users/ana-lima/permissions", cookie, strings.NewReader(`{"permissions":[]}`)); rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/users/ana-lima/permissions = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := monitorNames(t, app, token); len(got) != 0 {
+		t.Errorf("the token of ana-lima lists %v after she lost her permissions, want nothing", got)
+	}
+}
+
+func monitorNames(t *testing.T, app *application, token string) []string {
+	t.Helper()
+	rec := request(t, app, http.MethodGet, "/api/monitors", token)
+	var listed struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("monitors = %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
+	names := []string{}
+	for _, item := range listed.Items {
+		names = append(names, item.Name)
+	}
+	return names
 }
 
 func TestHubNotifiesAsSoonAsTheMonitorSignals(t *testing.T) {
@@ -172,7 +223,7 @@ func TestAConsumerReceivesEventsAfterTheBaseline(t *testing.T) {
 	if got, want := stream.next(t), (frame{id: "2", event: "caught_up", data: `{"seq":2,"backlog":0}`}); got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
-	list := request(t, app, http.MethodGet, "/api/consumers", apiToken)
+	list := sendSigned(t, app, http.MethodGet, "/api/consumers", signIn(t, app), nil)
 	var listed struct {
 		Items []struct {
 			Name      string `json:"name"`

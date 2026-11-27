@@ -70,14 +70,16 @@ JOIN monitors p ON p.name = e.monitor
 WHERE ($1::text IS NULL OR e.monitor = $1::text)
   AND ($2::text IS NULL OR e.kind = $2::text)
   AND ($3::bigint IS NULL OR e.seq < $3::bigint)
+  AND e.monitor = ANY($4::text[])
 ORDER BY e.seq DESC
-LIMIT $4::bigint
+LIMIT $5::bigint
 `
 
 type ListEventsParams struct {
 	Monitor pgtype.Text
 	Kind    pgtype.Text
 	Before  pgtype.Int8
+	Visible []string
 	MaxRows int64
 }
 
@@ -101,6 +103,7 @@ func (q *Queries) ListEvents(ctx context.Context, arg ListEventsParams) ([]ListE
 		arg.Monitor,
 		arg.Kind,
 		arg.Before,
+		arg.Visible,
 		arg.MaxRows,
 	)
 	if err != nil {

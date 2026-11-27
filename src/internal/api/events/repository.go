@@ -12,6 +12,7 @@ import (
 
 type Repository interface {
 	ListEvents(ctx context.Context, filter Filter) ([]Event, error)
+	MonitorNames(ctx context.Context) ([]string, error)
 }
 
 type Postgres struct {
@@ -27,6 +28,7 @@ func (r *Postgres) ListEvents(ctx context.Context, filter Filter) ([]Event, erro
 		Monitor: pgtype.Text{String: filter.Monitor, Valid: filter.Monitor != ""},
 		Kind:    pgtype.Text{String: filter.Kind, Valid: filter.Kind != ""},
 		Before:  pgtype.Int8{Int64: filter.Before, Valid: filter.Before > 0},
+		Visible: filter.Visible,
 		MaxRows: int64(filter.Limit),
 	})
 	if err != nil {
@@ -50,6 +52,10 @@ func (r *Postgres) ListEvents(ctx context.Context, filter Filter) ([]Event, erro
 		})
 	}
 	return events, nil
+}
+
+func (r *Postgres) MonitorNames(ctx context.Context) ([]string, error) {
+	return r.queries.MonitorNames(ctx)
 }
 
 func severityName(severity int16) string {

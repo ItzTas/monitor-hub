@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
+	"github.com/ItzTas/monitor-hub/src/internal/access"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
@@ -48,12 +49,22 @@ func (s fakeSupervisor) Client(name string) (monitorpb.MonitorClient, bool) {
 	return c, ok
 }
 
-func serve(t *testing.T, pool *pgxpool.Pool, supervisor Supervisor, method, target string) (int, map[string]any) {
+var admin = access.NewSession(access.Person{ID: 1, Login: "paulo-santos", Admin: true})
+
+func person(granted ...access.Permission) access.Principal {
+	return access.NewSession(access.Person{ID: 2, Login: "ana-lima", Granted: granted})
+}
+
+func serve(t *testing.T, pool *pgxpool.Pool, supervisor Supervisor, p access.Principal, method, target string) (int, map[string]any) {
 	t.Helper()
 	mux := http.NewServeMux()
 	config := huma.DefaultConfig("test", "1.0.0")
 	config.CreateHooks = nil
-	Configure(humago.New(mux, config), pool, supervisor)
+	api := humago.New(mux, config)
+	api.UseMiddleware(func(ctx huma.Context, next func(huma.Context)) {
+		next(huma.WithContext(ctx, access.WithPrincipal(ctx.Context(), p)))
+	})
+	Configure(api, pool, supervisor)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, target, nil))
 	var body map[string]any
@@ -63,20 +74,35 @@ func serve(t *testing.T, pool *pgxpool.Pool, supervisor Supervisor, method, targ
 	return rec.Code, body
 }
 
-func TestCheckUnknownMonitorIs404(t *testing.T) {
+func TestCheckWithoutPermissionIs403BeforeTheName(t *testing.T) {
 	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]monitorpb.MonitorClient{"sei": &fakeClient{answer: &monitorpb.CheckResponse{Accepted: true}}}}
-
-	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/monitors/diario/check")
-
-	if code != http.StatusNotFound {
-		t.Errorf("status = %d %v, want 404", code, body)
+	cases := map[string]struct {
+		principal access.Principal
+		target    string
+		want      int
+	}{
+		"nobody":                      {access.Principal{}, "/api/monitors/sei/check", http.StatusUnauthorized},
+		"view but no check":           {person(access.Permission{Monitor: "sei", Action: access.View}), "/api/monitors/sei/check", http.StatusForbidden},
+		"check on another monitor":    {person(access.Permission{Monitor: "sei", Action: access.Check}), "/api/monitors/nope/check", http.StatusForbidden},
+		"no permission, unknown name": {person(), "/api/monitors/nope/check", http.StatusForbidden},
+		"check on every monitor":      {person(access.Permission{Monitor: access.Every, Action: access.Check}), "/api/monitors/nope/check", http.StatusNotFound},
+		"an admin, unknown name":      {admin, "/api/monitors/nope/check", http.StatusNotFound},
+		"check on the monitor":        {person(access.Permission{Monitor: "sei", Action: access.Check}), "/api/monitors/sei/check", http.StatusOK},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			code, body := serve(t, nil, supervisor, tc.principal, http.MethodPost, tc.target)
+			if code != tc.want {
+				t.Errorf("POST %s = %d %v, want %d", tc.target, code, body, tc.want)
+			}
+		})
 	}
 }
 
 func TestCheckStoppedMonitorIs503(t *testing.T) {
 	supervisor := fakeSupervisor{names: []string{"sei"}}
 
-	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/monitors/sei/check")
+	code, body := serve(t, nil, supervisor, admin, http.MethodPost, "/api/monitors/sei/check")
 
 	if code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d %v, want 503", code, body)
@@ -87,7 +113,7 @@ func TestCheckAnswersWhatTheMonitorSays(t *testing.T) {
 	client := &fakeClient{answer: &monitorpb.CheckResponse{Accepted: false, Message: "a check is already running"}}
 	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]monitorpb.MonitorClient{"sei": client}}
 
-	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/monitors/sei/check")
+	code, body := serve(t, nil, supervisor, admin, http.MethodPost, "/api/monitors/sei/check")
 
 	want := map[string]any{"accepted": false, "message": "a check is already running"}
 	if code != http.StatusOK || !reflect.DeepEqual(body, want) {
@@ -102,7 +128,7 @@ func TestCheckFailureIs502(t *testing.T) {
 	client := &fakeClient{err: errors.New("connection refused")}
 	supervisor := fakeSupervisor{names: []string{"sei"}, clients: map[string]monitorpb.MonitorClient{"sei": client}}
 
-	code, body := serve(t, nil, supervisor, http.MethodPost, "/api/monitors/sei/check")
+	code, body := serve(t, nil, supervisor, admin, http.MethodPost, "/api/monitors/sei/check")
 
 	if code != http.StatusBadGateway {
 		t.Errorf("status = %d %v, want 502", code, body)
@@ -133,7 +159,7 @@ func TestListShowsConfiguredAndStoredMonitors(t *testing.T) {
 		clients: map[string]monitorpb.MonitorClient{"diario": &fakeClient{}},
 	}
 
-	code, body := serve(t, pool, supervisor, http.MethodGet, "/api/monitors")
+	code, body := serve(t, pool, supervisor, admin, http.MethodGet, "/api/monitors")
 
 	want := map[string]any{"items": []any{
 		map[string]any{
@@ -151,6 +177,37 @@ func TestListShowsConfiguredAndStoredMonitors(t *testing.T) {
 	}}
 	if code != http.StatusOK || !reflect.DeepEqual(body, want) {
 		t.Errorf("monitors = %d %v\nwant          %v", code, body, want)
+	}
+}
+
+func TestListShowsOnlyWhatThePrincipalViews(t *testing.T) {
+	pool := coretest.Pool(t)
+	if err := db.New(pool).SaveMonitorDescription(t.Context(), db.SaveMonitorDescriptionParams{Name: "removed", DisplayName: "Removed", Version: "0.1.0"}); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := fakeSupervisor{names: []string{"diario", "sei"}}
+	cases := map[string]struct {
+		principal access.Principal
+		want      []string
+	}{
+		"an admin":              {admin, []string{"diario", "removed", "sei"}},
+		"view on every monitor": {person(access.Permission{Monitor: access.Every, Action: access.View}), []string{"diario", "removed", "sei"}},
+		"view on one monitor":   {person(access.Permission{Monitor: "sei", Action: access.View}), []string{"sei"}},
+		"check without view":    {person(access.Permission{Monitor: "sei", Action: access.Check}), []string{}},
+		"a token carrying view": {access.NewToken(access.Person{Granted: []access.Permission{{Monitor: access.Every, Action: access.View}}}, []access.Permission{{Monitor: "diario", Action: access.View}}), []string{"diario"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			code, body := serve(t, pool, supervisor, tc.principal, http.MethodGet, "/api/monitors")
+			names := []string{}
+			items, _ := body["items"].([]any)
+			for _, item := range items {
+				names = append(names, item.(map[string]any)["name"].(string))
+			}
+			if code != http.StatusOK || !reflect.DeepEqual(names, tc.want) {
+				t.Errorf("monitors = %d %v, want %v", code, names, tc.want)
+			}
+		})
 	}
 }
 

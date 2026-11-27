@@ -14,8 +14,6 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		"DATABASE_URL=postgres://hub@db/hub",
 		"HTTP_ADDRESS=127.0.0.1:9000",
 		"PUBLIC_URL=https://hub.example.com/",
-		"API_TOKEN=api-secret",
-		"FEED_TOKEN=feed-secret",
 		"MONITORS_DIR=/srv/monitors/",
 		"DATA_DIR=/srv/data",
 		"LOG_LEVEL=debug",
@@ -28,8 +26,6 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		DatabaseURL: "postgres://hub@db/hub",
 		HTTPAddress: "127.0.0.1:9000",
 		PublicURL:   "https://hub.example.com",
-		APIToken:    "api-secret",
-		FeedToken:   "feed-secret",
 		MonitorsDir: "/srv/monitors",
 		DataDir:     "/srv/data",
 		LogLevel:    slog.LevelDebug,
@@ -40,14 +36,13 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 }
 
 func TestLoadFillsDefaults(t *testing.T) {
-	cfg, err := Load([]string{"DATABASE_URL=postgres://db", "API_TOKEN=secret"}, noFiles)
+	cfg, err := Load([]string{"DATABASE_URL=postgres://db"}, noFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Config{
 		DatabaseURL: "postgres://db",
 		HTTPAddress: ":8080",
-		APIToken:    "secret",
 		MonitorsDir: "/opt/monitor-hub/monitors",
 		DataDir:     "/data",
 		LogLevel:    slog.LevelInfo,
@@ -59,11 +54,10 @@ func TestLoadFillsDefaults(t *testing.T) {
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
 	cases := map[string][]string{
-		"no database":           {"API_TOKEN=secret"},
-		"no api token":          {"DATABASE_URL=postgres://db"},
-		"relative monitors dir": {"DATABASE_URL=postgres://db", "API_TOKEN=secret", "MONITORS_DIR=monitors"},
-		"relative data dir":     {"DATABASE_URL=postgres://db", "API_TOKEN=secret", "DATA_DIR=./data"},
-		"unknown log level":     {"DATABASE_URL=postgres://db", "API_TOKEN=secret", "LOG_LEVEL=loud"},
+		"no database":           {},
+		"relative monitors dir": {"DATABASE_URL=postgres://db", "MONITORS_DIR=monitors"},
+		"relative data dir":     {"DATABASE_URL=postgres://db", "DATA_DIR=./data"},
+		"unknown log level":     {"DATABASE_URL=postgres://db", "LOG_LEVEL=loud"},
 	}
 	for name, environ := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -83,7 +77,7 @@ func TestLoadDatabaseURLNeedsNothingElse(t *testing.T) {
 	}{
 		"direct":    {[]string{"DATABASE_URL=postgres://hub@db/hub", "SMTP_HOST=smtp.example.org"}, nil, "postgres://hub@db/hub", ""},
 		"from file": {[]string{"DATABASE_URL_FILE=/run/secrets/db"}, map[string]string{"/run/secrets/db": "postgres://hub:pw@db/hub\n"}, "postgres://hub:pw@db/hub", ""},
-		"missing":   {[]string{"API_TOKEN=secret"}, nil, "", "DATABASE_URL is empty: set the Postgres address (or set DATABASE_URL_FILE)"},
+		"missing":   {[]string{"SMTP_HOST=smtp.example.org"}, nil, "", "DATABASE_URL is empty: set the Postgres address (or set DATABASE_URL_FILE)"},
 		"both":      {[]string{"DATABASE_URL=postgres://db", "DATABASE_URL_FILE=/run/secrets/db"}, nil, "", "set either DATABASE_URL or DATABASE_URL_FILE, not both"},
 	}
 	for name, tc := range cases {
@@ -114,7 +108,7 @@ func files(contents map[string]string) func(string) ([]byte, error) {
 }
 
 func environ(extra ...string) []string {
-	return append([]string{"DATABASE_URL=postgres://db", "API_TOKEN=secret"}, extra...)
+	return append([]string{"DATABASE_URL=postgres://db"}, extra...)
 }
 
 func TestLoadReadsTheChannels(t *testing.T) {

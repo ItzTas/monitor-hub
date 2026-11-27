@@ -1,7 +1,6 @@
 package api
 
 import (
-	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -10,8 +9,10 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ItzTas/monitor-hub/src/internal/accounts"
 	consumerlist "github.com/ItzTas/monitor-hub/src/internal/api/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/api/events"
+	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/api/monitors"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/stream"
@@ -25,7 +26,8 @@ const (
 type Deps struct {
 	Pool      *pgxpool.Pool
 	Monitors  monitors.Supervisor
-	Token     string
+	Accounts  *accounts.Service
+	PublicURL string
 	Log       *slog.Logger
 	Consumers *consumers.Service
 	Registry  *stream.Registry
@@ -33,10 +35,10 @@ type Deps struct {
 
 func Register(mux *http.ServeMux, deps Deps) huma.API {
 	api := humago.New(mux, HumaConfig(deps.Log,
-		"The monitors monitor-hub runs, the events they reported and the consumers that read them. Every route needs the header Authorization: Bearer <API_TOKEN>.",
-		"The API_TOKEN of the monitor-hub configuration.",
+		"The monitors monitor-hub runs, the events they reported and the consumers that read them. Send a personal token as Authorization: Bearer <token>, or the session cookie from POST /api/session.",
+		"A personal token (mht_), shown once when it is created.",
 	))
-	api.UseMiddleware(bearerAuth(api, deps.Token))
+	api.UseMiddleware(gate.Middleware(api, deps.Accounts, deps.PublicURL))
 	monitors.Configure(api, deps.Pool, deps.Monitors)
 	events.Configure(api, deps.Pool)
 	consumerlist.Configure(api, deps.Consumers, deps.Registry)
@@ -54,18 +56,6 @@ func HumaConfig(log *slog.Logger, description, credential string) huma.Config {
 	cfg.Security = []map[string][]string{{securityScheme: {}}}
 	cfg.Transformers = append(cfg.Transformers, withoutValues, serverErrors(log))
 	return cfg
-}
-
-func bearerAuth(api huma.API, token string) func(huma.Context, func(huma.Context)) {
-	expected := []byte("Bearer " + token)
-	return func(ctx huma.Context, next func(huma.Context)) {
-		if token == "" || subtle.ConstantTimeCompare([]byte(ctx.Header("Authorization")), expected) != 1 {
-			ctx.SetHeader("WWW-Authenticate", "Bearer")
-			_ = huma.WriteErr(api, ctx, http.StatusUnauthorized, "missing or invalid API token")
-			return
-		}
-		next(ctx)
-	}
 }
 
 // withoutValues drops the request values huma's validation puts in each error

@@ -5,6 +5,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/stream"
 )
@@ -15,6 +16,9 @@ type Handler struct {
 }
 
 func (h *Handler) List(ctx context.Context, _ *struct{}) (*ListOutput, error) {
+	if err := gate.NeedAdmin(ctx); err != nil {
+		return nil, err
+	}
 	all, err := h.service.List(ctx)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("internal error", err)

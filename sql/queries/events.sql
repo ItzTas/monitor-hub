@@ -11,6 +11,7 @@ JOIN monitors p ON p.name = e.monitor
 WHERE (sqlc.narg(monitor)::text IS NULL OR e.monitor = sqlc.narg(monitor)::text)
   AND (sqlc.narg(kind)::text IS NULL OR e.kind = sqlc.narg(kind)::text)
   AND (sqlc.narg(before)::bigint IS NULL OR e.seq < sqlc.narg(before)::bigint)
+  AND e.monitor = ANY(sqlc.arg(visible)::text[])
 ORDER BY e.seq DESC
 LIMIT sqlc.arg(max_rows)::bigint;
 

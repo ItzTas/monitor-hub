@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
 	"github.com/ItzTas/monitor-hub/src/internal/accounts"
+	"github.com/ItzTas/monitor-hub/src/internal/accounts/accountstest"
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/api/monitors"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
@@ -29,66 +31,157 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/stream"
 )
 
-const token = "api-token-0123456789"
-
-type noMonitors struct{}
-
-func (noMonitors) Names() []string {
-	return nil
+type fakeSupervisor struct {
+	names  []string
+	client monitorpb.MonitorClient
 }
 
-func (noMonitors) Client(string) (monitorpb.MonitorClient, bool) {
-	return nil, false
+func (s fakeSupervisor) Names() []string {
+	return s.names
 }
 
-func deps(pool *pgxpool.Pool, supervisor monitors.Supervisor, log *slog.Logger) Deps {
-	return Deps{Pool: pool, Monitors: supervisor, Token: token, Log: log, Consumers: consumers.NewService(pool), Registry: stream.NewRegistry()}
+func (s fakeSupervisor) Client(string) (monitorpb.MonitorClient, bool) {
+	return s.client, s.client != nil
 }
 
-func TestEveryRouteRequiresTheToken(t *testing.T) {
-	mux := http.NewServeMux()
-	api := Register(mux, deps(coretest.Pool(t), noMonitors{}, slog.New(slog.DiscardHandler)))
+type bench struct {
+	mux  *http.ServeMux
+	pool *pgxpool.Pool
+	svc  *accounts.Service
+	apis []huma.API
+}
 
-	routes := 0
-	for path, item := range api.OpenAPI().Paths {
-		for method, operation := range map[string]*huma.Operation{http.MethodGet: item.Get, http.MethodPost: item.Post, http.MethodPut: item.Put, http.MethodPatch: item.Patch, http.MethodDelete: item.Delete} {
-			if operation == nil {
-				continue
-			}
-			if !strings.HasPrefix(path, "/api/") {
-				t.Errorf("%s %s is outside /api/", method, path)
-			}
-			target := strings.NewReplacer("{name}", "sei").Replace(path)
-			for name, header := range map[string]string{"no token": "", "wrong token": "Bearer api-token-0123456780", "no scheme": token, "basic": "Basic " + token} {
-				routes++
-				request := httptest.NewRequestWithContext(t.Context(), method, target, nil)
-				if header != "" {
-					request.Header.Set("Authorization", header)
-				}
-				rec := httptest.NewRecorder()
-				mux.ServeHTTP(rec, request)
-				if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") != "Bearer" {
-					t.Errorf("%s %s with %s = %d, want 401 with WWW-Authenticate: Bearer", method, target, name, rec.Code)
+func newBench(t *testing.T, supervisor monitors.Supervisor, log *slog.Logger) *bench {
+	t.Helper()
+	pool := coretest.Pool(t)
+	b := &bench{mux: http.NewServeMux(), pool: pool, svc: accounts.NewService(pool, time.Now)}
+	b.apis = []huma.API{
+		Register(b.mux, Deps{Pool: pool, Monitors: supervisor, Accounts: b.svc, Log: log, Consumers: consumers.NewService(pool), Registry: stream.NewRegistry()}),
+		RegisterAccess(b.mux, AccessDeps{Accounts: b.svc, Log: log, After: time.After}),
+	}
+	return b
+}
+
+func (b *bench) call(t *testing.T, method, target string, header http.Header) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequestWithContext(t.Context(), method, target, nil)
+	maps.Copy(request.Header, header)
+	rec := httptest.NewRecorder()
+	b.mux.ServeHTTP(rec, request)
+	return rec
+}
+
+func bearer(token string) http.Header {
+	return http.Header{"Authorization": {"Bearer " + token}}
+}
+
+type route struct {
+	method    string
+	path      string
+	operation *huma.Operation
+}
+
+func (b *bench) routes(t *testing.T) []route {
+	t.Helper()
+	var all []route
+	for _, api := range b.apis {
+		for path, item := range api.OpenAPI().Paths {
+			for method, operation := range map[string]*huma.Operation{http.MethodGet: item.Get, http.MethodPost: item.Post, http.MethodPut: item.Put, http.MethodPatch: item.Patch, http.MethodDelete: item.Delete} {
+				if operation != nil {
+					all = append(all, route{method, path, operation})
 				}
 			}
 		}
 	}
-	if routes == 0 {
+	if len(all) == 0 {
 		t.Fatal("no route registered")
+	}
+	return all
+}
+
+func TestEveryRouteDeclaresAGate(t *testing.T) {
+	b := newBench(t, fakeSupervisor{}, slog.New(slog.DiscardHandler))
+	levels := map[any]bool{gate.Anyone: true, gate.Identified: true, gate.Session: true}
+
+	for _, r := range b.routes(t) {
+		if !strings.HasPrefix(r.path, "/api/") {
+			t.Errorf("%s %s is outside /api/", r.method, r.path)
+		}
+		level := r.operation.Metadata["gate"]
+		if !levels[level] {
+			t.Errorf("%s %s declares the gate %v, want anyone, identified or session", r.method, r.path, level)
+		}
+		if level == gate.Anyone && r.operation.OperationID != "create-session" {
+			t.Errorf("%s %s is open to anyone; only create-session is", r.method, r.path)
+		}
 	}
 }
 
-func TestTheRightTokenIsAccepted(t *testing.T) {
-	mux := http.NewServeMux()
-	Register(mux, deps(coretest.Pool(t), noMonitors{}, slog.New(slog.DiscardHandler)))
+func TestNobodyGetsInWithoutSigningIn(t *testing.T) {
+	b := newBench(t, fakeSupervisor{names: []string{"sei"}}, slog.New(slog.DiscardHandler))
+	params := strings.NewReplacer("{name}", "sei", "{login}", "paulo-santos", "{id}", "1")
 
-	for _, target := range []string{"/api/monitors", "/api/events"} {
-		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
-		request.Header.Set("Authorization", "Bearer "+token)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, request)
-		if rec.Code != http.StatusOK {
-			t.Errorf("GET %s = %d: %s", target, rec.Code, rec.Body.String())
+	for _, r := range b.routes(t) {
+		if r.operation.OperationID == "create-session" {
+			continue
+		}
+		target := params.Replace(r.path)
+		rec := b.call(t, r.method, target, nil)
+		if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") != "Bearer" {
+			t.Errorf("%s %s without a session or token = %d, want 401 with WWW-Authenticate: Bearer", r.method, target, rec.Code)
+		}
+	}
+}
+
+func storeEvents(t *testing.T, pool *pgxpool.Pool, monitor string, titles ...string) {
+	t.Helper()
+	repo := ingest.NewPostgres(pool)
+	if err := repo.SaveDescription(t.Context(), &monitorpb.DescribeResponse{Name: monitor, DisplayName: strings.ToUpper(monitor), Version: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	events := make([]*monitorpb.Event, 0, len(titles))
+	for i, title := range titles {
+		events = append(events, &monitorpb.Event{Seq: int64(i + 1), Id: title, Kind: "ping", OccurredAt: timestamppb.Now(), Title: title})
+	}
+	if _, err := repo.StoreEvents(t.Context(), ingest.Batch{Monitor: monitor, Events: events}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCallersSeeOnlyTheMonitorsTheyView(t *testing.T) {
+	b := newBench(t, fakeSupervisor{names: []string{"diario", "sei"}}, slog.New(slog.DiscardHandler))
+	storeEvents(t, b.pool, "sei", "sei 1")
+	storeEvents(t, b.pool, "diario", "diario 1")
+	accountstest.Person(t, b.svc, "ana-lima", "monitor:sei:view")
+	token := accountstest.Token(t, b.svc, "ana-lima", "monitor:sei:view")
+
+	var listed struct {
+		Items []struct {
+			Name    string `json:"name"`
+			Monitor string `json:"monitor"`
+			Title   string `json:"title"`
+		} `json:"items"`
+	}
+	monitorList := b.call(t, http.MethodGet, "/api/monitors", bearer(token))
+	if err := json.Unmarshal(monitorList.Body.Bytes(), &listed); err != nil || monitorList.Code != http.StatusOK || len(listed.Items) != 1 || listed.Items[0].Name != "sei" {
+		t.Errorf("monitors = %d %s (%v), want only sei", monitorList.Code, monitorList.Body.String(), err)
+	}
+	listed.Items = nil
+	eventList := b.call(t, http.MethodGet, "/api/events", bearer(token))
+	if err := json.Unmarshal(eventList.Body.Bytes(), &listed); err != nil || eventList.Code != http.StatusOK || len(listed.Items) != 1 || listed.Items[0].Title != "sei 1" {
+		t.Errorf("events = %d %s (%v), want only sei 1", eventList.Code, eventList.Body.String(), err)
+	}
+	session := http.Header{"Cookie": {gate.CookieName + "=" + accountstest.Session(t, b.svc, "ana-lima")}}
+	for _, refused := range []struct {
+		name, method, target string
+		header               http.Header
+	}{
+		{"token", http.MethodPost, "/api/monitors/sei/check", bearer(token)},
+		{"token", http.MethodGet, "/api/consumers", bearer(token)},
+		{"session", http.MethodGet, "/api/consumers", session},
+	} {
+		if rec := b.call(t, refused.method, refused.target, refused.header); rec.Code != http.StatusForbidden {
+			t.Errorf("%s %s with a %s = %d %s, want 403", refused.method, refused.target, refused.name, rec.Code, rec.Body.String())
 		}
 	}
 }
@@ -101,25 +194,13 @@ func (failingClient) Check(context.Context, *monitorpb.CheckRequest, ...grpc.Cal
 	return nil, errors.New("rpc error: code = Unavailable desc = dial unix /tmp/monitor123")
 }
 
-type oneMonitor struct{}
-
-func (oneMonitor) Names() []string {
-	return []string{"sei"}
-}
-
-func (oneMonitor) Client(string) (monitorpb.MonitorClient, bool) {
-	return failingClient{}, true
-}
-
 func TestServerErrorsAreLoggedButNotAnswered(t *testing.T) {
 	var logs bytes.Buffer
-	mux := http.NewServeMux()
-	Register(mux, deps(coretest.Pool(t), oneMonitor{}, slog.New(slog.NewTextHandler(&logs, nil))))
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/monitors/sei/check", nil)
-	request.Header.Set("Authorization", "Bearer "+token)
-	rec := httptest.NewRecorder()
+	b := newBench(t, fakeSupervisor{names: []string{"sei"}, client: failingClient{}}, slog.New(slog.NewTextHandler(&logs, nil)))
+	accountstest.Person(t, b.svc, "ana-lima", "monitor:sei:check")
+	token := accountstest.Token(t, b.svc, "ana-lima", "monitor:sei:check")
 
-	mux.ServeHTTP(rec, request)
+	rec := b.call(t, http.MethodPost, "/api/monitors/sei/check", bearer(token))
 
 	if rec.Code != http.StatusBadGateway || strings.Contains(rec.Body.String(), "monitor123") {
 		t.Errorf("check = %d %s, want 502 without the RPC error", rec.Code, rec.Body.String())
@@ -130,28 +211,15 @@ func TestServerErrorsAreLoggedButNotAnswered(t *testing.T) {
 }
 
 func TestConsumersAreListedWithTheirLag(t *testing.T) {
-	pool := coretest.Pool(t)
-	mux := http.NewServeMux()
-	Register(mux, deps(pool, noMonitors{}, slog.New(slog.DiscardHandler)))
-	if _, err := consumers.NewService(pool).Add(t.Context(), "desk"); err != nil {
+	b := newBench(t, fakeSupervisor{}, slog.New(slog.DiscardHandler))
+	if _, err := consumers.NewService(b.pool).Add(t.Context(), "desk"); err != nil {
 		t.Fatal(err)
 	}
-	repo := ingest.NewPostgres(pool)
-	if err := repo.SaveDescription(t.Context(), &monitorpb.DescribeResponse{Name: "sei", DisplayName: "SEI", Version: "1"}); err != nil {
-		t.Fatal(err)
-	}
-	events := []*monitorpb.Event{
-		{Seq: 1, Id: "e1", Kind: "ping", OccurredAt: timestamppb.Now(), Title: "ping 1"},
-		{Seq: 2, Id: "e2", Kind: "ping", OccurredAt: timestamppb.Now(), Title: "ping 2"},
-	}
-	if _, err := repo.StoreEvents(t.Context(), ingest.Batch{Monitor: "sei", Events: events}); err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/consumers", nil)
-	request.Header.Set("Authorization", "Bearer "+token)
-	rec := httptest.NewRecorder()
+	storeEvents(t, b.pool, "sei", "ping 1", "ping 2")
+	accountstest.Admin(t, b.svc, "paulo-santos")
+	session := accountstest.Session(t, b.svc, "paulo-santos")
 
-	mux.ServeHTTP(rec, request)
+	rec := b.call(t, http.MethodGet, "/api/consumers", http.Header{"Cookie": {gate.CookieName + "=" + session}})
 
 	var page struct {
 		Items []map[string]any `json:"items"`
@@ -162,33 +230,6 @@ func TestConsumersAreListedWithTheirLag(t *testing.T) {
 	want := []map[string]any{{"name": "desk", "position": 0.0, "behind": 2.0, "acked_at": nil, "seen_at": nil, "connected": false}}
 	if !reflect.DeepEqual(page.Items, want) {
 		t.Errorf("consumers = %v, want %v", page.Items, want)
-	}
-}
-
-func TestEveryRouteDeclaresAGate(t *testing.T) {
-	api := RegisterAccess(http.NewServeMux(), AccessDeps{
-		Accounts: accounts.NewService(coretest.Pool(t), time.Now), Log: slog.New(slog.DiscardHandler), After: time.After,
-	})
-	levels := map[any]bool{gate.Anyone: true, gate.Identified: true, gate.Session: true}
-
-	routes := 0
-	for path, item := range api.OpenAPI().Paths {
-		for method, operation := range map[string]*huma.Operation{http.MethodGet: item.Get, http.MethodPost: item.Post, http.MethodPut: item.Put, http.MethodPatch: item.Patch, http.MethodDelete: item.Delete} {
-			if operation == nil {
-				continue
-			}
-			routes++
-			level := operation.Metadata["gate"]
-			if !levels[level] {
-				t.Errorf("%s %s declares the gate %v, want anyone, identified or session", method, path, level)
-			}
-			if level == gate.Anyone && operation.OperationID != "create-session" {
-				t.Errorf("%s %s is open to anyone; only create-session is", method, path)
-			}
-		}
-	}
-	if routes == 0 {
-		t.Fatal("no route registered")
 	}
 }
 

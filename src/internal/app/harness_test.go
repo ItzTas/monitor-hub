@@ -13,20 +13,20 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/ItzTas/monitor-hub/src/internal/accounts"
+	"github.com/ItzTas/monitor-hub/src/internal/accounts/accountstest"
+	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/core"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 )
 
-const (
-	apiToken  = "api-token-0123456789abcdef"
-	feedToken = "feed-token-0123456789abcdef"
-	ntfyToken = "tk_ntfy0123456789abcdef"
-)
+const ntfyToken = "tk_ntfy0123456789abcdef"
 
 type notification struct {
 	title string
@@ -78,8 +78,6 @@ func newBench(t *testing.T, extra ...string) *bench {
 	t.Cleanup(ntfy.Close)
 	b.environ = append([]string{
 		"DATABASE_URL=" + coretest.Database(t),
-		"API_TOKEN=" + apiToken,
-		"FEED_TOKEN=" + feedToken,
 		"MONITORS_DIR=" + monitorsDir,
 		"DATA_DIR=" + b.dataDir,
 		"HTTP_ADDRESS=127.0.0.1:0",
@@ -178,9 +176,62 @@ func send(t *testing.T, app *application, method, target, token string, body io.
 	return rec
 }
 
-func eventTitles(t *testing.T, app *application) []string {
+// sendSigned sends the session cookie, with the Origin of the test host that a browser would add.
+func sendSigned(t *testing.T, app *application, method, target string, cookie *http.Cookie, body io.Reader) *httptest.ResponseRecorder {
 	t.Helper()
-	rec := request(t, app, http.MethodGet, "/api/events", apiToken)
+	req := httptest.NewRequestWithContext(t.Context(), method, target, body)
+	req.AddCookie(cookie)
+	req.Header.Set("Origin", "http://"+req.Host)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	app.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// ensureAdmin creates paulo-santos as an admin unless an earlier helper did.
+func ensureAdmin(t *testing.T, app *application) {
+	t.Helper()
+	people, err := app.accounts.ListUsers(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(people, func(u accounts.User) bool { return u.Login == "paulo-santos" }) {
+		accountstest.Admin(t, app.accounts, "paulo-santos")
+	}
+}
+
+// adminToken returns a personal token of paulo-santos that views and checks every monitor.
+func adminToken(t *testing.T, app *application) string {
+	t.Helper()
+	ensureAdmin(t, app)
+	return accountstest.Token(t, app.accounts, "paulo-santos", "monitor:*:view", "monitor:*:check")
+}
+
+// signIn signs paulo-santos in through the API and returns the session cookie.
+func signIn(t *testing.T, app *application) *http.Cookie {
+	t.Helper()
+	ensureAdmin(t, app)
+	body, err := json.Marshal(map[string]string{"login": "paulo-santos", "password": accountstest.Password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/session", bytes.NewReader(body))
+	req.Header.Set("Origin", "http://"+req.Host)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	app.handler.ServeHTTP(rec, req)
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == gate.CookieName && cookie.Value != "" {
+			return cookie
+		}
+	}
+	t.Fatalf("POST /api/session = %d, want a session cookie", rec.Code)
+	return nil
+}
+
+func eventTitles(t *testing.T, app *application, token string) []string {
+	t.Helper()
+	rec := request(t, app, http.MethodGet, "/api/events", token)
 	var page struct {
 		Items []struct {
 			Title string `json:"title"`
