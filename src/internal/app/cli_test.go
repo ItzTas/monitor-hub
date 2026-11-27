@@ -36,7 +36,7 @@ func TestServeStopsOnAnInvalidConfiguration(t *testing.T) {
 
 	output := stdout.String() + stderr.String()
 	if code != 1 || !strings.Contains(output, "DATABASE_URL is empty") {
-		t.Errorf("exit %d, output %q", code, output)
+		t.Errorf("exit %d, output %q", code, strings.ReplaceAll(output, "ntfy-secret-value", "<NTFY_TOKEN>"))
 	}
 	if strings.Contains(output, "ntfy-secret-value") {
 		t.Error("the output shows the value of NTFY_TOKEN")
