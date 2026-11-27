@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,6 +19,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
+	"github.com/ItzTas/monitor-hub/src/internal/accounts"
+	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/api/monitors"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
@@ -158,5 +161,32 @@ func TestConsumersAreListedWithTheirLag(t *testing.T) {
 	want := []map[string]any{{"name": "desk", "position": 0.0, "behind": 2.0, "acked_at": nil, "seen_at": nil, "connected": false}}
 	if !reflect.DeepEqual(page.Items, want) {
 		t.Errorf("consumers = %v, want %v", page.Items, want)
+	}
+}
+
+func TestEveryRouteDeclaresAGate(t *testing.T) {
+	api := RegisterAccess(http.NewServeMux(), AccessDeps{
+		Accounts: accounts.NewService(coretest.Pool(t), time.Now), Log: slog.New(slog.DiscardHandler), After: time.After,
+	})
+	levels := map[any]bool{gate.Anyone: true, gate.Identified: true, gate.Session: true}
+
+	routes := 0
+	for path, item := range api.OpenAPI().Paths {
+		for method, operation := range map[string]*huma.Operation{http.MethodGet: item.Get, http.MethodPost: item.Post, http.MethodPut: item.Put, http.MethodPatch: item.Patch, http.MethodDelete: item.Delete} {
+			if operation == nil {
+				continue
+			}
+			routes++
+			level := operation.Metadata["gate"]
+			if !levels[level] {
+				t.Errorf("%s %s declares the gate %v, want anyone, identified or session", method, path, level)
+			}
+			if level == gate.Anyone && operation.OperationID != "create-session" {
+				t.Errorf("%s %s is open to anyone; only create-session is", method, path)
+			}
+		}
+	}
+	if routes == 0 {
+		t.Fatal("no route registered")
 	}
 }

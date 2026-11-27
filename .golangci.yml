@@ -33,6 +33,11 @@ linters:
         text: G204
         linters:
           - gosec
+      # The session cookie is Secure only over HTTPS: the hub may serve plain HTTP on a local network.
+      - path: (^|/)src/internal/api/gate/gate\.go$
+        text: G124
+        linters:
+          - gosec
     paths:
       - sdk-go/monitorpb
       - src/internal/db

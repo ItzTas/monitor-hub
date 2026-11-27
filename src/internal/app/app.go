@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ItzTas/monitor-hub/src/internal/accounts"
 	"github.com/ItzTas/monitor-hub/src/internal/api"
 	"github.com/ItzTas/monitor-hub/src/internal/catalog"
 	"github.com/ItzTas/monitor-hub/src/internal/consumerapi"
@@ -39,6 +40,7 @@ type application struct {
 	handler    http.Handler
 	whatsapp   *whatsAppLink
 	signal     *stream.Signal
+	accounts   *accounts.Service
 }
 
 func assemble(ctx context.Context, cfg core.Config, environ []string, logger *slog.Logger, now func() time.Time) (*application, error) {
@@ -51,6 +53,11 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 		return nil, err
 	}
 	monitors := supervisor.New(entries, environ, cfg.DataDir, logger)
+	accountService := accounts.NewService(pool, now)
+	if err := accountService.Prepare(ctx, monitors.Names()); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	link, sessions := whatsAppChannels(ctx, cfg.Channels.WhatsApp, pool, logger)
 	channels := notify.Channels(cfg.Channels, userAgent(), sessions...)
 	names := notify.ChannelNames(channels)
@@ -63,6 +70,7 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 	icons.Register(mux)
 	consumerapi.Register(mux, consumerapi.Deps{Consumers: consumerService, Stream: stream.NewService(stream.NewPostgres(pool), signal, registry), Log: logger})
 	api.Register(mux, api.Deps{Pool: pool, Monitors: monitors, Token: cfg.APIToken, Log: logger, Consumers: consumerService, Registry: registry})
+	api.RegisterAccess(mux, api.AccessDeps{Accounts: accountService, Log: logger, PublicURL: cfg.PublicURL, After: time.After})
 	dispatcher := notify.NewDispatcher(notify.NewOutbox(pool), channels, logger, notify.WithClock(now, time.After))
 	return &application{
 		address:    cfg.HTTPAddress,
@@ -76,6 +84,7 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 		handler:    withMiddleware(mux, logger),
 		whatsapp:   link,
 		signal:     signal,
+		accounts:   accountService,
 	}, nil
 }
 
