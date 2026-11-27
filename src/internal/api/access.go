@@ -10,6 +10,7 @@ import (
 
 	"github.com/ItzTas/monitor-hub/src/internal/accounts"
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
+	"github.com/ItzTas/monitor-hub/src/internal/api/people"
 	"github.com/ItzTas/monitor-hub/src/internal/api/session"
 	"github.com/ItzTas/monitor-hub/src/internal/api/tokens"
 )
@@ -29,5 +30,6 @@ func RegisterAccess(mux *http.ServeMux, deps AccessDeps) huma.API {
 	api.UseMiddleware(gate.Middleware(api, deps.Accounts, deps.PublicURL))
 	session.Configure(api, deps.Accounts, deps.After)
 	tokens.Configure(api, deps.Accounts)
+	people.Configure(api, deps.Accounts)
 	return api
 }
