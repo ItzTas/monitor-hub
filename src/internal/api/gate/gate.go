@@ -158,6 +158,17 @@ func Challenge() http.Header {
 	return h
 }
 
+// statusClientClosed answers a client that left: no one reads it, and it is no server error to log.
+const statusClientClosed = 499
+
+// Failure answers an error no route expects: 499 when the client went away, 500 otherwise.
+func Failure(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return huma.NewError(statusClientClosed, "the client closed the request")
+	}
+	return huma.Error500InternalServerError("internal error", err)
+}
+
 func NeedAdmin(ctx context.Context) error {
 	if access.FromContext(ctx).Admin() {
 		return nil

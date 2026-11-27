@@ -23,9 +23,6 @@ type Accounts interface {
 	RevokeCredential(ctx context.Context, id, userID int64) error
 }
 
-// statusClientClosed answers a client that left: no one reads it, and it is no server error to log.
-const statusClientClosed = 499
-
 func refusal(ctx context.Context, err error) error {
 	var notHeld *accounts.NotHeldError
 	if errors.As(err, &notHeld) {
@@ -49,10 +46,7 @@ func refusal(ctx context.Context, err error) error {
 			return huma.NewError(status, err.Error())
 		}
 	}
-	if ctx.Err() != nil {
-		return huma.NewError(statusClientClosed, "the client closed the request")
-	}
-	return huma.Error500InternalServerError("internal error", err)
+	return gate.Failure(ctx, err)
 }
 
 type Handler struct {
