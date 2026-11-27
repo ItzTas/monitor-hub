@@ -172,7 +172,14 @@ func TestTheLastAdminCannotBeDeleted(t *testing.T) {
 	if err := withoutAdmins.DeleteUser(t.Context(), "paulo-santos"); err != nil {
 		t.Fatalf("delete paulo-santos with no admin anywhere: %v", err)
 	}
-	if want, got := []state{{Login: "ana-lima", Disabled: true}}, states(t, withoutAdmins); !reflect.DeepEqual(got, want) {
+	create(t, withoutAdmins, "paulo-santos", false)
+	// Applied one at a time, the admin mark would make paulo-santos the last
+	// active admin and the guard would then refuse disabling him.
+	if err := withoutAdmins.UpdateUser(t.Context(), "paulo-santos", UserChange{Admin: &yes, Disabled: &yes}); err != nil {
+		t.Fatalf("give admin to and disable paulo-santos in one change: %v", err)
+	}
+	want = []state{{Login: "ana-lima", Disabled: true}, {Login: "paulo-santos", Admin: true, Disabled: true}}
+	if got := states(t, withoutAdmins); !reflect.DeepEqual(got, want) {
 		t.Errorf("people with no admin = %v; want %v", got, want)
 	}
 }

@@ -18,6 +18,9 @@ const (
 	argonThreads = 4
 	argonSalt    = 16
 	argonKey     = 32
+
+	maxMemory = 1 << 20 // KiB
+	maxTime   = 16
 )
 
 var errMalformedHash = errors.New("accounts: malformed password hash")
@@ -46,13 +49,12 @@ func VerifyPassword(encoded, password string) (bool, error) {
 	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" || parts[2] != fmt.Sprintf("v=%d", argon2.Version) {
 		return false, errMalformedHash
 	}
-	var memory, time uint32
-	var threads uint8
-	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads); err != nil || time == 0 || threads == 0 {
+	memory, time, threads, ok := parseCosts(parts[3])
+	if !ok {
 		return false, errMalformedHash
 	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil {
+	if err != nil || len(salt) != argonSalt {
 		return false, errMalformedHash
 	}
 	key, err := base64.RawStdEncoding.DecodeString(parts[5])
@@ -61,4 +63,15 @@ func VerifyPassword(encoded, password string) (bool, error) {
 	}
 	got := argon2.IDKey([]byte(password), salt, time, memory, threads, argonKey)
 	return subtle.ConstantTimeCompare(got, key) == 1, nil
+}
+
+// parseCosts refuses costs above maxMemory and maxTime, so a stored hash cannot exhaust
+// memory or hang a login. The round trip refuses any text after p.
+func parseCosts(field string) (memory, time uint32, threads uint8, ok bool) {
+	if _, err := fmt.Sscanf(field, "m=%d,t=%d,p=%d", &memory, &time, &threads); err != nil {
+		return 0, 0, 0, false
+	}
+	ok = field == fmt.Sprintf("m=%d,t=%d,p=%d", memory, time, threads) &&
+		memory <= maxMemory && time >= 1 && time <= maxTime && threads >= 1
+	return memory, time, threads, ok
 }

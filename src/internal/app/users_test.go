@@ -12,13 +12,31 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 )
 
-const examplePassword = "uma senha longa demais"
+const (
+	examplePassword = "uma senha longa demais"
+	changedPassword = "outra senha bem comprida"
+	weakPassword    = "curta"
+)
 
+// runUsers fails the test if a password shows in the output, and returns the
+// output with the passwords redacted, so failure messages never print one.
 func runUsers(t *testing.T, environ []string, stdin string, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	code := Run(t.Context(), append([]string{"users"}, args...), environ, strings.NewReader(stdin), &stdout, &stderr)
-	return code, stdout.String(), stderr.String()
+	return code, redacted(t, "stdout", stdout.String()), redacted(t, "stderr", stderr.String())
+}
+
+func redacted(t *testing.T, stream, output string) string {
+	t.Helper()
+	passwords := map[string]string{"the example password": examplePassword, "the changed password": changedPassword, "the weak password": weakPassword}
+	for name, password := range passwords {
+		if strings.Contains(output, password) {
+			t.Errorf("%s shows %s", stream, name)
+			output = strings.ReplaceAll(output, password, "[redacted]")
+		}
+	}
+	return output
 }
 
 func usersDatabase(t *testing.T) ([]string, *accounts.Service, *pgxpool.Pool) {
@@ -52,9 +70,6 @@ func TestUsersCreateAdminReadsThePasswordFromStdin(t *testing.T) {
 
 	if code != 0 || out != "person paulo-santos created as an admin\n" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
-	}
-	if strings.Contains(out+errOut, examplePassword) {
-		t.Error("the output shows the password")
 	}
 	if !passwordOf(t, pool, "paulo-santos", examplePassword) {
 		t.Error("the stored password is not the first line of stdin")
@@ -104,22 +119,20 @@ func TestUsersPasswdAndDelete(t *testing.T) {
 	if code != 0 || out != "person ana-lima created\n" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
-	const changed = "outra senha bem comprida"
-
-	code, out, errOut = runUsers(t, environ, changed+"\n", "passwd", "ana-lima")
+	code, out, errOut = runUsers(t, environ, changedPassword+"\n", "passwd", "ana-lima")
 
 	if code != 0 || out != "password of ana-lima changed; their sessions ended\n" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
-	if strings.Contains(out+errOut, changed) || !passwordOf(t, pool, "ana-lima", changed) {
-		t.Error("the new password shows in the output or is not stored")
+	if !passwordOf(t, pool, "ana-lima", changedPassword) {
+		t.Error("the changed password is not stored")
 	}
 	code, out, errOut = runUsers(t, environ, "", "delete", "ana-lima")
 	if code != 0 || out != "person ana-lima deleted\n" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
 	for _, args := range [][]string{{"delete", "ana-lima"}, {"passwd", "ana-lima"}} {
-		code, out, errOut = runUsers(t, environ, changed+"\n", args...)
+		code, out, errOut = runUsers(t, environ, changedPassword+"\n", args...)
 		if code != 1 || !strings.Contains(out+errOut, "no person has this login") {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, out, errOut)
 		}
@@ -129,9 +142,9 @@ func TestUsersPasswdAndDelete(t *testing.T) {
 func TestUsersCreateRefusesAWeakPassword(t *testing.T) {
 	environ, _, _ := usersDatabase(t)
 
-	code, out, errOut := runUsers(t, environ, "curta\n", "create", "paulo-santos")
+	code, out, errOut := runUsers(t, environ, weakPassword+"\n", "create", "paulo-santos")
 
-	if code != 1 || !strings.Contains(out+errOut, "use a password of at least 12 characters and at most 256 bytes") || strings.Contains(out+errOut, "curta") {
+	if code != 1 || !strings.Contains(out+errOut, "use a password of at least 12 characters and at most 256 bytes") {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
 }
