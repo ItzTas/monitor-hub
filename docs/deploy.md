@@ -9,7 +9,8 @@ Placeholders are written in angle brackets and are yours to fill in:
 - `<anhanguera-db-password>`: the password you choose for the anhanguera monitor's database role.
 - `<old-stack-network>`: the Docker network of the sei-monitor stack, only when its database is still bundled in that stack (see step 1).
 - `<monitor>`: the monitor's name, such as `sei` or `diario`.
-- `<FEED_TOKEN>`: the value in your `.env`.
+- `<login>`: your login on the hub, such as `paulo-santos`.
+- `<token>`: a personal token of yours. Step 5 shows how to create one.
 
 ## The files
 
@@ -211,7 +212,8 @@ Check: the `Owner` of every table and of `alerts_seq_seq` or `events_id_seq` is 
 | `AMQP_URL` | unchanged |
 | `AMQP_EXCHANGE` | unchanged name, new default `monitor-hub`. Set it to `sei-monitor` only to keep the old exchange name. |
 | `WHATSAPP_RECIPIENTS` | unchanged |
-| `API_TOKEN`, `FEED_TOKEN`, `PUBLIC_URL` | unchanged. The old value carries over if it was set. |
+| `API_TOKEN`, `FEED_TOKEN` | no new name. The hub ignores both, so leave them out. Step 5 creates your account and a personal token, which take their place. |
+| `PUBLIC_URL` | unchanged. The old value carries over if it was set. |
 | `HTTP_ADDRESS` | do not copy. Leave it unset: the hub must listen on all interfaces inside the container. An old `127.0.0.1:8080` leaves the published port dead while the healthcheck passes. |
 | `API_DETAIL`, `POSTGRES_PASSWORD` | not used. Leave them out. |
 
@@ -247,7 +249,7 @@ The hub has one Telegram channel, one ntfy channel and so on for all its monitor
 
 ### New
 
-`DATABASE_URL` (the hub's database from step 2, with `<hub-db-password>`), `API_TOKEN`, `FEED_TOKEN` (the feed is open to anyone if you leave it out), and the compose settings at the bottom of `.env.example`.
+`DATABASE_URL` (the hub's database from step 2, with `<hub-db-password>`) and the compose settings at the bottom of `.env.example`. Access to the API and the feed is not set in `.env`: step 5 creates your account and a personal token.
 
 Check the file before moving on:
 
@@ -343,11 +345,35 @@ docker compose logs --tail 50 monitor-hub
 
 Check the log: a `monitor-hub starting` line listing both monitors and your channels (an `info` line, so `LOG_LEVEL` must be `info` or `debug`, see step 3). An `invalid configuration` error lists every problem at once. A monitor with bad settings exits, and the hub restarts it after 1 s, 5 s, 30 s, 2 min and then every 5 min. So look at `running` below, not only at whether the container is up.
 
-Put your API token in a shell variable without writing it into history:
+Create your account and a token. Only the `users` command inside the container can create the first account, and it must be an admin, because only an admin can give permissions. It asks for the password twice, and the password needs at least 12 characters:
 
 ```bash
-API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
+docker exec -it monitor-hub monitor-hub users create --admin <login>
 ```
+
+Sign in. `read -rs` keeps the password off the screen and out of the shell history, and curl saves the session cookie in `cookies.txt`. A request that uses that cookie to change something must carry an `Origin` header with the hub's address, so every command below that uses the cookie sends one:
+
+```bash
+read -rs PASSWORD
+printf '{"login":"<login>","password":"%s"}' "$PASSWORD" | curl -s -c cookies.txt -H "Origin: http://127.0.0.1:8090" -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8090/api/session
+unset PASSWORD
+```
+
+Expected: `{"login":"<login>","admin":true,"permissions":[],"monitors":{...}}`. A wrong login or password gets `wrong login or password` after one second. `printf` copies the password into the JSON as it is, so put a `\` before each `"` or `\` in it.
+
+Create a personal token for the checks below. It carries `view` and `check` on every monitor:
+
+```bash
+curl -s -b cookies.txt -H "Origin: http://127.0.0.1:8090" -H 'Content-Type: application/json' -d '{"label":"runbook","permissions":["monitor:*:view","monitor:*:check"]}' http://127.0.0.1:8090/api/tokens
+```
+
+Expected: a JSON object whose `token` field starts with `mht_`. This response is the only one that shows the token, so copy it now. Then run this and paste it, which keeps it out of the history:
+
+```bash
+read -rs TOKEN
+```
+
+The session lasts 12 hours. Section 8, "People, tokens and credentials", uses it to revoke the token, sign out and add other people.
 
 1. Health, with no token:
 
@@ -360,10 +386,10 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
 2. Both monitors running. The first poll happens up to 15 seconds after start, so a monitor may show `unknown` at first. Repeat after half a minute.
 
    ```bash
-   curl -s -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/monitors
+   curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/api/monitors
    ```
 
-   Expected: `{"items":[...]}` with `diario` first and `sei` second, each with `"running":true`. `diario` shows `idle` or `checking`. `sei` shows `failing` with `sei-monitor has not reached SEI yet` until it has reached SEI, then `checking` during its first check and `idle` after it. `sei` as `paused` means SEI refused the login (section 8, "When SEI refuses the login"). A 401 means the token is wrong.
+   Expected: `{"items":[...]}` with `diario` first and `sei` second, each with `"running":true`. `diario` shows `idle` or `checking`. `sei` shows `failing` with `sei-monitor has not reached SEI yet` until it has reached SEI, then `checking` during its first check and `idle` after it. `sei` as `paused` means SEI refused the login (section 8, "When SEI refuses the login"). A 401 means the token is wrong, expired or revoked.
 
 3. The first read of each monitor is a baseline: the hub stores what the monitor already holds and announces none of it. Watch your channels for a few minutes.
    - The gazette's first read comes on the hub's first poll after the monitor is up, usually within about 15 seconds, later while the other monitor's poll is slow.
@@ -442,15 +468,15 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
 6. Ask the gazette monitor to check now. A whole cycle also proves that the arm64 build runs on the board: it resolves and reaches the gazette over TLS, reads the listing and writes to its database.
 
    ```bash
-   curl -s -X POST -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/monitors/diario/check
+   curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/api/monitors/diario/check
    ```
 
-   Expected: `{"accepted":true,"message":"..."}`. A 404 means the monitor name is wrong, a 503 or 502 that the monitor is not reachable. `accepted:false` carries the monitor's reason in `message`. With `a check is already running`, the cycle the monitor starts with has not ended: ask again in a minute.
+   Expected: `{"accepted":true,"message":"..."}`. A 404 means the monitor name is wrong, a 403 that the token does not carry `check`, a 503 or 502 that the monitor is not reachable. `accepted:false` carries the monitor's reason in `message`. With `a check is already running`, the cycle the monitor starts with has not ended: ask again in a minute.
 
    Then read the monitor list after half a minute:
 
    ```bash
-   curl -s -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/monitors
+   curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/api/monitors
    ```
 
    Expected for `diario`: `"state":"idle"` and a `last_success_at` later than the moment you asked (the API gives times in UTC). `checking` means the cycle is still running, so repeat. `failing` gives the reason in `message`.
@@ -460,9 +486,11 @@ API_TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2-)
 7. The stored events and the feed:
 
    ```bash
-   curl -s -H "Authorization: Bearer $API_TOKEN" 'http://127.0.0.1:8090/api/events?limit=5'
-   curl -s "http://127.0.0.1:8090/feed.xml?token=<FEED_TOKEN>" | head -5
+   curl -s -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8090/api/events?limit=5'
+   curl -s "http://127.0.0.1:8090/feed.xml?token=$TOKEN" | head -5
    ```
+
+   The feed reads the token from its address, because feed readers cannot send a header, and lists only the monitors the token can view. Without a valid token it answers `401`. The address ends up in the proxy's logs and in your feed reader, so give the reader a token of its own that carries only `view`, such as `monitor:*:view`, created the same way as the one above.
 
 8. No RPC errors after a few poll rounds (the hub polls every 15 seconds):
 
@@ -652,7 +680,7 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
 - **Nobody is told when a monitor is failing.** The hub sends no notification about a monitor's state. A `failing` or `paused` monitor shows only in `/api/monitors`, with the reason in `message`, and in the monitor's own lines in the hub log. There are two exceptions: a SEI login that SEI refused, which also records an event (next point), and an anhanguera portal that keeps failing for `ANHANGUERA__FAILING_ALERT_AFTER` (24 hours by default), after which that monitor records an alert. Look at the list after every hub restart and every configuration change, and now and then:
 
   ```bash
-  curl -s -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/monitors
+  curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/api/monitors
   docker compose logs --since 24h monitor-hub | grep -E 'monitor=(diario|sei|anhanguera)' | grep -E 'level=(WARN|ERROR)'
   ```
 
@@ -667,7 +695,7 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
   3. Request a check:
 
      ```bash
-     curl -s -X POST -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/monitors/sei/check
+     curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/api/monitors/sei/check
      ```
 
      Expected: `{"accepted":true,"message":""}`. `accepted:false` with `sei-monitor has not reached SEI yet` means the monitor is still connecting after the restart: ask again in a minute. `accepted:false` with `monitoring is paused because SEI rejected the login` means the monitor is paused, not held: do item 2 first.
@@ -720,6 +748,40 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
 
   Uncomment the matching `volumes` line in `compose.yaml`, which mounts the file read-only at `/run/secrets/sei_password`, set `SEI__SEI_PASSWORD_FILE=/run/secrets/sei_password` and leave `SEI__SEI_PASSWORD` out. The monitor reads the file once, at start, so restart the hub after you change it. `SEI__DATABASE_URL_FILE` works the same way. The gazette monitor has no `_FILE` form.
 - **The SEI password command.** `SEI__SEI_PASSWORD_CMD` runs at every login, without a shell, with a 30-second limit, and without the secret variables in its environment. Its program must exist inside the hub's image, which has no password manager. The monitor refuses to start when it cannot find the program on `PATH`.
+- **People, tokens and credentials.** Everyone who uses the API or the feed is a person with a login and a password. The `users` command manages them inside the container:
+
+  ```bash
+  docker exec -it monitor-hub monitor-hub users create --admin <login>
+  docker exec -it monitor-hub monitor-hub users passwd <login>
+  docker exec -it monitor-hub monitor-hub users list
+  docker exec -it monitor-hub monitor-hub users delete <login>
+  ```
+
+  Leave out `--admin` for a person who is not an admin. `create` and `passwd` ask for the password twice: at least 12 characters and at most 256 bytes. `passwd` is the way back in after a forgotten password. It also ends that person's sessions, while their personal tokens keep working. `list` shows each login, whether it is an admin and whether it is disabled. `delete` removes the person with their sessions, tokens and credentials.
+
+  An admin can do everything: every action on every monitor, people and their permissions (`/api/users`), everyone's tokens and credentials (`?everyone=true` on the lists), and `GET /api/consumers`. The admin mark counts only in a signed-in session. Other people get permissions given to them directly, each written as `monitor:<name>:<action>`, or `monitor:*:<action>` for every monitor. The actions are `view` (the monitor in `/api/monitors`, its events in `/api/events` and in the feed), `check` (`POST /api/monitors/<name>/check`), `hook` and `configure`. No route uses `hook` or `configure` yet. An admin sets a person's whole list at once. This gives `ana-lima` `view` on every monitor and `check` on `sei`:
+
+  ```bash
+  curl -s -X PUT -b cookies.txt -H "Origin: http://127.0.0.1:8090" -H 'Content-Type: application/json' -d '{"permissions":["monitor:*:view","monitor:sei:check"]}' http://127.0.0.1:8090/api/users/ana-lima/permissions
+  ```
+
+  `PATCH /api/users/<login>` with `{"admin":true}` or `{"disabled":true}` sets the admin mark or disables the person, whose sessions and tokens stop working on the next request. Once there is an admin, the hub keeps at least one active admin: taking the mark from the last one, disabling or deleting them is refused, with `409` from the API and `this is the last person with admin` from `users delete`.
+
+  A personal token (`mht_`) lets a script or a feed reader in without a session. `POST /api/tokens` creates one (step 5) with a label, the permissions it carries and an optional `expires_at`. Without `expires_at` it never expires. A token carries `view`, `check` and `hook`, each only where you hold it yourself, and the response that creates it is the only one that shows it. A request with the token can do only what both the token and its owner can do at that moment, so whatever the owner loses, the token loses on the next request. An admin's token does not carry the admin mark: it can do only what it lists. Tokens open `/api/monitors`, `/api/events`, the check route and the feed. Routes that need a session, such as `/api/tokens`, `/api/users` and `/api/consumers`, answer a token with `403`. `GET /api/tokens` lists yours with their ids, and revoking one takes effect on the next request:
+
+  ```bash
+  curl -s -b cookies.txt -H "Origin: http://127.0.0.1:8090" http://127.0.0.1:8090/api/tokens
+  curl -s -X DELETE -b cookies.txt -H "Origin: http://127.0.0.1:8090" http://127.0.0.1:8090/api/tokens/<id>
+  ```
+
+  A credential is a username and an `mhk_` password for Basic authentication, created at `POST /api/credentials` and revoked at `DELETE /api/credentials/<id>`. It carries only `hook` and is meant for monitor hooks, which the hub does not serve yet, so no route accepts one. Its password shows once, and it expires the same way a token does.
+
+  A `401` means the hub does not know who you are: no session or token, or one that is wrong, expired or revoked. A `403` means it knows you but you lack the permission, a token reached a route that needs a session, or a change came with another site's `Origin`, or with a session and no `Origin` at all. The hub takes `http://<host>`, `https://<host>` and the origin of `PUBLIC_URL`. To sign out before the 12 hours are up:
+
+  ```bash
+  curl -s -X DELETE -b cookies.txt -H "Origin: http://127.0.0.1:8090" http://127.0.0.1:8090/api/session && rm cookies.txt
+  ```
+
 - **Consumers.** A consumer is a program that receives the hub's notifications; [`protocol.md`](protocol.md#consumers) describes the contract. Create one inside the container. The token prints once, so copy it now:
 
   ```bash
@@ -729,16 +791,16 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
   docker exec -it monitor-hub monitor-hub consumers revoke notebook
   ```
 
-  `rotate` prints a new token and keeps the position; the old token stops working. `revoke` deletes the consumer, and its open stream ends within 25 seconds. A new consumer starts at the newest event and receives no history. `list` shows each consumer's position, how many events it is behind, and when it last acknowledged and was last seen. With `API_TOKEN`, `GET /api/consumers` returns the same, plus `connected` for whether a stream is open now:
+  `rotate` prints a new token and keeps the position; the old token stops working. `revoke` deletes the consumer, and its open stream ends within 25 seconds. A new consumer starts at the newest event and receives no history. `list` shows each consumer's position, how many events it is behind, and when it last acknowledged and was last seen. Signed in as an admin, `GET /api/consumers` returns the same, plus `connected` for whether a stream is open now:
 
   ```bash
-  curl -s -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8090/api/consumers
+  curl -s -b cookies.txt -H "Origin: http://127.0.0.1:8090" http://127.0.0.1:8090/api/consumers
   ```
 
   To see the stream by hand, with the consumer's token:
 
   ```bash
-  curl -N -H "Authorization: Bearer <token>" http://127.0.0.1:8090/consumer/v1/stream
+  curl -N -H "Authorization: Bearer <consumer-token>" http://127.0.0.1:8090/consumer/v1/stream
   ```
 
   A consumer outside your home needs the hub over HTTPS or a VPN. Expose `/consumer/v1/` and `/icons/` and nothing more. They use the consumer's token, and `/icons/` needs none.
@@ -746,8 +808,8 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
 ## 9. What changed for you
 
 - **AMQP.** The exchange is `monitor-hub` unless you set `AMQP_EXCHANGE`, the routing key is `<monitor>.<kind>` for one event and `<monitor>.batch` for several, and the body is `{"events":[...]}` instead of one bare event per message. Delivery is at-least-once, and each message carries a message id derived from its body so a consumer can drop a repeat. Rebind consumers of the old exchange.
-- **The SEI web page and routes.** The SEI service's web page (`/ui/`) and its domain routes (`/processes`, `/status` with SEI details) have no replacement yet. The API is the hub's: `/api/monitors`, `/api/monitors/{name}/check`, `/api/events`, with a different response shape and the header `Authorization: Bearer <API_TOKEN>`.
-- **Feeds.** The old gazette service served its own public `/feed.xml`. The old SEI service served `/feed/<FEED_TOKEN>.xml`. The hub serves one feed for all monitors at `/feed.xml?token=<FEED_TOKEN>` (the token is needed when `FEED_TOKEN` is set), filtered with `&monitor=diario` or `&monitor=sei`. Subscribers of the old addresses must change them.
+- **The SEI web page and routes.** The SEI service's web page (`/ui/`) and its domain routes (`/processes`, `/status` with SEI details) have no replacement yet. The API is the hub's: `/api/monitors`, `/api/monitors/{name}/check`, `/api/events`, with a different response shape and a personal token in the header `Authorization: Bearer <token>` (step 5).
+- **Feeds.** The old gazette service served its own public `/feed.xml`. The old SEI service served `/feed/<old feed token>.xml`. The hub serves one feed for all monitors at `/feed.xml?token=<token>`, with a personal token, filtered with `&monitor=diario` or `&monitor=sei`. It lists only the monitors the token can view. Subscribers of the old addresses must change them.
 - **The image.** `ghcr.io/itztas/monitor-hub` is public on the registry, so `docker compose pull` needs no login. It carries the monitors, so there is one image to pull instead of one per service.
 - **A refused SEI login.** The Go program tried the login again at every start. The monitor does not: after SEI refuses it, only a check you request tries again (section 8).
 - **The first minutes.** A new monitor's first read is stored and not announced (step 5). The gazette's welcome on a new database, and its first cycle's alerts, come on the hub's second read, about 15 seconds after the first, not at the moment the monitor starts.

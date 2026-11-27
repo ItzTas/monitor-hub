@@ -620,7 +620,7 @@ A consumer opens one long HTTP request, the stream, and reads server-sent events
 
 The routes live under `/consumer/v1/`. The `v1` is the version of this contract. A change that breaks existing consumers goes to `/consumer/v2/`, and the hub keeps serving `v1` while anyone uses it. New JSON fields and new event types can appear inside `v1`, so a consumer must ignore any field and any event type it does not know.
 
-These routes use the consumer's own token, not `API_TOKEN`.
+These routes use the consumer's own token, not a personal token (`mht_`) or a session.
 
 ### Consumers and tokens
 
