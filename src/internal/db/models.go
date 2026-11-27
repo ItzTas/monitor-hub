@@ -6,6 +6,8 @@ package db
 
 import (
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Consumer struct {
@@ -15,6 +17,23 @@ type Consumer struct {
 	CreatedAt time.Time
 	AckedAt   *time.Time
 	SeenAt    *time.Time
+}
+
+type Credential struct {
+	ID         int64
+	UserID     int64
+	Label      string
+	Username   string
+	SecretHash string
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+	ExpiresAt  *time.Time
+}
+
+type CredentialGrant struct {
+	CredentialID int64
+	Monitor      pgtype.Text
+	Action       string
 }
 
 type Delivery struct {
@@ -55,4 +74,41 @@ type Monitor struct {
 	LastSuccessAt      *time.Time
 	NextCheckAt        *time.Time
 	StatusSeenAt       *time.Time
+}
+
+type Session struct {
+	IDHash    string
+	UserID    int64
+	ExpiresAt time.Time
+}
+
+type Token struct {
+	ID         int64
+	UserID     int64
+	Label      string
+	Hash       string
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+	ExpiresAt  *time.Time
+}
+
+type TokenGrant struct {
+	TokenID int64
+	Monitor pgtype.Text
+	Action  string
+}
+
+type User struct {
+	ID           int64
+	Login        string
+	PasswordHash string
+	Admin        bool
+	DisabledAt   *time.Time
+	CreatedAt    time.Time
+}
+
+type UserGrant struct {
+	UserID  int64
+	Monitor pgtype.Text
+	Action  string
 }
