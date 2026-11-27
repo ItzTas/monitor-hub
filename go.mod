@@ -1,6 +1,6 @@
 module github.com/ItzTas/monitor-hub
 
-go 1.27.2
+go 1.27.4
 
 tool (
 	github.com/bufbuild/buf/cmd/buf

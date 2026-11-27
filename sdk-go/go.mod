@@ -1,6 +1,6 @@
 module github.com/ItzTas/monitor-hub/sdk-go
 
-go 1.27.2
+go 1.27.4
 
 require (
 	github.com/hashicorp/go-hclog v1.6.3
