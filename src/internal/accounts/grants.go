@@ -13,11 +13,18 @@ import (
 
 var ErrUnknownMonitor = errors.New("no monitor has this name")
 
-const foreignKeyViolation = "23503"
+const (
+	foreignKeyViolation = "23503"
+	grantMonitorKey     = "user_grants_monitor_fkey"
+)
 
 // SetPermissions replaces the direct grants of login. The caller checks Admin.
 func (s *Service) SetPermissions(ctx context.Context, login string, perms []access.Permission) error {
 	return s.inTx(ctx, func(q *db.Queries) error {
+		// Under the lock, two replacements of the same list cannot merge.
+		if err := q.LockAccess(ctx); err != nil {
+			return err
+		}
 		user, err := q.UserByLogin(ctx, login)
 		if err != nil {
 			return unknownUser(err)
@@ -42,7 +49,7 @@ func grantRow(userID int64, p access.Permission) db.InsertUserGrantParams {
 
 func unknownMonitor(err error) error {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolation {
+	if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolation && pgErr.ConstraintName == grantMonitorKey {
 		return ErrUnknownMonitor
 	}
 	return err

@@ -1,12 +1,15 @@
 package accounts
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
 
 	"github.com/ItzTas/monitor-hub/src/internal/access"
+	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
+	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
 
 func prepare(t *testing.T, s *Service) {
@@ -52,7 +55,7 @@ func granted(t *testing.T, s *Service) map[string][]string {
 }
 
 func TestSetPermissionsReplacesTheList(t *testing.T) {
-	s, _ := newService(t)
+	s, pool := newService(t)
 	prepare(t, s)
 	create(t, s, "paulo-santos", false)
 	create(t, s, "ana-lima", false)
@@ -91,6 +94,49 @@ func TestSetPermissionsReplacesTheList(t *testing.T) {
 	}
 	if err := s.SetPermissions(t.Context(), "ghost", permissions(t, "monitor:sei:view")); !errors.Is(err, ErrUnknownUser) {
 		t.Errorf("a missing person: err = %v; want ErrUnknownUser", err)
+	}
+	_, err = pool.Exec(t.Context(), "INSERT INTO user_grants (user_id, monitor, action) VALUES (0, 'sei', 'view')")
+	if err == nil || errors.Is(unknownMonitor(err), ErrUnknownMonitor) {
+		t.Errorf("a grant for a missing person id: err = %v; want a plain foreign key error", unknownMonitor(err))
+	}
+}
+
+func TestSetPermissionsWaitsForTheAccessLock(t *testing.T) {
+	s, pool := newService(t)
+	prepare(t, s)
+	create(t, s, "ana-lima", false)
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
+	if err := db.New(tx).LockAccess(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), `INSERT INTO user_grants (user_id, monitor, action)
+		SELECT id, 'sei', 'view' FROM users WHERE login = 'ana-lima'`); err != nil {
+		t.Fatal(err)
+	}
+
+	everyCheck := permissions(t, "monitor:*:check")
+	done := make(chan struct{})
+	var setErr error
+	go func() {
+		defer close(done)
+		setErr = s.SetPermissions(t.Context(), "ana-lima", everyCheck)
+	}()
+	coretest.WaitForAdvisoryWaiter(t, pool, done)
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+
+	if setErr != nil {
+		t.Fatal(setErr)
+	}
+	want := map[string][]string{"ana-lima": {"monitor:*:check"}}
+	if got := granted(t, s); !reflect.DeepEqual(got, want) {
+		t.Errorf("permissions after a change made while the lock was held = %v; want %v", got, want)
 	}
 }
 
