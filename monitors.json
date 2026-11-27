@@ -1,1 +1,1 @@
-{"monitors":[{"name":"diario","image":"ghcr.io/itztas/diario-alerr:2.3.0"},{"name":"sei","image":"ghcr.io/itztas/sei-monitor:2.3.0"},{"name":"anhanguera","image":"ghcr.io/itztas/anhanguera-monitor:0.1.1"}]}
+{"monitors":[{"name":"diario","image":"ghcr.io/itztas/diario-alerr:2.4.0"},{"name":"sei","image":"ghcr.io/itztas/sei-monitor:2.4.0"},{"name":"anhanguera","image":"ghcr.io/itztas/anhanguera-monitor:0.2.0"}]}
