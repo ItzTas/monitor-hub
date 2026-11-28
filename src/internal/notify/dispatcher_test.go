@@ -410,9 +410,12 @@ func TestReadyGetsThePassContext(t *testing.T) {
 	waiting := &gatedChannel{fakeChannel: fakeChannel{name: "whatsapp"}}
 
 	NewDispatcher(nil, []Channel{waiting}, slog.New(slog.DiscardHandler)).RunOnce(ctx)
+	if waiting.readyCtx == nil || waiting.readyCtx.Err() != nil {
+		t.Fatal("Ready got no context, or one that had already ended before the pass was cancelled")
+	}
 	cancel()
 
-	if waiting.readyCtx == nil || waiting.readyCtx.Err() == nil {
+	if waiting.readyCtx.Err() == nil {
 		t.Error("Ready did not get the pass's context: cancelling the pass did not reach it")
 	}
 }

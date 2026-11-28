@@ -123,6 +123,9 @@ func (w *WuzAPI) Lookup(ctx context.Context, number string) (string, error) {
 	if len(found.Users) == 0 || !found.Users[0].IsInWhatsapp {
 		return "", ErrNotOnWhatsApp
 	}
+	if found.Users[0].JID == "" {
+		return "", fmt.Errorf("could not look the number up: %w", errUnreadable)
+	}
 	return found.Users[0].JID, nil
 }
 

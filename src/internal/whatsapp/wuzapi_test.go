@@ -112,7 +112,7 @@ func TestWuzAPIIsReadyWhenItsSessionIsConnectedAndLoggedIn(t *testing.T) {
 			ready := newWuzAPI(fake.server.URL, &logs).Ready(t.Context())
 
 			if ready != tc.ready || (tc.reason == "" && logs.Len() != 0) || !strings.Contains(logs.String(), tc.reason) {
-				t.Errorf("Ready = %v, want %v; logs:\n%s", ready, tc.ready, logs.String())
+				t.Errorf("Ready = %v, want %v; logs:\n%s", ready, tc.ready, shown(logs.String()))
 			}
 			if tc.closed {
 				return
@@ -185,7 +185,7 @@ func TestWuzAPILogsReadinessOnlyWhenItChanges(t *testing.T) {
 	warn := `level=WARN msg="WhatsApp notifications wait because WuzAPI is not ready" reason="the WuzAPI session is not connected"`
 	info := `level=INFO msg="WuzAPI is ready; WhatsApp notifications resume"`
 	if strings.Count(logs.String(), warn) != 1 || strings.Count(logs.String(), info) != 1 || strings.Count(logs.String(), "\n") != 2 || len(fake.received()) != 4 {
-		t.Errorf("%d requests, logs:\n%s", len(fake.received()), logs.String())
+		t.Errorf("%d requests, logs:\n%s", len(fake.received()), shown(logs.String()))
 	}
 }
 
@@ -202,6 +202,14 @@ func TestWuzAPILooksNumbersUp(t *testing.T) {
 		"not on WhatsApp": {
 			answer: `{"code":200,"data":{"Users":[{"Query":"+5500900000001","IsInWhatsapp":false,"JID":"5500900000001@s.whatsapp.net","VerifiedName":""}]},"success":true}`,
 			err:    ErrNotOnWhatsApp,
+		},
+		"on WhatsApp without a JID": {
+			answer: `{"code":200,"data":{"Users":[{"Query":"+5500900000001","IsInWhatsapp":true}]},"success":true}`,
+			err:    errUnreadable,
+		},
+		"on WhatsApp with an empty JID": {
+			answer: `{"code":200,"data":{"Users":[{"Query":"+5500900000001","IsInWhatsapp":true,"JID":""}]},"success":true}`,
+			err:    errUnreadable,
 		},
 		"no user": {
 			answer: `{"code":200,"data":{"Users":null},"success":true}`,
@@ -234,7 +242,7 @@ func TestWuzAPISendsText(t *testing.T) {
 		got := fake.received()
 		want := `{"Phone":"` + chat + `","Body":"monitor-hub: test message\n\nThis is a test message from monitor-hub."}`
 		if err != nil || len(got) != 1 || got[0].method != http.MethodPost || got[0].body != want || got[0].header.Get("Token") != wuzapiToken || got[0].header.Get("Content-Type") != "application/json" || got[0].header.Get("User-Agent") != wuzapiUserAgent {
-			t.Errorf("group %v: SendText = %v, %d requests; the first as expected: %v", chat == group, redact(errText(err)), len(got), len(got) == 1 && got[0].body == want)
+			t.Errorf("group %v: SendText = %v, %d requests; the first as expected: %v", chat == group, shown(errText(err)), len(got), len(got) == 1 && got[0].body == want)
 		}
 	}
 }
@@ -272,10 +280,10 @@ func TestWuzAPIAnswersThatAreNotASuccessAreErrors(t *testing.T) {
 			sendErr := gateway.SendText(t.Context(), numberChat, wuzapiText)
 
 			if ready || chat != "" || lookupErr == nil || !strings.Contains(lookupErr.Error(), tc.want) || errors.Is(lookupErr, ErrNotOnWhatsApp) {
-				t.Errorf("Ready = %v, Lookup gave a chat: %v, error %v", ready, chat != "", redact(errText(lookupErr)))
+				t.Errorf("Ready = %v, Lookup gave a chat: %v, error %v", ready, chat != "", shown(errText(lookupErr)))
 			}
 			if sendErr == nil || !strings.HasPrefix(sendErr.Error(), tc.want) || (!tc.closed && sendErr.Error() != tc.want) {
-				t.Errorf("SendText error:\n%v\nwant:\n%s", redact(errText(sendErr)), tc.want)
+				t.Errorf("SendText error:\n%v\nwant:\n%s", shown(errText(sendErr)), tc.want)
 			}
 		})
 	}
@@ -309,6 +317,13 @@ func TestWuzAPIErrorsNeverShowTheTokenNumbersOrText(t *testing.T) {
 			}
 		}
 	}
+}
+
+// shown is text fit for a failure message: without the token, the message text
+// or phone numbers.
+func shown(text string) string {
+	text = strings.ReplaceAll(text, wuzapiToken, "[token]")
+	return redact(strings.ReplaceAll(text, wuzapiText, "[text]"))
 }
 
 func errText(err error) string {

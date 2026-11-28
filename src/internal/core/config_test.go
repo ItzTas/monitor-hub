@@ -316,6 +316,13 @@ func TestAMQPProblemsNeverShowTheURL(t *testing.T) {
 
 const wuzapiToken = "fake-wuzapi-user-token"
 
+func withoutToken(err error) string {
+	if err == nil {
+		return "<nil>"
+	}
+	return strings.ReplaceAll(err.Error(), wuzapiToken, "[token]")
+}
+
 func TestLoadReadsTheWhatsAppGateway(t *testing.T) {
 	cases := map[string]struct {
 		extra []string
@@ -391,7 +398,7 @@ func TestLoadRejectsAnIncompleteWhatsAppGateway(t *testing.T) {
 			_, err := Load(environ(tc.extra...), noFiles)
 			want := "invalid configuration:\n  - " + tc.want
 			if err == nil || err.Error() != want {
-				t.Errorf("error:\n%v\nwant:\n%s", err, want)
+				t.Errorf("error:\n%s\nwant:\n%s", withoutToken(err), want)
 			}
 		})
 	}
@@ -421,7 +428,7 @@ func TestWhatsAppGatewayProblemsNeverShowTheToken(t *testing.T) {
 				t.Fatal("the error shows the token")
 			}
 			if want := "invalid configuration:\n  - " + tc.want; err.Error() != want {
-				t.Errorf("error:\n%v\nwant:\n%s", err, want)
+				t.Errorf("error:\n%s\nwant:\n%s", withoutToken(err), want)
 			}
 		})
 	}
