@@ -414,6 +414,21 @@ func TestAFailedSendReportsTheEventsEveryoneGot(t *testing.T) {
 	}
 }
 
+func TestAFailedConnectionReportsTheEventsEveryoneGot(t *testing.T) {
+	gw := gateway()
+	gw.connectErr = errors.New("connection refused")
+	ledger := newLedger()
+	ledger.add(number, 1)
+	ledger.add(other, 1)
+
+	err := NewChannel(gw, []string{number, other}, ledger).Send(t.Context(), updates())
+
+	var partial *notify.PartialError
+	if !errors.As(err, &partial) || !slices.Equal(partial.Done, []int64{1}) || err.Error() != "connection refused" || len(gw.sent) != 0 {
+		t.Errorf("Send = %v (%T), sent %d messages; want a partial error with event 1 done", err, err, len(gw.sent))
+	}
+}
+
 func TestNothingToSendNeedsNoConnection(t *testing.T) {
 	gw := gateway()
 	ledger := newLedger()

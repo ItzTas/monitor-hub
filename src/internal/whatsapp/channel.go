@@ -98,7 +98,7 @@ func (c *Channel) sendMissed(ctx context.Context, msg notify.Message) error {
 		return nil
 	}
 	if err := c.gateway.Connect(ctx); err != nil {
-		return redacted(err)
+		return c.failed(redacted(err), seqs, reached, make([]bool, len(c.recipients)))
 	}
 	sendCtx, cancel := context.WithTimeout(ctx, c.sendTimeout)
 	defer cancel()
@@ -121,7 +121,12 @@ func (c *Channel) sendMissed(ctx context.Context, msg notify.Message) error {
 	if len(errs) == 0 {
 		return nil
 	}
-	err = redacted(errors.Join(errs...))
+	return c.failed(redacted(errors.Join(errs...)), seqs, reached, got)
+}
+
+// failed returns err as a PartialError when some events reached every
+// recipient anyway, through the ledger or in this send.
+func (c *Channel) failed(err error, seqs []int64, reached map[string]map[int64]bool, got []bool) error {
 	done := c.reachedByAll(seqs, reached, got)
 	if len(done) == 0 {
 		return err
