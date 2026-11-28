@@ -91,7 +91,7 @@ func (p *Postgres) Put(ctx context.Context, monitor string, saved Saved, previou
 	return previous + 1, nil
 }
 
-// compacted drops the spaces jsonb adds, so a value reads back as it was written.
+// compacted drops the spaces jsonb adds.
 func compacted(saved Saved) (Saved, error) {
 	var buf bytes.Buffer
 	shrink := func(raw json.RawMessage) (json.RawMessage, error) {
@@ -123,7 +123,7 @@ func orEmpty[V any](m map[string]V) map[string]V {
 }
 
 // withoutValues drops what Postgres quotes from the rejected JSON, which holds secrets,
-// and keeps the code and the constraint it names.
+// and keeps only the error code.
 func withoutValues(err error) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {

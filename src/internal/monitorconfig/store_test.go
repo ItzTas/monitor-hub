@@ -1,6 +1,7 @@
 package monitorconfig
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -8,7 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
+	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
 
 var savedAt = time.Date(2026, 11, 27, 10, 30, 0, 0, time.UTC)
@@ -162,9 +167,98 @@ func TestAValueWithNULIsRefusedByTheDatabase(t *testing.T) {
 	if strings.Contains(err.Error(), "zq-") {
 		t.Error("the error repeats a stored value (not shown)")
 	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		t.Error("the error keeps the Postgres error, whose context quotes the value")
+	}
 	after, err := store.Get(t.Context(), "sei")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	same(t, after, before)
+}
+
+// waitForBlockedBackend returns once a backend of pool's database waits on a lock, or done is
+// closed. It fails t after 30 s. pg_locks is cluster-wide and a transactionid lock carries no
+// database, so the backend's database comes from pg_stat_activity.
+func waitForBlockedBackend(t *testing.T, pool *pgxpool.Pool, done <-chan struct{}) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	for {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		var blocked bool
+		err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_locks l
+			JOIN pg_stat_activity a ON a.pid = l.pid
+			WHERE NOT l.granted AND a.datname = current_database())`).Scan(&blocked)
+		if err != nil {
+			t.Fatalf("no backend waited on a lock: %v", err)
+		}
+		if blocked {
+			return
+		}
+	}
+}
+
+// A Put that waits on a concurrent writer of the same row loses once that writer commits.
+func TestOnlyOneOfTwoConcurrentWritesWins(t *testing.T) {
+	cases := []struct {
+		name     string
+		existing bool
+		previous int64
+	}{
+		{"an existing row", true, 1},
+		{"a missing row", false, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := coretest.Pool(t)
+			store := NewPostgres(pool)
+			if tc.existing {
+				if _, err := store.Put(t.Context(), "sei", fullSaved(), 0); err != nil {
+					t.Fatalf("Put: %v", err)
+				}
+			}
+
+			tx, err := pool.Begin(t.Context())
+			if err != nil {
+				t.Fatalf("begin: %v", err)
+			}
+			defer func() { _ = tx.Rollback(context.Background()) }()
+			rows, err := db.New(tx).PutMonitorConfig(t.Context(), db.PutMonitorConfigParams{
+				Monitor: "sei", Document: []byte(`{}`), Secrets: []byte(`{}`), Ignored: []byte(`[]`),
+				Variables: []byte(`{}`), UpdatedAt: savedAt, Previous: tc.previous,
+			})
+			if err != nil || rows != 1 {
+				t.Fatalf("Put inside the transaction = %d, %v; want 1", rows, err)
+			}
+
+			done := make(chan struct{})
+			var putErr error
+			go func() {
+				defer close(done)
+				_, putErr = store.Put(t.Context(), "sei", fullSaved(), tc.previous)
+			}()
+			waitForBlockedBackend(t, pool, done)
+			if err := tx.Commit(t.Context()); err != nil {
+				t.Fatalf("commit: %v", err)
+			}
+			<-done
+
+			if !errors.Is(putErr, ErrStale) {
+				t.Errorf("the waiting Put = %v; want ErrStale", putErr)
+			}
+			got, err := store.Get(t.Context(), "sei")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if want := tc.previous + 1; got.Revision != want {
+				t.Errorf("Revision = %d; want %d", got.Revision, want)
+			}
+		})
+	}
 }
