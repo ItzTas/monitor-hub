@@ -44,12 +44,7 @@ func TestProgressSaysOnlyWhatTheSupervisorSaw(t *testing.T) {
 	if strings.Contains(body, "hx-trigger") || strings.Contains(body, "autofocus") {
 		t.Errorf("a monitor up still polls or takes the focus: %q", body)
 	}
-	for _, id := range []string{"save", "save-default"} {
-		tag := startTag(body, id)
-		if _, disabled := attr(tag, "disabled"); disabled || !hasAttr(tag, "hx-swap-oob", "true") {
-			t.Errorf("once the monitor is up, %s is %q, want it enabled and swapped out of band", id, tag)
-		}
-	}
+	buttonsBack(t, "a monitor up", body)
 
 	configs.progress = monitorconfig.Progress{State: monitorconfig.ProgressFailed, Reason: "invalid configuration:\n  - EVENTS is wrong"}
 	code, body = progress("/settings/sei/progress?shown=restarting", asHTMX)
@@ -69,9 +64,11 @@ func TestProgressSaysOnlyWhatTheSupervisorSaw(t *testing.T) {
 	}
 
 	configs.progress = monitorconfig.Progress{State: monitorconfig.ProgressNone}
-	if code, body := progress("/settings/sei/progress", asHTMX); code != http.StatusOK || strings.TrimSpace(body) != "" {
-		t.Errorf("no restart asked = %d %q, want 200 with no text", code, body)
+	code, body = progress("/settings/sei/progress?shown=restarting", asHTMX)
+	if code != http.StatusOK || strings.Contains(body, "hx-trigger") || strings.Contains(body, "<p") {
+		t.Errorf("no restart known = %d %q, want 200 with no text and no poll", code, body)
 	}
+	buttonsBack(t, "no restart known", body)
 
 	configs.progress = monitorconfig.Progress{State: monitorconfig.ProgressFailed, Reason: "invalid configuration"}
 	code, body = progress("/settings/sei/progress")
@@ -81,14 +78,29 @@ func TestProgressSaysOnlyWhatTheSupervisorSaw(t *testing.T) {
 	}
 
 	configs.errs["Progress"] = errors.Join(monitorconfig.ErrDatabase, errors.New("connection refused"))
-	if code, body := progress("/settings/sei/progress", asHTMX); code != http.StatusServiceUnavailable || !strings.Contains(body, "database cannot be reached") {
-		t.Errorf("the progress with the database down = %d %q, want 503", code, body)
+	code, body = progress("/settings/sei/progress?shown=restarting", asHTMX)
+	if code != http.StatusServiceUnavailable || !strings.Contains(body, "database cannot be reached") || strings.Contains(body, "hx-trigger") {
+		t.Errorf("the progress with the database down = %d %q, want 503 with the message and no poll", code, body)
 	}
+	buttonsBack(t, "the progress with the database down", body)
 	configs.errs["Progress"] = monitorconfig.ErrUnknown
-	if code, _ := progress("/settings/sei/progress", asHTMX); code != http.StatusNotFound {
+	code, body = progress("/settings/sei/progress?shown=restarting", asHTMX)
+	if code != http.StatusNotFound {
 		t.Errorf("the progress when Progress does not know sei = %d, want 404", code)
 	}
+	buttonsBack(t, "the progress when Progress does not know sei", body)
 	if code, _ := progress("/settings/nope/progress", asHTMX); code != http.StatusNotFound {
 		t.Errorf("the progress of a monitor out of the catalog = %d, want 404", code)
+	}
+}
+
+// buttonsBack checks that an answer that ends the poll gives both save buttons back, enabled.
+func buttonsBack(t *testing.T, answer, body string) {
+	t.Helper()
+	for _, id := range []string{"save", "save-default"} {
+		tag := startTag(body, id)
+		if _, disabled := attr(tag, "disabled"); tag == "" || disabled || !hasAttr(tag, "hx-swap-oob", "true") {
+			t.Errorf("%s: %s is %q, want it enabled and swapped out of band", answer, id, tag)
+		}
 	}
 }

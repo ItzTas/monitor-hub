@@ -33,10 +33,16 @@
 
 {{define "progress"}}
 {{- template "outcome" .Outcome}}
-{{- if .Settled}}
+{{- if .Ended}}
 {{template "default-button" .Buttons}}
 {{template "save-button" .Buttons}}
 {{- end}}
+{{- end}}
+
+{{define "poll-failure"}}
+{{- template "message" .Message}}
+{{template "default-button" .Buttons}}
+{{template "save-button" .Buttons}}
 {{- end}}
 
 {{define "check-result"}}

@@ -10,7 +10,12 @@ import (
 
 type progressView struct {
 	Outcome outcome
-	Settled bool
+	Ended   bool
+	Buttons buttons
+}
+
+type pollFailure struct {
+	Message string
 	Buttons buttons
 }
 
@@ -35,15 +40,25 @@ func (s *site) followRestart(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := s.deps.Settings.Progress(r.Context(), name)
 	if err != nil {
-		s.failToLoad(w, r, name, err, msgDatabaseRead)
+		s.failPoll(w, r, name, err)
 		return
 	}
-	if p.State == monitorconfig.ProgressRestarting && r.URL.Query().Get("shown") == "restarting" {
+	restarting := p.State == monitorconfig.ProgressRestarting
+	if restarting && r.URL.Query().Get("shown") == "restarting" {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	settled := map[monitorconfig.ProgressState]bool{monitorconfig.ProgressUp: true, monitorconfig.ProgressFailed: true, monitorconfig.ProgressNoAnswer: true}
-	s.fragment(w, http.StatusOK, "progress", progressView{Outcome: resultOf(name, p), Settled: settled[p.State], Buttons: buttons{OutOfBand: true}})
+	s.fragment(w, http.StatusOK, "progress", progressView{Outcome: resultOf(name, p), Ended: !restarting, Buttons: buttons{OutOfBand: true}})
+}
+
+// failPoll answers in place of the element that polls, so polling stops; the save buttons
+// held while the restart went on come back with the message.
+func (s *site) failPoll(w http.ResponseWriter, r *http.Request, name string, err error) {
+	status, text, ok := s.loadFailure(r, name, err, msgDatabaseRead)
+	if !ok {
+		return
+	}
+	s.fragment(w, status, "poll-failure", pollFailure{Message: text, Buttons: buttons{OutOfBand: true}})
 }
 
 // resultOf is what the restart came to, as the supervisor saw it.

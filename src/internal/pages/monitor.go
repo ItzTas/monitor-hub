@@ -108,15 +108,21 @@ func (s *site) wholePage(w http.ResponseWriter, r *http.Request, status int, nam
 
 // failToLoad answers a failed load; message says what the database failure stopped.
 func (s *site) failToLoad(w http.ResponseWriter, r *http.Request, name string, err error, message string) {
+	if status, text, ok := s.loadFailure(r, name, err, message); ok {
+		s.fail(w, r, status, text)
+	}
+}
+
+// loadFailure logs a failed load and gives its answer; nothing for a client that left.
+func (s *site) loadFailure(r *http.Request, name string, err error, message string) (status int, text string, ok bool) {
 	if r.Context().Err() != nil {
-		return
+		return 0, "", false
 	}
 	if errors.Is(err, monitorconfig.ErrUnknown) {
-		s.fail(w, r, http.StatusNotFound, msgUnknown)
-		return
+		return http.StatusNotFound, msgUnknown, true
 	}
 	s.deps.Log.ErrorContext(r.Context(), "could not read a monitor for the settings page", "monitor", name, "error", err)
-	s.fail(w, r, http.StatusServiceUnavailable, message)
+	return http.StatusServiceUnavailable, message, true
 }
 
 // newVariable is one more blank row for "Add another variable", which only htmx asks for.
