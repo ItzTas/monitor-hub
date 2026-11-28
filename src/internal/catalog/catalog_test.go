@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/ItzTas/monitor-hub/sdk-go/settings"
 )
@@ -279,11 +280,41 @@ func TestLoadReadsTheDeclarationBesideTheManifest(t *testing.T) {
 			t.Errorf("%s: Settings = %+v, SettingsError = %v, want nil and %q", name, e.Settings, e.SettingsError, want)
 		}
 	}
-	if d := byName["dd"]; d.Settings != nil || !errors.Is(d.SettingsError, syscall.EISDIR) {
-		t.Errorf("dd: Settings = %+v, SettingsError = %v, want nil and EISDIR", d.Settings, d.SettingsError)
+	if d, want := byName["dd"], filepath.Join(root, "dd", settings.File)+" is not a regular file"; d.Settings != nil || d.SettingsError == nil || d.SettingsError.Error() != want {
+		t.Errorf("dd: Settings = %+v, SettingsError = %v, want nil and %q", d.Settings, d.SettingsError, want)
 	}
 	if g := byName["gg"]; g.Settings != nil || g.SettingsError == nil || !strings.Contains(g.SettingsError.Error(), "path escapes from parent") {
 		t.Errorf("gg: Settings = %+v, SettingsError = %v, want nil and an escape refused", g.Settings, g.SettingsError)
+	}
+}
+
+func TestLoadRefusesASettingsFileThatIsAFIFO(t *testing.T) {
+	root := t.TempDir()
+	writeManifest(t, root, "fifo", `{"protocol_version":2,"name":"fifo","command":["x"]}`)
+	if err := syscall.Mkfifo(filepath.Join(root, "fifo", settings.File), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		entries []Entry
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		entries, err := Load(root)
+		done <- result{entries, err}
+	}()
+	var got result
+	select {
+	case got = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Load did not return within 10s: it waits for a writer on the FIFO")
+	}
+	if got.err != nil || len(got.entries) != 1 {
+		t.Fatalf("Load = %d entries, %v; want one entry", len(got.entries), got.err)
+	}
+	want := filepath.Join(root, "fifo", settings.File) + " is not a regular file"
+	if e := got.entries[0]; e.Settings != nil || e.SettingsError == nil || e.SettingsError.Error() != want {
+		t.Errorf("Settings = %+v, SettingsError = %v, want nil and %q", e.Settings, e.SettingsError, want)
 	}
 }
 

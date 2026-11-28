@@ -131,10 +131,18 @@ func loadEntry(dir string) (Entry, error) {
 }
 
 func readSettings(root *os.Root) (*settings.Declaration, error) {
-	f, err := root.Open(settings.File)
+	info, err := root.Stat(settings.File)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	// Opening a FIFO would wait for a writer forever.
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", filepath.Join(root.Name(), settings.File))
+	}
+	f, err := root.Open(settings.File)
 	if err != nil {
 		return nil, err
 	}
