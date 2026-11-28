@@ -2,9 +2,13 @@ package app
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -127,6 +131,68 @@ func TestWhatsAppDeliveriesWaitWhileItCannotSend(t *testing.T) {
 				t.Errorf("whatsapp deliveries: %d pending with %d attempts (%v)", waiting, attempts, err)
 			}
 		})
+	}
+}
+
+// fakeWuzAPI counts the requests to each path and answers them as a paired WuzAPI does.
+type fakeWuzAPI struct {
+	mu       sync.Mutex
+	requests map[string]int
+}
+
+func (f *fakeWuzAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	_, _ = io.Copy(io.Discard, r.Body)
+	answers := map[string]string{
+		"/session/status": `{"code":200,"data":{"connected":true,"loggedIn":true},"success":true}`,
+		"/user/check":     `{"code":200,"data":{"Users":[{"Query":"+5500900000001","IsInWhatsapp":true,"JID":"550000000001@s.whatsapp.net"}]},"success":true}`,
+		"/chat/send/text": `{"code":200,"data":{"Details":"Sent","Id":"3EB0000000000000000000"},"success":true}`,
+	}
+	f.mu.Lock()
+	f.requests[r.URL.Path]++
+	f.mu.Unlock()
+	if r.Header.Get("Token") != "fake-wuzapi-user-token" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	_, _ = io.WriteString(w, answers[r.URL.Path])
+}
+
+func (f *fakeWuzAPI) count(path string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests[path]
+}
+
+func TestWhatsAppThroughWuzAPINeedsNoSession(t *testing.T) {
+	wuzapi := &fakeWuzAPI{requests: map[string]int{}}
+	server := httptest.NewServer(wuzapi)
+	t.Cleanup(server.Close)
+	b := newBench(t, "WHATSAPP_RECIPIENTS=5500900000001", "WHATSAPP_GATEWAY=wuzapi", "WHATSAPP_WUZAPI_URL="+server.URL, "WHATSAPP_WUZAPI_TOKEN=fake-wuzapi-user-token")
+	logs := &syncBuffer{}
+	app := b.assemble(slog.New(slog.NewTextHandler(logs, nil)))
+	startSupervisor(t, app)
+	ctx := t.Context()
+
+	app.ingest.PollOnce(ctx)
+	b.setEvents("3")
+	app.ingest.PollOnce(ctx)
+	app.dispatcher.RunOnce(ctx)
+
+	var sessionTable *string
+	if err := app.pool.QueryRow(ctx, "SELECT to_regclass('whatsmeow_device')::text").Scan(&sessionTable); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(app.channels, []string{"ntfy", "whatsapp"}) || app.whatsapp != nil || sessionTable != nil || strings.Contains(logs.String(), "WhatsApp") {
+		t.Errorf("channels %v, session open %v, session table %v, logs:\n%s", app.channels, app.whatsapp != nil, sessionTable != nil, logs.String())
+	}
+	if wuzapi.count("/user/check") != 1 || wuzapi.count("/chat/send/text") != 1 {
+		t.Errorf("WuzAPI got %d number lookups and %d sends", wuzapi.count("/user/check"), wuzapi.count("/chat/send/text"))
+	}
+	var status string
+	var recipients int
+	err := app.pool.QueryRow(ctx, "SELECT d.status, (SELECT count(*) FROM delivery_recipients r WHERE r.channel = d.channel) FROM deliveries d WHERE d.channel = 'whatsapp'").Scan(&status, &recipients)
+	if err != nil || status != "sent" || recipients != 1 {
+		t.Errorf("whatsapp delivery %q with %d recipients recorded (%v)", status, recipients, err)
 	}
 }
 

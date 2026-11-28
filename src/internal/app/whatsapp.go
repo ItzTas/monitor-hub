@@ -56,19 +56,32 @@ func (l *whatsAppLink) Close() {
 	_ = l.db.Close()
 }
 
-func whatsAppChannels(ctx context.Context, cfg *core.WhatsApp, pool *pgxpool.Pool, logger *slog.Logger) (*whatsAppLink, []notify.Channel) {
+func whatsAppChannels(ctx context.Context, cfg *core.WhatsApp, pool *pgxpool.Pool, userAgent string, logger *slog.Logger) (*whatsAppLink, []notify.Channel) {
 	if cfg == nil {
 		return nil, nil
 	}
+	gateways := map[string]func() (*whatsAppLink, notify.Channel){
+		core.WhatsAppGatewayWhatsmeow: func() (*whatsAppLink, notify.Channel) {
+			return whatsmeowChannel(ctx, cfg, pool, logger)
+		},
+		core.WhatsAppGatewayWuzAPI: func() (*whatsAppLink, notify.Channel) {
+			return nil, whatsapp.NewChannel(whatsapp.NewWuzAPI(*cfg.WuzAPI, userAgent, logger), cfg.Recipients, whatsapp.NewLedger(pool))
+		},
+	}
+	link, channel := gateways[cfg.Gateway]()
+	return link, []notify.Channel{channel}
+}
+
+func whatsmeowChannel(ctx context.Context, cfg *core.WhatsApp, pool *pgxpool.Pool, logger *slog.Logger) (*whatsAppLink, notify.Channel) {
 	link, err := openWhatsApp(ctx, pool, logger)
 	if err != nil {
 		logger.Error("could not open the WhatsApp session; WhatsApp stays disabled until monitor-hub restarts", "error", err)
-		return nil, []notify.Channel{whatsapp.Unavailable{}}
+		return nil, whatsapp.Unavailable{}
 	}
 	if !link.session.Paired() {
 		logger.Warn("WhatsApp is set up but not paired; its notifications wait until you run monitor-hub whatsapp-pair and restart")
 	}
-	return link, []notify.Channel{whatsapp.NewChannel(whatsapp.NewWhatsmeow(link.session), cfg.Recipients, whatsapp.NewLedger(pool))}
+	return link, whatsapp.NewChannel(whatsapp.NewWhatsmeow(link.session), cfg.Recipients, whatsapp.NewLedger(pool))
 }
 
 func whatsAppPair(ctx context.Context, args, environ []string, term terminal) error {

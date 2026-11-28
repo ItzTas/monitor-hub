@@ -396,11 +396,25 @@ func TestWakeNeverBlocks(t *testing.T) {
 
 type gatedChannel struct {
 	fakeChannel
-	ready bool
+	ready    bool
+	readyCtx context.Context
 }
 
-func (c *gatedChannel) Ready(context.Context) bool {
+func (c *gatedChannel) Ready(ctx context.Context) bool {
+	c.readyCtx = ctx
 	return c.ready
+}
+
+func TestReadyGetsThePassContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	waiting := &gatedChannel{fakeChannel: fakeChannel{name: "whatsapp"}}
+
+	NewDispatcher(nil, []Channel{waiting}, slog.New(slog.DiscardHandler)).RunOnce(ctx)
+	cancel()
+
+	if waiting.readyCtx == nil || waiting.readyCtx.Err() == nil {
+		t.Error("Ready did not get the pass's context: cancelling the pass did not reach it")
+	}
 }
 
 func TestChannelThatIsNotReadyKeepsItsDeliveriesUntilItIs(t *testing.T) {

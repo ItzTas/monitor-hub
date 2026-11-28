@@ -76,7 +76,7 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 		Now:        now,
 	})
 	settings.WarnIgnored(ctx)
-	link, sessions := whatsAppChannels(ctx, cfg.Channels.WhatsApp, pool, logger)
+	link, sessions := whatsAppChannels(ctx, cfg.Channels.WhatsApp, pool, userAgent(), logger)
 	channels := notify.Channels(cfg.Channels, userAgent(), sessions...)
 	names := notify.ChannelNames(channels)
 	consumerService := consumers.NewService(pool)

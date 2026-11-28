@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -141,7 +142,7 @@ func TestLoadReadsTheChannels(t *testing.T) {
 		Ntfy:     &Ntfy{URL: "https://ntfy.example.org/hub-topic", Token: NewSecret("tk_0123456789")},
 		Webhook:  &Webhook{URL: "https://hooks.example.org/in?key=abc", Secret: NewSecret("0123456789abcdef")},
 		AMQP:     &AMQP{URL: NewSecret("amqps://hub:amqp-pw@rabbit.example.org:5671/alerts"), Exchange: "hub.events:v1"},
-		WhatsApp: &WhatsApp{Recipients: []string{"5595991234567", "120363012345678901@g.us", "120363012345678901-1600000000@g.us"}},
+		WhatsApp: &WhatsApp{Recipients: []string{"5595991234567", "120363012345678901@g.us", "120363012345678901-1600000000@g.us"}, Gateway: WhatsAppGatewayWhatsmeow},
 	}
 	if !reflect.DeepEqual(cfg.Channels, want) {
 		t.Errorf("channels = %+v\nwant       %+v", cfg.Channels, want)
@@ -310,5 +311,118 @@ func TestAMQPProblemsNeverShowTheURL(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "amqp-secret-7") || strings.Contains(err.Error(), address) {
 			t.Errorf("%s: error = %v", address, err)
 		}
+	}
+}
+
+const wuzapiToken = "fake-wuzapi-user-token"
+
+func TestLoadReadsTheWhatsAppGateway(t *testing.T) {
+	cases := map[string]struct {
+		extra []string
+		files map[string]string
+		want  *WhatsApp
+	}{
+		"whatsmeow by default": {
+			[]string{"WHATSAPP_RECIPIENTS=5500900000001"}, nil,
+			&WhatsApp{Recipients: []string{"5500900000001"}, Gateway: WhatsAppGatewayWhatsmeow},
+		},
+		"whatsmeow by name": {
+			[]string{"WHATSAPP_RECIPIENTS=5500900000001", "WHATSAPP_GATEWAY=whatsmeow"}, nil,
+			&WhatsApp{Recipients: []string{"5500900000001"}, Gateway: WhatsAppGatewayWhatsmeow},
+		},
+		"wuzapi in any case": {
+			[]string{"WHATSAPP_RECIPIENTS=5500900000001", "WHATSAPP_GATEWAY=WuzAPI", "WHATSAPP_WUZAPI_URL=http://wuzapi:8080/", "WHATSAPP_WUZAPI_TOKEN=" + wuzapiToken}, nil,
+			&WhatsApp{Recipients: []string{"5500900000001"}, Gateway: WhatsAppGatewayWuzAPI, WuzAPI: &WuzAPI{URL: "http://wuzapi:8080", Token: NewSecret(wuzapiToken)}},
+		},
+		"wuzapi token from a file": {
+			[]string{"WHATSAPP_RECIPIENTS=5500900000001", "WHATSAPP_GATEWAY=wuzapi", "WHATSAPP_WUZAPI_URL=https://wuzapi.example.org", "WHATSAPP_WUZAPI_TOKEN_FILE=/run/secrets/wuzapi"},
+			map[string]string{"/run/secrets/wuzapi": wuzapiToken + "\n"},
+			&WhatsApp{Recipients: []string{"5500900000001"}, Gateway: WhatsAppGatewayWuzAPI, WuzAPI: &WuzAPI{URL: "https://wuzapi.example.org", Token: NewSecret(wuzapiToken)}},
+		},
+		"gateway variables without recipients": {
+			[]string{"WHATSAPP_GATEWAY=evolution", "WHATSAPP_WUZAPI_URL=ftp://wuzapi", "WHATSAPP_WUZAPI_TOKEN_FILE=/run/secrets/missing"}, nil,
+			nil,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := Load(environ(tc.extra...), files(tc.files))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(cfg.Channels.WhatsApp, tc.want) {
+				t.Errorf("whatsapp = %+v, want %+v", cfg.Channels.WhatsApp, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadListsEachWhatsAppRecipientOnce(t *testing.T) {
+	cfg, err := Load(environ("WHATSAPP_RECIPIENTS=5500900000002, 120363000000000001@g.us, +55 0090 0000002, 5500900000001, 120363000000000001@g.us"), noFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"5500900000002", "120363000000000001@g.us", "5500900000001"}
+	if got := cfg.Channels.WhatsApp.Recipients; !slices.Equal(got, want) {
+		t.Errorf("recipients = %v, want %v", got, want)
+	}
+}
+
+func TestLoadRejectsAnIncompleteWhatsAppGateway(t *testing.T) {
+	recipients := "WHATSAPP_RECIPIENTS=5500900000001"
+	wuzapi := []string{recipients, "WHATSAPP_GATEWAY=wuzapi"}
+	cases := map[string]struct {
+		extra []string
+		want  string
+	}{
+		"unknown gateway":             {[]string{recipients, "WHATSAPP_GATEWAY=Evolution"}, `WHATSAPP_GATEWAY: use whatsmeow or wuzapi (got "Evolution")`},
+		"wuzapi without an address":   {append(wuzapi, "WHATSAPP_WUZAPI_TOKEN="+wuzapiToken), "WHATSAPP_WUZAPI_URL is required with WHATSAPP_GATEWAY=wuzapi (the WuzAPI address, e.g. http://wuzapi:8080)"},
+		"wuzapi without a token":      {append(wuzapi, "WHATSAPP_WUZAPI_URL=http://wuzapi:8080"), "WHATSAPP_WUZAPI_TOKEN is required with WHATSAPP_GATEWAY=wuzapi (the WuzAPI user token, or WHATSAPP_WUZAPI_TOKEN_FILE)"},
+		"wuzapi address not http":     {append(wuzapi, "WHATSAPP_WUZAPI_URL=ftp://wuzapi:8080", "WHATSAPP_WUZAPI_TOKEN="+wuzapiToken), "WHATSAPP_WUZAPI_URL: use a full address starting with https://"},
+		"wuzapi address with query":   {append(wuzapi, "WHATSAPP_WUZAPI_URL=http://wuzapi:8080/?token=abc", "WHATSAPP_WUZAPI_TOKEN="+wuzapiToken), "WHATSAPP_WUZAPI_URL: remove everything after ? or #"},
+		"wuzapi address with login":   {append(wuzapi, "WHATSAPP_WUZAPI_URL=http://user:pw@wuzapi:8080", "WHATSAPP_WUZAPI_TOKEN="+wuzapiToken), "WHATSAPP_WUZAPI_URL: remove the username and password from the address"},
+		"wuzapi address on whatsmeow": {[]string{recipients, "WHATSAPP_WUZAPI_URL=http://wuzapi:8080"}, "WHATSAPP_WUZAPI_URL is set but WHATSAPP_GATEWAY is not wuzapi; set WHATSAPP_GATEWAY=wuzapi or remove WHATSAPP_WUZAPI_URL"},
+		"wuzapi token on whatsmeow":   {[]string{recipients, "WHATSAPP_GATEWAY=whatsmeow", "WHATSAPP_WUZAPI_TOKEN=" + wuzapiToken}, "WHATSAPP_WUZAPI_TOKEN is set but WHATSAPP_GATEWAY is not wuzapi; set WHATSAPP_GATEWAY=wuzapi or remove WHATSAPP_WUZAPI_TOKEN"},
+		// noFiles would add a problem if the file were read.
+		"wuzapi token file on whatsmeow": {[]string{recipients, "WHATSAPP_WUZAPI_TOKEN_FILE=/run/secrets/wuzapi"}, "WHATSAPP_WUZAPI_TOKEN_FILE is set but WHATSAPP_GATEWAY is not wuzapi; set WHATSAPP_GATEWAY=wuzapi or remove WHATSAPP_WUZAPI_TOKEN_FILE"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(environ(tc.extra...), noFiles)
+			want := "invalid configuration:\n  - " + tc.want
+			if err == nil || err.Error() != want {
+				t.Errorf("error:\n%v\nwant:\n%s", err, want)
+			}
+		})
+	}
+}
+
+func TestWhatsAppGatewayProblemsNeverShowTheToken(t *testing.T) {
+	wuzapi := []string{"WHATSAPP_RECIPIENTS=5500900000001", "WHATSAPP_GATEWAY=wuzapi", "WHATSAPP_WUZAPI_URL=http://wuzapi:8080"}
+	spaces := "WHATSAPP_WUZAPI_TOKEN: remove the spaces and line breaks from the token"
+	cases := map[string]struct {
+		extra []string
+		files map[string]string
+		want  string
+	}{
+		"space in the token":      {append(wuzapi, "WHATSAPP_WUZAPI_TOKEN="+wuzapiToken+" x"), nil, spaces},
+		"line break in the token": {append(wuzapi, "WHATSAPP_WUZAPI_TOKEN="+wuzapiToken+"\nx"), nil, spaces},
+		"tab in the token file":   {append(wuzapi, "WHATSAPP_WUZAPI_TOKEN_FILE=/run/secrets/wuzapi"), map[string]string{"/run/secrets/wuzapi": wuzapiToken + "\tx\n"}, spaces},
+		"token and file together": {append(wuzapi, "WHATSAPP_WUZAPI_TOKEN="+wuzapiToken, "WHATSAPP_WUZAPI_TOKEN_FILE=/run/secrets/wuzapi"), map[string]string{"/run/secrets/wuzapi": wuzapiToken}, "set either WHATSAPP_WUZAPI_TOKEN or WHATSAPP_WUZAPI_TOKEN_FILE, not both"},
+		"token with whatsmeow":    {[]string{"WHATSAPP_RECIPIENTS=5500900000001", "WHATSAPP_WUZAPI_TOKEN=" + wuzapiToken}, nil, "WHATSAPP_WUZAPI_TOKEN is set but WHATSAPP_GATEWAY is not wuzapi; set WHATSAPP_GATEWAY=wuzapi or remove WHATSAPP_WUZAPI_TOKEN"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(environ(tc.extra...), files(tc.files))
+			if err == nil {
+				t.Fatal("Load accepted it")
+			}
+			if strings.Contains(err.Error(), wuzapiToken) {
+				t.Fatal("the error shows the token")
+			}
+			if want := "invalid configuration:\n  - " + tc.want; err.Error() != want {
+				t.Errorf("error:\n%v\nwant:\n%s", err, want)
+			}
+		})
 	}
 }

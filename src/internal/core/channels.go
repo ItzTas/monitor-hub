@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -14,6 +15,9 @@ const (
 	TLSNone     = "none"
 
 	DefaultAMQPExchange = "monitor-hub"
+
+	WhatsAppGatewayWhatsmeow = "whatsmeow"
+	WhatsAppGatewayWuzAPI    = "wuzapi"
 
 	minWebhookSecretLength = 16
 )
@@ -59,6 +63,13 @@ type AMQP struct {
 
 type WhatsApp struct {
 	Recipients []string
+	Gateway    string
+	WuzAPI     *WuzAPI
+}
+
+type WuzAPI struct {
+	URL   string
+	Token Secret
 }
 
 func (r *reader) channels() Channels {
@@ -204,26 +215,77 @@ func (r *reader) whatsapp() *WhatsApp {
 	if value == "" {
 		return nil
 	}
+	whatsapp := &WhatsApp{Recipients: r.whatsappRecipients(value)}
+	whatsapp.Gateway, whatsapp.WuzAPI = r.whatsappGateway()
+	return whatsapp
+}
+
+func (r *reader) whatsappRecipients(value string) []string {
 	var entries []string
 	for item := range strings.SplitSeq(value, ",") {
 		if item = strings.TrimSpace(item); item != "" {
 			entries = append(entries, item)
 		}
 	}
-	whatsapp := &WhatsApp{}
 	if len(entries) == 0 {
 		r.problem("WHATSAPP_RECIPIENTS: list at least one phone number or group id")
-		return whatsapp
+		return nil
 	}
+	var recipients []string
+	seen := map[string]bool{}
 	for i, entry := range entries {
 		recipient, ok := whatsappRecipient(entry)
 		if !ok {
 			r.problem("WHATSAPP_RECIPIENTS: entry %d of %d is neither a phone number with country and area code (e.g. 5595991234567) nor a group id (ending in @g.us)", i+1, len(entries))
 			continue
 		}
-		whatsapp.Recipients = append(whatsapp.Recipients, recipient)
+		if !seen[recipient] {
+			seen[recipient] = true
+			recipients = append(recipients, recipient)
+		}
 	}
-	return whatsapp
+	return recipients
+}
+
+func (r *reader) whatsappGateway() (string, *WuzAPI) {
+	value := r.text("WHATSAPP_GATEWAY")
+	gateway := strings.ToLower(cmp.Or(value, WhatsAppGatewayWhatsmeow))
+	readers := map[string]func() *WuzAPI{
+		WhatsAppGatewayWhatsmeow: r.noWuzAPI,
+		WhatsAppGatewayWuzAPI:    r.wuzapi,
+	}
+	read, ok := readers[gateway]
+	if !ok {
+		r.problem("WHATSAPP_GATEWAY: use whatsmeow or wuzapi (got %q)", value)
+		return gateway, nil
+	}
+	return gateway, read()
+}
+
+// noWuzAPI checks that no WuzAPI variable is set, without reading the token.
+func (r *reader) noWuzAPI() *WuzAPI {
+	for _, name := range []string{"WHATSAPP_WUZAPI_URL", "WHATSAPP_WUZAPI_TOKEN", "WHATSAPP_WUZAPI_TOKEN_FILE"} {
+		if r.text(name) != "" {
+			r.problem("%s is set but WHATSAPP_GATEWAY is not wuzapi; set WHATSAPP_GATEWAY=wuzapi or remove %s", name, name)
+		}
+	}
+	return nil
+}
+
+func (r *reader) wuzapi() *WuzAPI {
+	address := r.required("WHATSAPP_WUZAPI_URL", " with WHATSAPP_GATEWAY=wuzapi (the WuzAPI address, e.g. http://wuzapi:8080)")
+	if address != "" {
+		r.parseURL("WHATSAPP_WUZAPI_URL", address, false)
+	}
+	token := r.secret("WHATSAPP_WUZAPI_TOKEN")
+	unset := r.text("WHATSAPP_WUZAPI_TOKEN") == "" && r.text("WHATSAPP_WUZAPI_TOKEN_FILE") == ""
+	if unset {
+		r.problem("WHATSAPP_WUZAPI_TOKEN is required with WHATSAPP_GATEWAY=wuzapi (the WuzAPI user token, or WHATSAPP_WUZAPI_TOKEN_FILE)")
+	}
+	if strings.ContainsFunc(token.Reveal(), func(c rune) bool { return unicode.IsSpace(c) || unicode.IsControl(c) }) {
+		r.problem("WHATSAPP_WUZAPI_TOKEN: remove the spaces and line breaks from the token")
+	}
+	return &WuzAPI{URL: strings.TrimRight(address, "/"), Token: token}
 }
 
 func whatsappRecipient(item string) (string, bool) {
