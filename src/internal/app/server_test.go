@@ -2,6 +2,8 @@ package app
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -66,5 +68,27 @@ func TestBodyLimit(t *testing.T) {
 		if got := bodyLimit(path); got != want {
 			t.Errorf("bodyLimit(%q) = %d, want %d", path, got, want)
 		}
+	}
+}
+
+func TestTheMiddlewareLimitsEachBodyByItsPath(t *testing.T) {
+	var read int
+	var readErr error
+	handler := withMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		var body []byte
+		body, readErr = io.ReadAll(r.Body)
+		read = len(body)
+	}), slog.New(slog.DiscardHandler))
+	body := strings.Repeat("x", 2048)
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/api/monitors/sei/settings", strings.NewReader(body)))
+	if readErr != nil || read != len(body) {
+		t.Errorf("a configuration save read %d bytes (%v), want all %d", read, readErr, len(body))
+	}
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/session", strings.NewReader(body)))
+	var tooLarge *http.MaxBytesError
+	if !errors.As(readErr, &tooLarge) || tooLarge.Limit != maxBodyBytes {
+		t.Errorf("a sign-in read %d bytes with %v, want a MaxBytesError at %d bytes", read, readErr, maxBodyBytes)
 	}
 }

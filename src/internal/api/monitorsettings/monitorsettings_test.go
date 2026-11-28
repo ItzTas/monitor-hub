@@ -476,16 +476,19 @@ func TestSettingsErrorsAnswerTheirStatus(t *testing.T) {
 		routes []string
 		status int
 		detail string
+		// hidden is a part of err the answer leaves out.
+		hidden string
 	}{
-		{"unknown", monitorconfig.ErrUnknown, everyRoute, http.StatusNotFound, "no monitor has this name"},
-		{"database", errors.Join(monitorconfig.ErrDatabase, errors.New("dial tcp: connection refused")), everyRoute, http.StatusServiceUnavailable, "the hub's database cannot be reached"},
-		{"busy", monitorconfig.ErrBusy, []string{"PUT settings"}, http.StatusConflict, "another save of this monitor is in progress"},
+		{"unknown", monitorconfig.ErrUnknown, everyRoute, http.StatusNotFound, "no monitor has this name", ""},
+		{"database", errors.Join(monitorconfig.ErrDatabase, errors.New("dial tcp: connection refused")), everyRoute, http.StatusServiceUnavailable,
+			"the hub's database cannot be reached", "connection refused"},
+		{"busy", monitorconfig.ErrBusy, []string{"PUT settings"}, http.StatusConflict, "another save of this monitor is in progress", ""},
 		{"restarting", monitorconfig.ErrRestarting, []string{"PUT settings"}, http.StatusConflict,
-			"the monitor is still restarting after the last save; read the progress and try again once it settles"},
-		{"stale", monitorconfig.ErrStale, []string{"PUT settings"}, http.StatusConflict, "the saved configuration changed since this revision; read it again"},
+			"the monitor is still restarting after the last save; read the progress and try again once it settles", ""},
+		{"stale", monitorconfig.ErrStale, []string{"PUT settings"}, http.StatusConflict, "the saved configuration changed since this revision; read it again", ""},
 		{"validator", &monitorconfig.ValidatorError{Reason: "it exited with code 2", Stderr: "boom " + secretValue}, []string{"PUT settings"}, http.StatusBadGateway,
-			"the monitor could not validate the values: it exited with code 2"},
-		{"anything else", errors.New("something broke"), everyRoute, http.StatusInternalServerError, "internal error"},
+			"the monitor could not validate the values: it exited with code 2", "boom"},
+		{"anything else", errors.New("something broke"), everyRoute, http.StatusInternalServerError, "internal error", "something broke"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -497,6 +500,9 @@ func TestSettingsErrorsAnswerTheirStatus(t *testing.T) {
 				rec := b.serve(t, r.method, r.target, r.body, session)
 				if rec.Code != tc.status || detail(t, rec) != tc.detail {
 					t.Errorf("%s = %d %s, want %d %q", name, rec.Code, shown(t, rec), tc.status, tc.detail)
+				}
+				if tc.hidden != "" && strings.Contains(rec.Body.String(), tc.hidden) {
+					t.Errorf("%s answers with %q from the error", name, tc.hidden)
 				}
 			}
 			if tc.status == http.StatusInternalServerError && !strings.Contains(b.logs.String(), "API request failed") {
