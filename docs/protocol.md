@@ -106,7 +106,9 @@ The Rust SDK writes exactly this format to stderr: `monitor_hub_sdk::logging::in
 
 ### Start-up errors
 
-When a monitor exits before its handshake line, its last `error` line on stderr should say why. The hub's settings page, which comes in a later release, will show that reason after a save restarts the monitor. The hub will keep the last JSON line with `@level` `error` that the monitor wrote before it exited and show the line's `error` attribute, cut to 500 characters. When the line has no `error` attribute, it will show `@message` instead.
+When a monitor exits before its handshake line, its last `error` line on stderr should say why. The hub keeps the last JSON line with `@level` `error` that the monitor wrote in that start and takes the line's `error` attribute as the reason. When the line has no `error` attribute, or it holds only whitespace, the hub takes `@message` instead. It trims the reason and cuts it to 500 characters, and line breaks inside it stay. After a save restarts the monitor, `GET /api/monitors/{name}/settings/progress` shows that reason in `reason`, with `state` set to `failed`, and puts `[redacted]` in place of each secret of the saved configuration.
+
+Text in `.env` that does not convert to its field's type (see [The env bridge](#the-env-bridge)) stops the start before the hub runs the monitor's command. Its problems, written as `path: message` and joined by `; `, become the reason of that start. The hub logs them with `monitor failed to start`, tries again on the usual back-off, and also lists them in `problems` of `GET /api/monitors/{name}/settings`. A value saved through the API for that field takes the place of the `.env` text, and the hub stops converting that text.
 
 So write the reason in the `error` attribute of an `error` line, and exit. Never put a secret value in it, such as a password, a token or a database URL that holds a password.
 
@@ -292,24 +294,30 @@ The hub resolves `command[0]` first as a file inside the monitor directory, then
 
 A monitor receives only these variables:
 
-- Every hub variable that starts with the monitor's prefix, with the prefix removed. The prefix is the monitor name in upper case, with `-` replaced by `_`, followed by `__`. For a monitor named `diario-alerr` the prefix is `DIARIO_ALERR__`, so `DIARIO_ALERR__WATCH_TERMS=a,b` arrives as `WATCH_TERMS=a,b`.
+- Every hub variable that starts with the monitor's prefix, with the prefix removed. The prefix is the monitor name in upper case, with `-` replaced by `_`, followed by `__`. For a monitor named `diario-alerr` the prefix is `DIARIO_ALERR__`, so `DIARIO_ALERR__WATCH_TERMS=a,b` arrives as `WATCH_TERMS=a,b`. A variable whose name without the prefix is reserved never reaches any monitor. The reserved names are `PATH`, `TZ`, `TMPDIR` and every name that starts with `MONITOR_HUB_`, `PLUGIN_` or `LD_`, so `SEI__LD_PRELOAD` and `ANHANGUERA__MONITOR_HUB_CONFIG_FD` are dropped.
+- For a monitor whose `settings.json` version 2 the hub reads (see [Settings](#settings)), the free variables saved through the hub's API (see [Variables the file does not declare](#variables-the-file-does-not-declare)). A saved one wins over a prefixed variable of the same name. Such a monitor does not receive the prefixed variables that a field names in `env`: their values go into the document.
+- For the same monitor, `MONITOR_HUB_CONFIG_FD=3`, the descriptor of its [configuration document](#the-configuration-document).
 - `PATH` and `TZ`, copied from the hub.
 - `TMPDIR=/tmp`.
 - `MONITOR_HUB_DATA_DIR=<DATA_DIR>/monitors/<name>`. This is the only place the monitor should write persistent data. The hub does not create other directories for it.
 
-On top of that, go-plugin adds `MONITOR_HUB_MONITOR` and the `PLUGIN_*` variables described above.
+`PATH`, `TZ`, `TMPDIR` and `MONITOR_HUB_DATA_DIR` win over everything else. On top of that, go-plugin adds `MONITOR_HUB_MONITOR` and the `PLUGIN_*` variables described above.
 
-Nothing else from the hub's environment is passed. A monitor cannot read the hub's database URL, notification tokens or another monitor's settings.
-
-A later hub release changes this for a monitor whose `settings.json` has `settings_version` 2. That hub will pass `MONITOR_HUB_CONFIG_FD`, the descriptor of the monitor's [configuration document](#the-configuration-document). It will also stop passing the prefixed variables that a field names in `env`, because their values go into the document. The hub in this release does neither.
+Nothing else from the hub's environment is passed. A monitor cannot read the hub's database URL, notification tokens or another monitor's settings. A monitor without `settings.json`, or with a file the hub does not read, gets no descriptor and none of the saved variables.
 
 ## Settings
 
-A monitor can declare its settings in two parts that go together: a `settings.json` file and a `validate-settings` argument. The hub's settings page will draw the monitor's form from the file, and run the monitor with the argument to check new values before it saves them.
+A monitor can declare its settings in two parts that go together: a `settings.json` file and a `validate-settings` argument. The hub reads the file when it starts and builds the monitor's [configuration document](#the-configuration-document) from it at every start of the monitor. Its API serves the configuration: `GET /api/monitors/{name}/settings` returns the declaration, the values the monitor receives and where each one comes from, `PUT` on the same path changes them, and `GET /api/monitors/{name}/settings/progress` follows the restart a save asks for ([`deploy.md`](deploy.md#8-operating-rules) shows them with `curl`). Before the hub saves new values that change what the monitor receives, it runs the monitor with the argument to check them. All three routes take a signed-in session with the permission `monitor:<name>:configure`, and an admin has it on every monitor. A settings page in the hub comes in a later release.
 
-That page comes in a later release. The hub in this release does not read `settings.json`, and neither does an older hub, so a monitor can ship the file now. Both parts are optional. A monitor without the file keeps working as before, but nothing about it will be editable from the page.
+Both parts are optional. A monitor without the file keeps working as before: it gets the environment described in [Environment](#environment) and no descriptor, and the API changes nothing about its configuration beyond deleting values saved earlier. An older hub does not read the file either, so a monitor can ship it whatever hub runs it.
 
 This section describes version 2 of the file. The Rust SDK and the conformance command refuse any other `settings_version`, 1 included.
+
+### What the hub reads
+
+The hub reads the file more leniently than the Rust SDK and the conformance command in two ways: it skips an attribute it does not know, and it reads a field with an unknown `type` as a `string` field without `default`, `options`, `fields` or `items`. Every other rule of this section applies. When the file breaks one, the hub ignores the whole file and treats the monitor as one without `settings.json`. That covers a byte order mark, bytes that are not UTF-8, bad JSON, a key written twice in one object, a key that differs from an attribute only in letter case, `null` in `secret`, `required` or `editable`, a missing attribute, a broken rule from the table below, a file larger than 1 MiB and a `settings.json` that is not a regular file. A version 1 file is ignored the same way. In every case the hub logs `the monitor's settings.json is ignored; none of its configuration can be changed here` as a warning, with the reason in `error`, such as `settings.json: settings_version is 1, want 2`.
+
+A monitor whose image ships version 2 receives the document and not the variables it declares in `env`, so it has to read the document. An image that ships version 2 and still reads its settings from the environment, such as anhanguera-monitor 0.1.1, does not start on this hub: its error lines reach the hub's log, and the hub tries again on the back-off. The cure is a version that reads the document. The images the hub bundles, diario-alerr 2.4.0, sei-monitor 2.4.0 and anhanguera-monitor 0.2.0, all read it.
 
 ### `settings.json`
 
@@ -357,14 +365,14 @@ Each field has these attributes:
 | `help` | string | no | One or two sentences shown under the field. |
 | `type` | string | yes | One of the types in the next table. |
 | `secret` | boolean | no | `true`: the hub never shows or returns the value. Not for an `object` or a `list`, and not inside a list item. |
-| `required` | boolean | no | Only marks the field on the page. The monitor's validation decides whether something is missing. |
+| `required` | boolean | no | Only a mark for whoever draws a form. The monitor's validation decides whether something is missing. |
 | `default` | a value of the field's type | no | The value the document gets when nothing else sets the field. Not for an `object` or a list of objects. |
 | `options` | string array | for `choice` | The accepted values. |
 | `fields` | array | for `object` | The object's fields, with the same attributes. |
 | `items` | object | for `list` | What each item of the list is. |
 | `group` | string | no, top level only | A section title. Fields with the same `group` are shown together. |
-| `editable` | boolean | no, top level only | `false`: the page shows the field and where its value comes from, but cannot change it. The field then needs `env`. The default is `true`. |
-| `reason` | string | with `editable: false` | Why the field cannot be edited. The page shows it. |
+| `editable` | boolean | no, top level only | `false`: the API shows where the field's value comes from but refuses to change it, and the value stays in `.env`. The field then needs `env`. The default is `true`. |
+| `reason` | string | with `editable: false` | Why the field cannot be edited. The API returns it with the declaration. |
 | `env` | string | no, top level only | The environment variable that holds the value when there is no document, without the hub's prefix. See [The env bridge](#the-env-bridge). |
 
 An item has a `type`, which is required, plus `options` for a `choice` or `fields` for an `object`, with the meanings above. An item cannot be a `list`.
@@ -376,7 +384,7 @@ An item has a `type`, which is required, plus `options` for a `choice` or `field
 | `number` | A number. |
 | `boolean` | `true` or `false`. |
 | `duration` | A string in the syntax of Go's `time.ParseDuration`, such as `15m`, `1h30m`, `-5m` or `300ms`. The monitor parses it. |
-| `choice` | A string. The page offers only the `options`. |
+| `choice` | A string. A value saved through the API must be one of the `options`. |
 | `object` | An object whose keys are the `name`s of its `fields`. |
 | `list` | An array of items. |
 
@@ -424,7 +432,7 @@ Options are compared exactly, character by character. `"a"` and `"A"`, or `"a"` 
 
 The Rust SDK and the conformance command reject an unknown attribute and an unknown `type`, so that a typo such as `secert` cannot leave a secret on show. An older Rust SDK or conformance command rejects a file that uses an attribute or a type added later, so check such a file with the release that added it.
 
-The hub does not check values against these attributes, beyond what the form control allows: a `choice` field offers only its options. Rules such as "set exactly one of these three" belong in the monitor's `validate-settings`.
+Of a value saved through the API, the hub checks only that it fits the field's type, that a `choice` is one of its options and that no text holds a NUL character or more than 8192 bytes. Rules such as "set exactly one of these three" belong in the monitor's `validate-settings`.
 
 The Rust SDK's reader and the conformance command apply the same rules and give the same text for every rule in the table above. They differ in a few places, so write the file so that both accept it.
 
@@ -438,7 +446,7 @@ A monitor that ships `settings.json` reads its settings from one JSON document. 
 
 The document arrives as a file the monitor inherits, already open: an anonymous file with no path on disk. `MONITOR_HUB_CONFIG_FD` holds the number of its descriptor, 3 or more. The hub and the monitors run as the same user, so another monitor could read a file with a path, even one with mode `0600`. Read the document once, when the monitor starts, and close the descriptor, so that a program the monitor runs does not inherit it. New settings take effect when the monitor restarts.
 
-A field's value comes from the settings page first, then from the `.env` variable its `env` names, then from its `default`:
+A field's value comes from the value saved through the hub's API first, then from the `.env` variable its `env` names, then from its `default`:
 
 - An empty string, `""`, means not set, so it takes the `default` too.
 - A missing object is built from the defaults of its fields. It goes into the document if it ends up with at least one key.
@@ -446,7 +454,21 @@ A field's value comes from the settings page first, then from the `.env` variabl
 - A secret field never has a default.
 - Any other value stays as it is, including `null` and a value of the wrong type, and the monitor refuses it. Deserializers such as serde quote the refused value in their errors, so a monitor never passes that text on.
 
-Without a descriptor, when `MONITOR_HUB_CONFIG_FD` is unset or empty, the monitor builds the same document from its environment through the [env bridge](#the-env-bridge), and applies the defaults the same way. That is how a monitor runs by hand, in tests, under the conformance command and under the hub in this release. `monitor_hub_sdk::config::load` does both; see [`sdk-rust/README.md`](../sdk-rust/README.md).
+Without a descriptor, when `MONITOR_HUB_CONFIG_FD` is unset or empty, the monitor builds the same document from its environment through the [env bridge](#the-env-bridge), and applies the defaults the same way. That is how a monitor runs by hand, in tests, under the conformance command and under an older hub. This hub passes a descriptor to every monitor whose `settings.json` version 2 it reads, at every start and to `validate-settings`. `monitor_hub_sdk::config::load` does both; see [`sdk-rust/README.md`](../sdk-rust/README.md).
+
+The hub builds the document by these rules, one top-level field at a time. A saved object counts whole, and the secrets inside it come from the saved secrets. The hub converts the `.env` text through the env bridge, with the same messages, and a problem there stops the start (see [Start-up errors](#start-up-errors)). A `choice` or a `duration` from `.env` goes into the document as it came, so the monitor still checks it. The hub never writes the document to a file with a path.
+
+The hub keeps what the API saves in its database, in the table `monitor_configs`, one row per monitor: the values that are not secret by top-level field, the secret texts by path, the free variables, the ignored values and a revision.
+
+A saved value that the current declaration does not take never reaches the monitor. The hub keeps it as an ignored value, with its path and one of these reasons:
+
+- `undeclared`: no field has that path, or a free variable has a name the hub refuses, such as one a field names in `env`.
+- `type`: the value does not fit the field's type, or a `choice` is not one of the options. `null` counts as the wrong type at any depth.
+- `not_editable`: the field has `editable: false`.
+- `replaced`: a secret saved later took the place of a plain value saved before the field became secret.
+- `no_declaration`: the hub reads no `settings.json` for the monitor.
+
+`GET /api/monitors/{name}/settings` lists these values under `ignored`, with `value` set to `null` when the value is or was secret, and the hub logs their paths when it starts, with `saved configuration values are not applied`. The next save moves them into the stored ignored values. They stay there, even when a later version of the monitor declares the path again, until someone with `configure` deletes them with `delete_ignored`. A monitor without a declaration is the exception: a save leaves its values where they are, so they apply again once the hub reads a declaration that takes them.
 
 The shared vectors in [`testdata/config/`](../testdata/config) pin these rules for every implementation: `env.json` for the bridge, and `defaults.json` for the defaults.
 
@@ -491,7 +513,7 @@ The monitor writes one JSON object on stdout and exits:
 | `1` | at least one | The values are invalid. |
 | anything else | | The validator failed. |
 
-A validator has failed too if it exits with `0` but lists problems, exits with `1` but lists none, prints something other than one JSON object, names a path the file does not declare, or runs for more than 5 seconds. When the validator fails, the hub will save nothing and say that the monitor could not validate the values.
+A validator has failed too if it exits with `0` but lists problems, exits with `1` but lists none, prints something other than one JSON object, names a path the file does not declare, or runs for more than 5 seconds. When the validator fails, the hub saves nothing and answers the save with `502` and `the monitor could not validate the values: ` followed by the reason, such as `it did not finish within 5s`.
 
 - `problems` is required. Each problem has a `message` that is not empty or only spaces, and a `path` that is either declared by the file or empty. An empty `path` is for a problem with several fields together or with the whole document. `path` may be left out or `null`, which both count as empty. Other keys are ignored, so a problem in the version 1 form, with `name` and no `path`, counts as a problem with the whole document.
 - A path starts with the `name` of a top-level field. `.name` goes into an object or an item of a list of objects, and `[index]` picks an item of a list. The index is `0` or digits without a leading zero. `rules`, `rules[2]`, `rules[2].process` and `rules[2].actions[0]` are paths of the example file. `rules.process` and `rules[02]` are not.
@@ -501,6 +523,14 @@ A validator has failed too if it exits with `0` but lists problems, exits with `
 - Do not require the magic cookie, open a database, use the network, run a program named in the settings (a password command, for example) or write to disk.
 - Never put the value of a `secret` field in a message.
 
+The hub runs the validator on a save that changes the document or the environment the monitor receives. The validator gets the document the save would give the monitor, on descriptor 3, and the environment the monitor would start with, plus `MONITOR_HUB_CONFIG_FD=3`. It gets neither the magic cookie nor the `PLUGIN_*` variables, which go-plugin adds only when it starts the monitor. The hub reads the answer strictly:
+
+- The keys are exactly `problems`, `path` and `message`, in lower case. An answer with `"Problems"` has no problems list, so the validator has failed.
+- The answer must be UTF-8.
+- A `path` that is left out or `null` counts as empty. Other keys are ignored.
+
+When the validator lists problems, the save gets `422` with them. When it fails, the hub keeps the last 4096 bytes of its stderr for its own log only. In both cases the hub puts `[redacted]` in place of every secret of 4 bytes or more, from before or after the save, that it finds in the messages and the stderr.
+
 Validation cannot prove everything. A wrong password or an unreachable database only shows when the monitor starts, which is what [Start-up errors](#start-up-errors) are for.
 
 With the Rust SDK, `monitor_hub_sdk::settings::answer` writes the answer and returns the exit code. See [`sdk-rust/README.md`](../sdk-rust/README.md).
@@ -509,17 +539,17 @@ The Rust testkit and the conformance command read the answer with the same check
 
 ### Variables the file does not declare
 
-The page will also let its user set variables the file does not declare, such as a proxy variable that a library reads. Only monitors that ship `settings.json` get them. Without the file, the hub cannot tell which names are dangerous, so nothing is editable. Such a name must match `^[A-Z][A-Z0-9_]*$`, must not be reserved, and must not be a name a field declares in `env`.
+The API also lets someone with `configure` save variables the file does not declare, such as a proxy variable that a library reads. They reach only a monitor whose `settings.json` version 2 the hub reads. Without the file, the hub cannot tell which names are dangerous, so it takes none. Such a name must match `^[A-Z][A-Z0-9_]*$`, must not be reserved, and must not be a name a field declares in `env`, and the value must hold no NUL character and at most 8192 bytes. The API never returns the value of a variable saved as secret, nor of a prefixed `.env` variable that no field declares, because the hub cannot tell whether that one is secret.
 
-Declare every variable that makes the monitor run a program or read a file as `editable: false`, with a `reason`. Examples are a command that prints a password and the path of a password file. If the page could change them, anyone who can use the page could run a program inside the hub's container. Those variables stay in `.env`.
+Declare every variable that makes the monitor run a program or read a file as `editable: false`, with a `reason`. Examples are a command that prints a password and the path of a password file. If the API could change them, anyone with `configure` on the monitor could run a program inside the hub's container. Those variables stay in `.env`.
 
-When a new version of the monitor declares a variable that was saved as an undeclared one, it becomes that field and keeps the saved value. When a version stops declaring a field, its saved value becomes an undeclared variable.
+When a new version of the monitor names a saved free variable in a field's `env`, or stops declaring a field that has a saved value, the hub keeps that value as an ignored one with the reason `undeclared` (see [The configuration document](#the-configuration-document)). It no longer reaches the monitor, and only `delete_ignored` removes it. A new field then takes its value from `.env` or its default.
 
 ### Keeping the file and the code in step
 
 Add a test that fails when the code and the file disagree. A document with every declared field must load into the monitor's configuration, and a document with a key the file does not declare must be refused, at every level. So make the configuration refuse unknown keys.
 
-In Rust, `monitor_hub_sdk_testkit::settings::assert_no_drift::<T>` runs that test against your configuration type `T`. `full_document` builds the document with every field, and `undeclared_documents` builds one document with an extra key for each object. `check` checks the file and runs the validator with an empty environment and no descriptor. `command_with_document` runs the monitor with a document on a descriptor, the way the hub will hand it over. See [`sdk-rust/README.md`](../sdk-rust/README.md). In other languages, run `monitor-conformance` with `-monitor-dir` (see [Conformance](#conformance)). It checks the file and the validator, and the comparison with the code is a test you write yourself.
+In Rust, `monitor_hub_sdk_testkit::settings::assert_no_drift::<T>` runs that test against your configuration type `T`. `full_document` builds the document with every field, and `undeclared_documents` builds one document with an extra key for each object. `check` checks the file and runs the validator with an empty environment and no descriptor. `command_with_document` runs the monitor with a document on a descriptor, the way the hub hands it over. See [`sdk-rust/README.md`](../sdk-rust/README.md). In other languages, run `monitor-conformance` with `-monitor-dir` (see [Conformance](#conformance)). It checks the file and the validator, and the comparison with the code is a test you write yourself.
 
 ## Image layout
 
