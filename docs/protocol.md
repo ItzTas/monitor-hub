@@ -529,7 +529,7 @@ The hub runs the validator on a save that changes the document or the environmen
 - The answer must be UTF-8.
 - A `path` that is left out or `null` counts as empty. Other keys are ignored.
 
-When the validator lists problems, the save gets `422` with them. When it fails, the hub keeps the last 4096 bytes of its stderr for its own log only. In both cases the hub puts `[redacted]` in place of every secret of 4 bytes or more, from before or after the save, that it finds in the messages and the stderr.
+When the validator lists problems, the save gets `422` with them. When it fails, the hub keeps the whole lines in the last 4096 bytes of its stderr, for its own log only. In both cases the hub puts `[redacted]` in place of every secret of 4 bytes or more, from before or after the save, that it finds in the messages and the stderr.
 
 Validation cannot prove everything. A wrong password or an unreachable database only shows when the monitor starts, which is what [Start-up errors](#start-up-errors) are for.
 

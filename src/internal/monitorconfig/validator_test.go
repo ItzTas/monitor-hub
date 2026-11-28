@@ -267,18 +267,30 @@ func TestValidatorLeavesNoChildBehind(t *testing.T) {
 	}
 }
 
-func TestValidatorKeepsOnlyTheEndOfStderr(t *testing.T) {
+func TestValidatorKeepsOnlyTheWholeLinesAtTheEndOfStderr(t *testing.T) {
 	t.Parallel()
-	_, err := testValidator().Validate(t.Context(), validatorEntry(t, "flood-stderr-fail"), validatorEnv(), []byte(`{}`))
-	var verr *ValidatorError
-	if !errors.As(err, &verr) {
-		t.Fatalf("Validate error = %v, want a ValidatorError", err)
+	v := testValidator()
+	entry := validatorEntry(t, "stderr-file-fail")
+	secret := "fictitious-validator-password"
+	// The window of StderrLimit bytes starts 10 bytes before the end of the secret.
+	kept := strings.Repeat("x", v.StderrLimit-len("\nlast line\n")-11) + "\nlast line\n"
+	stderr := "connecting with " + secret + "\n" + kept
+	if err := os.WriteFile(filepath.Join(entry.Dir, "validator-stderr"), []byte(stderr), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if verr.Reason != "it exited with code 2" || len(verr.Stderr) > 4096 || !strings.HasSuffix(verr.Stderr, "last line\n") {
-		t.Fatalf("Reason = %q and %d bytes of stderr, want exit code 2 and at most 4096 bytes ending in the last line", verr.Reason, len(verr.Stderr))
+	_, err := v.Validate(t.Context(), entry, validatorEnv(), []byte(`{}`))
+	var verr *ValidatorError
+	if !errors.As(err, &verr) || verr.Reason != "it exited with code 2" {
+		t.Fatalf("Validate error = %v, want a ValidatorError for exit code 2", err)
+	}
+	if strings.Contains(verr.Stderr, secret[len(secret)-4:]) {
+		t.Fatal("stderr holds the end of the validator secret")
+	}
+	if verr.Stderr != kept {
+		t.Fatalf("stderr is %d bytes, want the %d bytes of the whole lines after the cut", len(verr.Stderr), len(kept))
 	}
 
-	got, err := testValidator().Validate(t.Context(), validatorEntry(t, "flood-stderr"), validatorEnv(), []byte(`{}`))
+	got, err := v.Validate(t.Context(), validatorEntry(t, "flood-stderr"), validatorEnv(), []byte(`{}`))
 	if err != nil || len(got) != 0 {
 		t.Fatalf("Validate = %#v, %v, want no problems", got, err)
 	}

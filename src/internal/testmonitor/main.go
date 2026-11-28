@@ -214,9 +214,13 @@ func validateSettings() int {
 			slices.Sort(names)
 			return answerProblem("", strings.Join(names, ","))
 		},
-		"report-document":   func() int { return answerProblem("", string(document)) },
-		"flood-stderr":      func() int { floodStderr(); return answerNoProblems() },
-		"flood-stderr-fail": func() int { floodStderr(); return 2 },
+		"report-document": func() int { return answerProblem("", string(document)) },
+		"flood-stderr":    func() int { floodStderr(); return answerNoProblems() },
+		"stderr-file-fail": func() int {
+			data, _ := os.ReadFile("validator-stderr")
+			_, _ = os.Stderr.Write(data)
+			return 2
+		},
 	}
 	action, ok := actions[mode]
 	if !ok {

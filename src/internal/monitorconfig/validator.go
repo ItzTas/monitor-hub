@@ -58,14 +58,26 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 type tailBuffer struct {
 	data  []byte
 	limit int
+	cut   bool
 }
 
 func (b *tailBuffer) Write(p []byte) (int, error) {
 	b.data = append(b.data, p...)
 	if extra := len(b.data) - b.limit; extra > 0 {
 		b.data = slices.Clone(b.data[extra:])
+		b.cut = true
 	}
 	return len(p), nil
+}
+
+// String is what was kept, from the first whole line on once the start was cut. A partial line
+// can hold the end of a secret, which redact, matching whole secrets only, would leave.
+func (b *tailBuffer) String() string {
+	if !b.cut {
+		return string(b.data)
+	}
+	_, rest, _ := bytes.Cut(b.data, []byte{'\n'})
+	return string(rest)
 }
 
 // Validate runs the monitor's validate-settings with document on descriptor 3 and env as its
@@ -103,11 +115,11 @@ func (v *Validator) Validate(ctx context.Context, entry catalog.Entry, env []str
 		return nil, ctx.Err()
 	}
 	if stopped.Load() {
-		return nil, &ValidatorError{Reason: fmt.Sprintf("it did not finish within %s", v.Limit), Stderr: string(stderr.data)}
+		return nil, &ValidatorError{Reason: fmt.Sprintf("it did not finish within %s", v.Limit), Stderr: stderr.String()}
 	}
 	problems, reason := v.answer(cmd.ProcessState, stdout.data, entry.Settings)
 	if reason != "" {
-		return nil, &ValidatorError{Reason: reason, Stderr: string(stderr.data)}
+		return nil, &ValidatorError{Reason: reason, Stderr: stderr.String()}
 	}
 	return problems, nil
 }
