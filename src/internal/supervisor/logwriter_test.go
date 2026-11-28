@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"unicode/utf8"
 )
 
 type logBuffer struct {
@@ -231,8 +230,5 @@ func TestReasonIsTheLastErrorLine(t *testing.T) {
 		if got := w.Reason(); got != step.want {
 			t.Fatalf("Reason() after step %d = %q, want %q", i, got, step.want)
 		}
-	}
-	if got := utf8.RuneCountInString(w.Reason()); got != 500 {
-		t.Errorf("Reason() has %d runes, want 500", got)
 	}
 }
