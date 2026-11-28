@@ -35,6 +35,8 @@ var (
 	worker   sync.Mutex
 	// hubEnviron is the environment the hub passed, before the document adds to it.
 	hubEnviron []string
+	// document is the configuration document read from the descriptor, as it came.
+	document []byte
 )
 
 type server struct {
@@ -100,6 +102,7 @@ func readDocument(fd string) error {
 	if err != nil {
 		return fmt.Errorf("read the configuration document: %w", err)
 	}
+	document = data
 	if os.Getenv("RECORD_CONFIG") == "1" {
 		if err := writeDataFile("config.json", data); err != nil {
 			return err
@@ -107,11 +110,11 @@ func readDocument(fd string) error {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	var document map[string]any
-	if err := decoder.Decode(&document); err != nil {
+	var values map[string]any
+	if err := decoder.Decode(&values); err != nil {
 		return fmt.Errorf("decode the configuration document: %w", err)
 	}
-	for key, value := range document {
+	for key, value := range values {
 		switch value.(type) {
 		case string, json.Number, bool:
 			_ = os.Setenv(strings.ToUpper(key), fmt.Sprint(value))
@@ -177,6 +180,10 @@ func validateSettings() int {
 		"undeclared-0":             {`{"problems":[{"path":"nope[0]","message":"m"}]}`, 0},
 		"undeclared-empty-message": {`{"problems":[{"path":"nope[0]","message":"m"},{"path":"events","message":""}]}`, 1},
 		"version-1":                {`{"problems":[{"name":"EVENTS","message":"m"}]}`, 1},
+		"bad-utf8":                 {"{\"problems\":[{\"path\":\"events\",\"message\":\"\xff\"}]}", 1},
+		"upper-keys":               {`{"Problems":[]}`, 0},
+		"path-not-text":            {`{"problems":[{"path":"events","message":"m"},{"path":3,"message":"n"}]}`, 1},
+		"path-null":                {`{"problems":[{"path":null,"message":"m"},{"message":"n","code":7}]}`, 1},
 	}
 	if answer, ok := answers[mode]; ok {
 		fmt.Println(answer.stdout)
@@ -194,6 +201,22 @@ func validateSettings() int {
 		"background":    func() int { return withChild(background, answerNoProblems) },
 		"detached":      func() int { return withChild(detached, answerNoProblems) },
 		"detached-hang": func() int { return withChild(detached, hang) },
+		"events":        eventsAnswer,
+		"echo-events": func() int {
+			return answerProblem("events", "EVENTS is "+os.Getenv("EVENTS"))
+		},
+		"report-env": func() int {
+			names := make([]string, 0, len(hubEnviron))
+			for _, kv := range hubEnviron {
+				name, _, _ := strings.Cut(kv, "=")
+				names = append(names, name)
+			}
+			slices.Sort(names)
+			return answerProblem("", strings.Join(names, ","))
+		},
+		"report-document":   func() int { return answerProblem("", string(document)) },
+		"flood-stderr":      func() int { floodStderr(); return answerNoProblems() },
+		"flood-stderr-fail": func() int { floodStderr(); return 2 },
 	}
 	action, ok := actions[mode]
 	if !ok {
@@ -210,14 +233,43 @@ func answerNoProblems() int {
 	return 0
 }
 
+// validAnswer accepts the values when it runs in the monitor directory without the cookie, and,
+// when no document came on a descriptor (as the conformance command runs it), with an empty
+// environment.
 func validAnswer() int {
-	if len(hubEnviron) != 0 {
+	if os.Getenv(sdk.Handshake.MagicCookieKey) != "" {
+		return 3
+	}
+	if os.Getenv(settings.ConfigFDEnv) == "" && len(hubEnviron) != 0 {
 		return 3
 	}
 	if _, err := os.Stat("settings.json"); err != nil {
 		return 3
 	}
 	return answerNoProblems()
+}
+
+func answerProblem(path, message string) int {
+	answer, err := json.Marshal(map[string]any{"problems": []map[string]string{{"path": path, "message": message}}})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 4
+	}
+	fmt.Println(string(answer))
+	return 1
+}
+
+func eventsAnswer() int {
+	events := os.Getenv("EVENTS")
+	if n, err := strconv.ParseInt(events, 10, 64); events == "" || err == nil && n >= 0 {
+		return answerNoProblems()
+	}
+	return answerProblem("events", "use a whole number of 0 or more")
+}
+
+// floodStderr writes 1 MiB on stderr, ending with the line "last line".
+func floodStderr() {
+	_, _ = fmt.Fprint(os.Stderr, strings.Repeat(strings.Repeat("x", 1023)+"\n", 1024)+"last line\n")
 }
 
 func needsCookie() int {
