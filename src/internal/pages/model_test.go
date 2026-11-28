@@ -476,9 +476,9 @@ func TestTheFormEchoesWhatWasSent(t *testing.T) {
 	if !strings.Contains(reader, "Secret values are never sent back to the page. Type them again.") {
 		t.Error("the form does not say the typed secrets must be typed again")
 	}
-	for _, secret := range []string{"typed-secret-one", "typed-secret-two", "typed-secret-three"} {
+	for label, secret := range map[string]string{"one": "typed-secret-one", "two": "typed-secret-two", "three": "typed-secret-three"} {
 		if strings.Contains(body, secret) {
-			t.Errorf("the form carries the typed secret %s", strings.TrimPrefix(secret, "typed-"))
+			t.Errorf("the form carries the typed secret %s", label)
 		}
 	}
 	for id, want := range map[string]string{"f-rules-0--process": "p0", "f-rules-1--process": "p1", "f-labels-0": "a", "var-FREE": "w", "new-0-value": "http://p", "new-0-name": "HTTP_PROXY", "new-1-name": "API_KEY"} {

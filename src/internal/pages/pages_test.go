@@ -220,6 +220,16 @@ func within[T any](t *testing.T, ch <-chan T, why string) T {
 	}
 }
 
+// give sends v on ch, or fails saying why after 10 s.
+func give[T any](t *testing.T, ch chan<- T, v T, why string) {
+	t.Helper()
+	select {
+	case ch <- v:
+	case <-time.After(10 * time.Second):
+		t.Fatal(why)
+	}
+}
+
 func TestAWrongPasswordWaitsInTheQueueAndIsNeverEchoed(t *testing.T) {
 	after, logs, notes := newFakeAfter(), &lockedBuffer{}, &journal{}
 	waited := make(chan struct{}, 1)
@@ -248,7 +258,7 @@ func TestAWrongPasswordWaitsInTheQueueAndIsNeverEchoed(t *testing.T) {
 	}()
 	within(t, waited, "the second sign-in never waited behind the wrong password: it skipped the queue")
 	notes.add("release")
-	after.fire <- time.Time{}
+	give(t, after.fire, time.Time{}, "the wrong password never took its 1 s wait from the queue")
 	wrong := within(t, answeredWrong, "the wrong password was never answered after the wait")
 	right := within(t, answeredRight, "the sign-in that waited was never answered")
 
@@ -301,7 +311,7 @@ func TestAWrongPasswordWaitsInTheQueueAndIsNeverEchoed(t *testing.T) {
 	within(t, waited, "the sign-in of the client that leaves never waited in the queue")
 	cancel()
 	left := within(t, answeredRight, "the client that left the queue was never let go")
-	after.fire <- time.Time{}
+	give(t, after.fire, time.Time{}, "the second wrong password never took its 1 s wait from the queue")
 	within(t, answeredWrong, "the second wrong password was never answered after the wait")
 
 	if !silent(left) {

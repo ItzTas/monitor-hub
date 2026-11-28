@@ -5,6 +5,7 @@ import (
 	"errors"
 	"html"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -151,20 +152,26 @@ func TestMonitorTextIsEscapedAtEveryDepth(t *testing.T) {
 			Group: "</fieldset><script>alert(5)</script>", Default: json.RawMessage(`"\" onfocus=\"alert(1)"`),
 		},
 		{Name: "account", Label: "Account", Type: settings.Object, Editable: true, Fields: []settings.Field{
-			{Name: "user", Label: "User", Help: "<img src=x onerror=alert(1)>", Type: settings.String},
+			{Name: "user", Label: "User", Help: "<img src=x onerror=alert(1)>", Type: settings.String, Editable: true},
 		}},
 		{Name: "rules", Label: "Rules", Type: settings.List, Editable: true, Items: &settings.Item{Type: settings.Object, Fields: []settings.Field{
-			{Name: "kind", Label: "Kind", Type: settings.Choice, Options: []string{`"><b>x</b>`}},
+			{Name: "kind", Label: "Kind", Type: settings.Choice, Options: []string{`"><b>x</b>`}, Editable: true},
 		}}},
 		{Name: "cmd", Label: "Command", Type: settings.String, Reason: "<a href=javascript:alert(1)>", Env: "CMD"},
 	}}
-	mux, configs, _, people := newTestSite(t, Deps{Entries: []catalog.Entry{{Manifest: catalog.Manifest{Name: "esc"}, Settings: decl}}})
+	mux, configs, monitored, people := newTestSite(t, Deps{Entries: []catalog.Entry{{Manifest: catalog.Manifest{Name: "esc"}, Settings: decl}}})
+	monitored.monitors = []monitors.Monitor{{Name: "esc", DisplayName: "<img src=x onerror=alert(10)>", State: "idle", Message: "<script>alert(9)</script>"}}
+	configs.start = monitorconfig.StartReport{Phase: supervisor.PhaseFailed, Reason: "<script>alert(11)</script>"}
+	free := `"><script>alert(2)</script>`
 	people.sessions["evil"] = access.NewSession(access.Person{Login: `x"><svg onload=alert(8)>`, Admin: true})
 	view := scene{document: map[string]any{"rules": []any{map[string]any{"kind": ""}}}}.view(decl)
 	view.Ignored = []monitorconfig.IgnoredView{
 		{Path: "x<svg onload=alert(7)>", Value: json.RawMessage(`"<script>alert(6)</script>"`), Reason: monitorconfig.ReasonUndeclared},
 	}
-	view.Variables = []monitorconfig.VariableView{{Name: `X"><svg onload=alert(4)>`, Secret: true, Source: monitorconfig.SourceEnv, EnvSet: true}}
+	view.Variables = []monitorconfig.VariableView{
+		{Name: "FREE", Source: monitorconfig.SourcePage, Value: &free, Saved: true},
+		{Name: `X"><svg onload=alert(4)>`, Secret: true, Source: monitorconfig.SourceEnv, EnvSet: true},
+	}
 	configs.view = view
 
 	rec := serve(t.Context(), mux, http.MethodGet, "/settings/esc", "", withCookie(cookie("evil")))
@@ -184,8 +191,25 @@ func TestMonitorTextIsEscapedAtEveryDepth(t *testing.T) {
 	if found := handlers(body); len(found) != 0 {
 		t.Errorf("the page has tags with event handlers: %q", found)
 	}
-	if !strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt;") {
-		t.Error("the page does not show the label of title as text")
+	escaped := map[string]string{
+		"the label of title":           "&lt;script&gt;alert(1)&lt;/script&gt;",
+		"the help of account.user":     "&lt;img src=x onerror=alert(1)&gt;",
+		"the group of title":           "&lt;/fieldset&gt;&lt;script&gt;alert(5)&lt;/script&gt;",
+		"the reason of cmd":            "&lt;a href=javascript:alert(1)&gt;",
+		"the message of the monitor":   "&lt;script&gt;alert(9)&lt;/script&gt;",
+		"the display name":             "<h1>&lt;img src=x onerror=alert(10)&gt;</h1>",
+		"the reason of the last start": "&lt;script&gt;alert(11)&lt;/script&gt;",
+	}
+	for what, want := range escaped {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page does not show %s as text", what)
+		}
+	}
+	if got := options(body, "f-rules-0--kind"); !slices.Contains(got, choice{`"><b>x</b>`, `"><b>x</b>`, false}) {
+		t.Errorf("f-rules-0--kind has the options %+v, want the declared one as text", got)
+	}
+	if tag := startTag(body, "var-FREE"); !hasAttr(tag, "value", free) {
+		t.Errorf("var-FREE is %q, want its value as text", tag)
 	}
 	if pre := find(body, `<pre class="ignored-value">[^<]*</pre>`); !strings.Contains(pre, "&lt;script&gt;alert(6)&lt;/script&gt;") {
 		t.Errorf("the ignored value is shown as %q, want its text escaped in the <pre>", pre)
