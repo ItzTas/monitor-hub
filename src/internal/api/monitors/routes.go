@@ -22,7 +22,7 @@ func RegisterRoutes(api huma.API, h *Handler) {
 		Description: "Every configured monitor, plus any monitor the database still remembers, sorted by name. You see only the monitors you can view.",
 		Tags:        []string{"monitors"},
 		Metadata:    gate.Meta(gate.Identified),
-		Errors:      []int{http.StatusUnauthorized, http.StatusForbidden},
+		Errors:      []int{http.StatusUnauthorized},
 	}, h.List)
 	huma.Register(api, huma.Operation{
 		OperationID: "check-monitor",
