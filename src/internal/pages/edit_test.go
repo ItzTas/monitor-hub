@@ -97,6 +97,22 @@ func TestListEditsSaveNothingAndKeepEveryValue(t *testing.T) {
 	}
 }
 
+func TestAListEditDrawsAt1000ItemsInAll(t *testing.T) {
+	mux, _, view := newEditSite(t, Deps{})
+	form := nestedFlood(1000)
+	form.Set("declaration", declarationKey(view))
+	form.Set("op", "add:rules[0].actions")
+
+	rec := edit(t, mux, form, withHeader("HX-Request", "true"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a list edit with 1000 rules of 1000 actions each = %d, want 200", rec.Code)
+	}
+	if rows := count(rec.Body.String(), `\bvalue="remove:`); rows > maxItems {
+		t.Errorf("the answer draws %d item rows, want at most %d", rows, maxItems)
+	}
+}
+
 func TestAListEditNeverEchoesATypedSecret(t *testing.T) {
 	mux, _, view := newEditSite(t, Deps{})
 	form := rulesForm(view, "add:labels")

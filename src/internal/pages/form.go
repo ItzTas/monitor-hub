@@ -10,8 +10,11 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/monitorconfig"
 )
 
-// maxItems bounds what is read of one list, whatever its n: says.
+// maxItems bounds the items of a whole submission, nested lists included, whatever the n:
+// keys say: the form draws every item it counts.
 const maxItems = 1000
+
+var emptyIsNone = map[settings.Type]bool{settings.Integer: true, settings.Number: true, settings.Boolean: true, settings.Choice: true}
 
 // parseSubmission reads a sent form by walking the declaration, so only what the form draws
 // for an editable, non-secret field becomes a value.
@@ -31,7 +34,7 @@ func parseSubmission(view monitorconfig.View, form url.Values) submission {
 		VarUnset:    set(form["var_unset"]),
 		New:         newRows(form),
 	}
-	r := &reader{form: form, sub: &sub}
+	r := &reader{form: form, sub: &sub, budget: maxItems}
 	if view.Declaration != nil {
 		for _, f := range view.Declaration.Fields {
 			if !f.Editable || f.Secret {
@@ -54,9 +57,10 @@ func parseSubmission(view monitorconfig.View, form url.Values) submission {
 }
 
 type reader struct {
-	form url.Values
-	sub  *submission
-	read int // form keys read, to tell whether an object was drawn
+	form   url.Values
+	sub    *submission
+	read   int // form keys read, to tell whether an object was drawn
+	budget int // items left to read, spent in the order of the declaration
 }
 
 func (r *reader) value(f settings.Field, path string) (any, bool) {
@@ -79,7 +83,6 @@ func (r *reader) simple(t settings.Type, path string, item bool) (any, bool) {
 	r.read++
 	text := r.form.Get(key)
 	r.sub.Texts[path] = text
-	emptyIsNone := map[settings.Type]bool{settings.Integer: true, settings.Number: true, settings.Boolean: true, settings.Choice: true}
 	if text == "" && (item || emptyIsNone[t]) {
 		return nil, false
 	}
@@ -114,7 +117,8 @@ func (r *reader) list(it *settings.Item, path string) (any, bool) {
 	}
 	r.read++
 	n, _ := strconv.Atoi(r.form.Get(key))
-	n = min(max(n, 0), maxItems)
+	n = min(max(n, 0), r.budget)
+	r.budget -= n
 	r.sub.Counts[path] = n
 	items, indexes := []any{}, []int{}
 	for i := range n {
@@ -168,7 +172,8 @@ type listEdit struct {
 }
 
 // applyOp edits a list of the sent form, keeping every value where it goes; an operation on
-// anything but a drawn list or item gives sub back as it was.
+// anything but a drawn list or item, or an add past maxItems, gives sub back as it was.
+// Only Texts and Counts move: Values, Indexes and Problems still describe the form before the op.
 func applyOp(decl *settings.Declaration, sub submission, op string) submission {
 	swap := func(a, b int) func(int) (int, bool) {
 		return func(j int) (int, bool) {
@@ -182,7 +187,8 @@ func applyOp(decl *settings.Declaration, sub submission, op string) submission {
 		}
 	}
 	ops := map[string]func(i, n int) (listEdit, bool){
-		"add": func(_, _ int) (listEdit, bool) { return listEdit{grow: 1}, true },
+		// The total holds the list too, so a list at its own cap is refused as well.
+		"add": func(_, _ int) (listEdit, bool) { return listEdit{grow: 1}, total(sub.Counts) < maxItems },
 		"remove": func(i, n int) (listEdit, bool) {
 			drop := func(j int) (int, bool) {
 				if j > i {
@@ -217,6 +223,14 @@ func applyOp(decl *settings.Declaration, sub submission, op string) submission {
 	sub.Counts = moved(sub.Counts, list, edit.move)
 	sub.Counts[list] = n + edit.grow
 	return sub
+}
+
+func total(counts map[string]int) int {
+	n := 0
+	for _, c := range counts {
+		n += c
+	}
+	return n
 }
 
 // itemOf splits rules[2] into rules and 2; i is -1 when path does not end in an index.

@@ -89,7 +89,7 @@ func TestParseSubmissionWalksTheDeclaration(t *testing.T) {
 	}
 }
 
-func TestParseSubmissionReadsAtMost1000Items(t *testing.T) {
+func TestParseSubmissionReadsAtMost1000ItemsInAll(t *testing.T) {
 	view := nestedScene().view(declarationFrom(t, "nested-settings.json"))
 
 	sub := parseSubmission(view, url.Values{"n:labels": {"99999"}, "v:labels[999]": {"x"}, "v:labels[1000]": {"y"}})
@@ -99,6 +99,16 @@ func TestParseSubmissionReadsAtMost1000Items(t *testing.T) {
 	}
 	if sub.Counts["labels"] != 1000 || !reflect.DeepEqual(sub.Values["labels"], []any{"x"}) || !slices.Equal(sub.Indexes["labels"], []int{999}) {
 		t.Errorf("with n:labels=99999, Counts is %d, labels %v at %v, want 1000 items read and only x, at 999", sub.Counts["labels"], sub.Values["labels"], sub.Indexes["labels"])
+	}
+	spent := parseSubmission(view, url.Values{
+		"n:rules": {"3"}, "n:rules[0].actions": {"999"}, "n:rules[1].actions": {"999"}, "n:rules[2].actions": {"999"}, "n:labels": {"5"},
+	})
+	want := map[string]int{"rules": 3, "rules[0].actions": 997, "rules[1].actions": 0, "rules[2].actions": 0, "labels": 0}
+	if !maps.Equal(spent.Counts, want) {
+		t.Errorf("with nested lists over the budget, Counts = %v, want %v: 1000 items in all, in the order of the declaration", spent.Counts, want)
+	}
+	if total := total(parseSubmission(view, nestedFlood(1000)).Counts); total != maxItems {
+		t.Errorf("a form with 1000 rules of 1000 actions each draws %d items in all, want %d", total, maxItems)
 	}
 	broken := parseSubmission(view, url.Values{"n:labels": {"-3"}, "n:rules": {"many"}})
 	if broken.Counts["labels"] != 0 || broken.Counts["rules"] != 0 {
@@ -113,6 +123,35 @@ func TestParseSubmissionReadsOnlyWhatTheFormDraws(t *testing.T) {
 
 	if !reflect.DeepEqual(sub.Values, map[string]any{"sei_url": "https://sei.example.gov.br"}) {
 		t.Errorf("Values = %#v, want only sei_url: sei_password_file is not editable and sei_password is secret", sub.Values)
+	}
+}
+
+// nestedFlood is a form with 1000 rules, each of n actions, and 1000 labels.
+func nestedFlood(n int) url.Values {
+	form := url.Values{"n:rules": {"1000"}, "n:labels": {"1000"}}
+	for i := range 1000 {
+		form.Set("n:rules["+strconv.Itoa(i)+"].actions", strconv.Itoa(n))
+	}
+	return form
+}
+
+func TestAddStopsAt1000ItemsInAll(t *testing.T) {
+	view := nestedScene().view(declarationFrom(t, "nested-settings.json"))
+	full := map[string]submission{
+		"labels at its own cap":     parseSubmission(view, url.Values{"n:labels": {"1000"}}),
+		"the budget spent by rules": parseSubmission(view, url.Values{"n:rules": {"1"}, "n:rules[0].actions": {"999"}, "n:labels": {"5"}}),
+	}
+
+	for name, sub := range full {
+		for _, op := range []string{"add:labels", "add:rules[0].actions", "add:rules"} {
+			if got := applyOp(view.Declaration, sub, op); !maps.Equal(got.Counts, sub.Counts) {
+				t.Errorf("with %s, %s gives Counts %v, want them unchanged", name, op, got.Counts)
+			}
+		}
+	}
+	room := parseSubmission(view, url.Values{"n:labels": {"999"}})
+	if got := applyOp(view.Declaration, room, "add:labels"); got.Counts["labels"] != 1000 {
+		t.Errorf("with 999 labels, add:labels gives %d labels, want 1000", got.Counts["labels"])
 	}
 }
 
