@@ -47,15 +47,19 @@ var saveEnviron = []string{
 var startedAt = time.Date(2026, 11, 28, 9, 0, 0, 0, time.UTC)
 
 type fakeSupervisor struct {
-	mu       sync.Mutex
-	restarts int
-	attempt  supervisor.Attempt
-	client   monitorpb.MonitorClient
+	mu         sync.Mutex
+	restarts   int
+	restartErr error
+	attempt    supervisor.Attempt
+	client     monitorpb.MonitorClient
 }
 
 func (s *fakeSupervisor) Restart(string) (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.restartErr != nil {
+		return 0, s.restartErr
+	}
 	s.restarts++
 	return uint64(s.restarts), nil
 }
@@ -840,6 +844,23 @@ func TestSaveWithoutDeclarationOnlyDeletes(t *testing.T) {
 	sameSaved(t, "bare", s.stored(t, "bare"), Saved{Document: raws(t, `{"m":8}`), Secrets: map[string]string{"p": "row-db-secret-value"}})
 	if s.checker.callCount() != 0 || s.supervisor.restartCount() != 0 {
 		t.Error("a save without a declaration was checked or restarted the monitor")
+	}
+}
+
+func TestARestartThatFailsAfterTheWriteIsLogged(t *testing.T) {
+	s := newSaveScene(t, saveFields, saveEnviron)
+	s.supervisor.restartErr = supervisor.ErrUnknownMonitor
+
+	if _, err := s.service.Save(t.Context(), "testmonitor", Change{Document: raws(t, `{"n":1}`)}); !errors.Is(err, supervisor.ErrUnknownMonitor) {
+		t.Errorf("Save = %v, want the restart's error", err)
+	}
+	sameSaved(t, "after the save", s.stored(t, "testmonitor"), Saved{Document: raws(t, `{"n":1}`)})
+	records := []map[string]any{{
+		"level": "ERROR", "msg": "the configuration was saved but the monitor could not be restarted",
+		"monitor": "testmonitor", "error": "no monitor has this name",
+	}}
+	if got := logRecords(t, s.log); !reflect.DeepEqual(got, records) {
+		t.Errorf("log records = %v, want %v", got, records)
 	}
 }
 

@@ -101,6 +101,7 @@ func (s *Service) Save(ctx context.Context, name string, change Change) (SaveRes
 	}
 	number, err := s.deps.Supervisor.Restart(name)
 	if err != nil {
+		s.deps.Log.Error("the configuration was saved but the monitor could not be restarted", "monitor", name, "error", err)
 		return SaveResult{}, fmt.Errorf("restart monitor %s: %w", name, err)
 	}
 	s.mu.Lock()
