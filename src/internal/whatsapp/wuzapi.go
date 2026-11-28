@@ -70,6 +70,11 @@ func (w *WuzAPI) Ready(ctx context.Context) bool {
 		return false
 	}
 	err := w.sessionReady(ctx)
+	if err != nil && ctx.Err() != nil {
+		// The caller gave up, usually because the hub is stopping; that says
+		// nothing about WuzAPI.
+		return false
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if err != nil {

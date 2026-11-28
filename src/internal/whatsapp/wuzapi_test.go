@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -163,6 +165,41 @@ func TestWuzAPIReadyGivesUpAfterItsTimeout(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Ready still waiting after 5s")
+	}
+}
+
+func TestWuzAPIReadyStopsQuietlyWhenTheCallerGivesUp(t *testing.T) {
+	arrived := make(chan struct{}, 1)
+	var hang atomic.Bool
+	hang.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hang.Load() {
+			arrived <- struct{}{}
+			<-r.Context().Done()
+			return
+		}
+		_, _ = io.WriteString(w, sessionStatus(true, true).body)
+	}))
+	t.Cleanup(server.Close)
+	var logs bytes.Buffer
+	gateway := newWuzAPI(server.URL, &logs)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan bool, 1)
+
+	go func() { done <- gateway.Ready(ctx) }()
+	<-arrived
+	cancel()
+	var stopped bool
+	select {
+	case stopped = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Ready still waiting 5s after its context ended")
+	}
+	hang.Store(false)
+	again := gateway.Ready(t.Context())
+
+	if stopped || !again || logs.Len() != 0 {
+		t.Errorf("Ready = %v, then %v; logs:\n%s", stopped, again, shown(logs.String()))
 	}
 }
 
