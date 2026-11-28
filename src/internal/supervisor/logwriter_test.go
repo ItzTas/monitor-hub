@@ -221,7 +221,7 @@ func TestReasonIsTheLastErrorLine(t *testing.T) {
 		{[]string{`{"@level":"error","@message":"fatal","error":{"x":1}}`}, "fatal"},
 		{[]string{`{"@level":"error","@message":"fatal","error":"  invalid configuration:\n  - EVENTS is wrong \n"}`}, "invalid configuration:\n  - EVENTS is wrong"},
 		{[]string{`{"@level":"error","@message":"` + strings.Repeat("x", maxLogLine) + `"}`}, "invalid configuration:\n  - EVENTS is wrong"},
-		{[]string{`{"@level":"error","@message":"` + strings.Repeat("é", 600) + `"}`}, strings.Repeat("é", reasonLimit)},
+		{[]string{`{"@level":"error","@message":"` + strings.Repeat("é", 600) + `"}`}, strings.Repeat("é", 600)},
 	}
 	for i, step := range steps {
 		if _, err := w.Write([]byte(strings.Join(step.lines, "\n") + "\n")); err != nil {

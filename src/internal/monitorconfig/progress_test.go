@@ -39,7 +39,6 @@ func TestProgress(t *testing.T) {
 	requestedAt := startedAt
 	idle := &statusClient{answer: &monitorpb.StatusResponse{State: monitorpb.State_STATE_IDLE, Message: "ok"}}
 	broken := &statusClient{err: errors.New("connection refused")}
-	long := strings.Repeat("é", 600)
 
 	cases := []struct {
 		name    string
@@ -64,8 +63,6 @@ func TestProgress(t *testing.T) {
 			Progress{State: ProgressFailed, Phase: supervisor.PhaseStarting, Reason: "refused"}},
 		{"a failure before the request", supervisor.Attempt{Phase: supervisor.PhaseFailed, Reason: "old"}, nil, 0,
 			Progress{State: ProgressRestarting, Phase: supervisor.PhaseFailed}},
-		{"a long reason", supervisor.Attempt{Request: 1, Phase: supervisor.PhaseExited, Settled: 1, Reason: long}, nil, 0,
-			Progress{State: ProgressFailed, Phase: supervisor.PhaseExited, Reason: strings.Repeat("é", 500)}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -82,12 +79,30 @@ func TestProgress(t *testing.T) {
 				t.Fatalf("Progress: %v", err)
 			}
 			if !reflect.DeepEqual(got, want) {
-				t.Errorf("Progress = %+v (reason of %d runes), want %+v", got, utf8.RuneCountInString(got.Reason), want)
+				t.Errorf("Progress = %+v, want %+v", got, want)
 			}
 		})
 	}
 	if idle.deadline <= 4*time.Second || idle.deadline > 5*time.Second {
 		t.Errorf("Status had %v to answer, want 5 s", idle.deadline)
+	}
+}
+
+func TestProgressCutsTheReasonTo500RunesAfterTakingOutTheSecrets(t *testing.T) {
+	s := newSaveScene(t, integerFields, nil)
+	secret := saveSecrets["stored secret"]
+	s.save(t, Change{Secrets: map[string]*string{"p": text(secret)}})
+	before := strings.Repeat("é", 495) + " "
+	s.supervisor.setAttempt(supervisor.Attempt{Request: 1, Phase: supervisor.PhaseExited, Settled: 1, Reason: before + secret + ": refused"})
+	got, err := s.service.Progress(t.Context(), "testmonitor")
+	if err != nil {
+		t.Fatalf("Progress: %v", err)
+	}
+	if strings.Contains(got.Reason, secret[:4]) {
+		t.Fatal("the reason holds the start of the stored secret")
+	}
+	if want := before + "[red"; got.Reason != want {
+		t.Errorf("reason = %q (%d runes), want %q", got.Reason, utf8.RuneCountInString(got.Reason), want)
 	}
 }
 

@@ -13,10 +13,7 @@ import (
 	"sync"
 )
 
-const (
-	maxLogLine  = 64 << 10
-	reasonLimit = 500
-)
+const maxLogLine = 64 << 10
 
 type logWriter struct {
 	log      *slog.Logger
@@ -94,15 +91,7 @@ func reasonOf(fields map[string]any, message string) string {
 	if text, ok := fields["error"].(string); ok && strings.TrimSpace(text) != "" {
 		reason = text
 	}
-	reason = strings.TrimSpace(reason)
-	runes := 0
-	for i := range reason {
-		if runes == reasonLimit {
-			return reason[:i]
-		}
-		runes++
-	}
-	return reason
+	return strings.TrimSpace(reason)
 }
 
 func decodeObject(line []byte) (map[string]any, bool) {
