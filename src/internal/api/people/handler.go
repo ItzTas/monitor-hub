@@ -56,7 +56,7 @@ func user(u accounts.User) User {
 	}
 	// The database orders by monitor name, so even under C it puts sei before sei-b; as slugs, sei-b comes first.
 	slices.Sort(slugs)
-	return User{Login: u.Login, Admin: u.Admin, Disabled: u.Disabled, CreatedAt: u.CreatedAt, Permissions: slugs}
+	return User{Login: u.Login, Admin: u.Admin, Disabled: u.Disabled, CreatedAt: u.CreatedAt.UTC(), Permissions: slugs}
 }
 
 // find takes login out of the list: there are few people, so it needs no query of its own.

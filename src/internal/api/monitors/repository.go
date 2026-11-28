@@ -2,10 +2,10 @@ package monitors
 
 import (
 	"context"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ItzTas/monitor-hub/src/internal/api/apitime"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
 
@@ -34,21 +34,13 @@ func (r *Postgres) ListMonitors(ctx context.Context) ([]stored, error) {
 				DisplayName:        row.DisplayName,
 				Version:            row.Version,
 				Message:            row.Message,
-				LastCheckStartedAt: utc(row.LastCheckStartedAt),
-				LastSuccessAt:      utc(row.LastSuccessAt),
-				NextCheckAt:        utc(row.NextCheckAt),
-				StatusSeenAt:       utc(row.StatusSeenAt),
+				LastCheckStartedAt: apitime.UTC(row.LastCheckStartedAt),
+				LastSuccessAt:      apitime.UTC(row.LastSuccessAt),
+				NextCheckAt:        apitime.UTC(row.NextCheckAt),
+				StatusSeenAt:       apitime.UTC(row.StatusSeenAt),
 			},
 			State: row.State,
 		})
 	}
 	return monitors, nil
-}
-
-func utc(t *time.Time) *time.Time {
-	if t == nil {
-		return nil
-	}
-	value := t.UTC()
-	return &value
 }

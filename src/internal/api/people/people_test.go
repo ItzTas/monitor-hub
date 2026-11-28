@@ -284,8 +284,19 @@ func TestCreateDisableAndDelete(t *testing.T) {
 	if err := json.Unmarshal(listed.Body.Bytes(), &page); listed.Code != http.StatusOK || err != nil {
 		t.Fatalf("GET /api/users = %d %s (%v), want 200", listed.Code, shown(t, listed), err)
 	}
-	for i := range page.Items {
-		page.Items[i].CreatedAt = page.Items[i].CreatedAt.UTC()
+	// TestMain runs the package in a zone other than UTC.
+	var times struct {
+		Items []struct {
+			CreatedAt string `json:"created_at"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(listed.Body.Bytes(), &times); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range times.Items {
+		if !strings.HasSuffix(u.CreatedAt, "Z") {
+			t.Errorf("GET /api/users gives created_at %q, want a time in UTC", u.CreatedAt)
+		}
 	}
 	paulosItem := item{Login: "paulo-santos", Admin: true, CreatedAt: testNow, Permissions: []string{}}
 	if want := []item{ana, paulosItem}; !reflect.DeepEqual(page.Items, want) {

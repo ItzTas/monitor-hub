@@ -11,6 +11,7 @@ import (
 
 	"github.com/ItzTas/monitor-hub/src/internal/access"
 	"github.com/ItzTas/monitor-hub/src/internal/accounts"
+	"github.com/ItzTas/monitor-hub/src/internal/api/apitime"
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 )
 
@@ -96,9 +97,9 @@ func token(t accounts.Token) Token {
 		Owner:       t.Owner,
 		Label:       t.Label,
 		Permissions: slugs,
-		CreatedAt:   t.CreatedAt,
-		ExpiresAt:   t.ExpiresAt,
-		LastUsedAt:  t.LastUsedAt,
+		CreatedAt:   t.CreatedAt.UTC(),
+		ExpiresAt:   apitime.UTC(t.ExpiresAt),
+		LastUsedAt:  apitime.UTC(t.LastUsedAt),
 	}
 }
 

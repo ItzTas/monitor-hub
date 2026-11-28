@@ -212,7 +212,12 @@ func TestServerErrorsAreLoggedButNotAnswered(t *testing.T) {
 
 func TestConsumersAreListedWithTheirLag(t *testing.T) {
 	b := newBench(t, fakeSupervisor{}, slog.New(slog.DiscardHandler))
-	if _, err := consumers.NewService(b.pool).Add(t.Context(), "desk"); err != nil {
+	service := consumers.NewService(b.pool)
+	token, err := service.Add(t.Context(), "desk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Touch(t.Context(), "desk", consumers.HashToken(token)); err != nil {
 		t.Fatal(err)
 	}
 	storeEvents(t, b.pool, "sei", "ping 1", "ping 2")
@@ -227,7 +232,15 @@ func TestConsumersAreListedWithTheirLag(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || rec.Code != http.StatusOK {
 		t.Fatalf("consumers = %d %s (%v)", rec.Code, rec.Body.String(), err)
 	}
-	want := []map[string]any{{"name": "desk", "position": 0.0, "behind": 2.0, "acked_at": nil, "seen_at": nil, "connected": false}}
+	if len(page.Items) != 1 {
+		t.Fatalf("consumers = %v, want desk alone", page.Items)
+	}
+	// TestMain runs the package in a zone other than UTC.
+	if seen, _ := page.Items[0]["seen_at"].(string); !strings.HasSuffix(seen, "Z") {
+		t.Errorf("seen_at = %q, want a time in UTC", seen)
+	}
+	delete(page.Items[0], "seen_at")
+	want := []map[string]any{{"name": "desk", "position": 0.0, "behind": 2.0, "acked_at": nil, "connected": false}}
 	if !reflect.DeepEqual(page.Items, want) {
 		t.Errorf("consumers = %v, want %v", page.Items, want)
 	}

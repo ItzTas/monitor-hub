@@ -5,6 +5,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/ItzTas/monitor-hub/src/internal/api/apitime"
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/stream"
@@ -30,8 +31,8 @@ func (h *Handler) List(ctx context.Context, _ *struct{}) (*ListOutput, error) {
 			Name:      c.Name,
 			Position:  c.Position,
 			Behind:    c.Behind,
-			AckedAt:   c.AckedAt,
-			SeenAt:    c.SeenAt,
+			AckedAt:   apitime.UTC(c.AckedAt),
+			SeenAt:    apitime.UTC(c.SeenAt),
 			Connected: h.registry.Connected(c.Name),
 		})
 	}

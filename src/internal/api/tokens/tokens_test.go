@@ -98,18 +98,6 @@ type item struct {
 	LastUsedAt  *time.Time `json:"last_used_at"`
 }
 
-// utc lets two items that name the same instants in other zones compare equal.
-func (i item) utc() item {
-	i.CreatedAt = i.CreatedAt.UTC()
-	for _, at := range []**time.Time{&i.ExpiresAt, &i.LastUsedAt} {
-		if *at != nil {
-			u := (**at).UTC()
-			*at = &u
-		}
-	}
-	return i
-}
-
 type bench struct {
 	mux  *http.ServeMux
 	pool *pgxpool.Pool
@@ -274,8 +262,49 @@ func TestCreateShowsTheSecretOnce(t *testing.T) {
 			want.Username = "alerts"
 		}
 		for shape, got := range map[string]item{"created": created, "listed": first} {
-			if !reflect.DeepEqual(got.utc(), want) {
-				t.Errorf("the %s %s = %+v, want %+v", shape, name, got.utc(), want)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("the %s %s = %+v, want %+v", shape, name, got, want)
+			}
+		}
+	}
+}
+
+// TestTimesAreInUTC runs in the zone TestMain sets, which is not UTC.
+func TestTimesAreInUTC(t *testing.T) {
+	b := newBench(t)
+	paulo := accountstest.Session(t, b.svc, "paulo-santos")
+	expires := testNow.Add(24 * time.Hour).In(time.Local)
+
+	for name, k := range kinds {
+		created := b.serve(t, http.MethodPost, k.path, k.body("zones", &expires, "monitor:sei:hook"), withSession(paulo))
+		var made map[string]any
+		if err := json.Unmarshal(created.Body.Bytes(), &made); created.Code != http.StatusCreated || err != nil {
+			t.Fatalf("create a %s = %d %s (%v), want 201", name, created.Code, shown(created), err)
+		}
+		secret, _ := made[k.secret].(string)
+		if err := k.holds(t, b.svc, "zones", secret); err != nil {
+			t.Fatalf("use the new %s: %v", name, err)
+		}
+		listed := b.serve(t, http.MethodGet, k.path, "", withSession(paulo))
+		var page struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(listed.Body.Bytes(), &page); listed.Code != http.StatusOK || err != nil || len(page.Items) != 1 {
+			t.Fatalf("GET %s = %d %s (%v), want 200 with one item", k.path, listed.Code, shown(listed), err)
+		}
+
+		shapes := map[string]struct {
+			item   map[string]any
+			fields []string
+		}{
+			"created": {made, []string{"created_at", "expires_at"}},
+			"listed":  {page.Items[0], []string{"created_at", "expires_at", "last_used_at"}},
+		}
+		for shape, s := range shapes {
+			for _, field := range s.fields {
+				if at, _ := s.item[field].(string); !strings.HasSuffix(at, "Z") {
+					t.Errorf("the %s %s has %s %q, want a time in UTC", shape, name, field, at)
+				}
 			}
 		}
 	}
