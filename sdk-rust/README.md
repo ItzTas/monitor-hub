@@ -27,17 +27,6 @@ Both crates build on Unix systems only.
 
 The SDK pins its toolchain in [`rust-toolchain.toml`](rust-toolchain.toml): Rust 1.99.1 with `rustfmt` and `clippy`, edition 2024. Pin the same version in your monitor's repository so both build with the same compiler.
 
-## Changes from 0.4
-
-0.5 reads `settings.json` version 2 and adds the [`config`](#reading-the-configuration) module, which reads the configuration document. These changes break code written for 0.4:
-
-- `settings::parse` refuses `settings_version` 1 with `SettingsError::UnsupportedVersion`, like every version other than 2.
-- `Problem` has `path` in place of `name`, and an answer writes `path`.
-- `Field.default` is a `serde_json::Value`, not a string, and `Field.editable` is an `Option<bool>`.
-- `SettingsError::Field` has a `path` such as `fields[2].fields[0]` in place of an `index`.
-- `FieldProblem` follows the version 2 rules. For example, `ReservedName` is now `EnvReserved`, about `env`.
-- The testkit's `assert_no_drift` takes your configuration type, `assert_no_drift::<Config>(settings_json)`, in place of a list of names.
-
 ## A minimal monitor
 
 A complete monitor that reports one fixed event. It is the `fixed` example in [`crates/sdk/examples/fixed.rs`](crates/sdk/examples/fixed.rs), cut down to one event.
