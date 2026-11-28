@@ -207,6 +207,15 @@ func TestEnvironmentDropsReservedNames(t *testing.T) {
 	}
 }
 
+func TestEnvironmentKeepsReservedNamesOutOfTheLayer(t *testing.T) {
+	add := map[string]string{"FREE": "v", "MONITOR_HUB_CONFIG_FD": "3", "MONITOR_HUB_DATA_DIR": "/x", "PLUGIN_PROTOCOL_VERSIONS": "1", "LD_PRELOAD": "/l.so", "TMPDIR": "/x"}
+	want := []string{"FREE=v", "MONITOR_HUB_DATA_DIR=/data/monitors/sei", "PATH=/bin", "TMPDIR=/tmp"}
+	got := Environment("sei", []string{"PATH=/bin"}, "/data", Layer{Add: add})
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 func writeSettings(t *testing.T, root, dir string, body []byte) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(root, dir, settings.File), body, 0o600); err != nil {

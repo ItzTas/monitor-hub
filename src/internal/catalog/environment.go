@@ -1,7 +1,6 @@
 package catalog
 
 import (
-	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -14,7 +13,8 @@ func EnvPrefix(name string) string {
 }
 
 // Layer changes what a monitor receives from its prefixed variables: Drop removes names, Add
-// sets names on top. The hub's own names still win over both.
+// sets names on top. A name settings.Reserved refuses never passes, and the hub's own names win
+// over both.
 type Layer struct {
 	Drop []string
 	Add  map[string]string
@@ -39,7 +39,11 @@ func Environment(name string, environ []string, dataRoot string, layer Layer) []
 		}
 		vars[stripped] = value
 	}
-	maps.Copy(vars, layer.Add)
+	for key, value := range layer.Add {
+		if !settings.Reserved(key) {
+			vars[key] = value
+		}
+	}
 	for _, key := range []string{"PATH", "TZ"} {
 		delete(vars, key)
 		if value, ok := inherited[key]; ok {
