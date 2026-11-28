@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -317,6 +318,7 @@ const (
 		`{"name":"events","label":"Events","type":"integer","default":0,"env":"EVENTS"},` +
 		`{"name":"password","label":"Password","type":"string","secret":true,"env":"PASSWORD"}]}`
 	savedPassword = "hunter2-secret-value"
+	envPassword   = "env-password-value"
 )
 
 // newConfiguredBench installs the test monitor with testmonitorSettings and a validator that
@@ -367,12 +369,12 @@ func TestSavingTheConfigurationRestartsTheMonitorWithIt(t *testing.T) {
 
 	before := answered(sendSigned(t, app, http.MethodGet, url, cookie, nil)).Body.String()
 	if !strings.Contains(before, `"document":{"events":2}`) || !strings.Contains(before, `{"name":"events","source":"env","saved":false,"env_set":true}`) {
-		t.Errorf("GET settings = %s, want events 2 from the .env", before)
+		t.Errorf("GET settings = %s, want events 2 from the .env", withoutPasswords(before))
 	}
 
 	save := answered(putSettings(t, app, cookie, `{"document":{"events":3},"secrets":{"password":"`+savedPassword+`"}}`))
 	if save.Code != http.StatusAccepted {
-		t.Fatalf("PUT settings = %d %s, want 202", save.Code, save.Body.String())
+		t.Fatalf("PUT settings = %d %s, want 202", save.Code, shown(t, save))
 	}
 	waitProgress(t, app, cookie, monitorconfig.ProgressUp)
 	if events, _ := startedEvents(t, b); events != "3" {
@@ -380,7 +382,7 @@ func TestSavingTheConfigurationRestartsTheMonitorWithIt(t *testing.T) {
 	}
 	after := answered(sendSigned(t, app, http.MethodGet, url, cookie, nil)).Body.String()
 	if !strings.Contains(after, `"secrets":[{"path":"password","set":true,"saved":true,"env_set":false}]`) {
-		t.Errorf("GET settings after the save = %s, want the password set", after)
+		t.Errorf("GET settings after the save = %s, want the password set", withoutPasswords(after))
 	}
 	starts := b.starts()
 
@@ -393,20 +395,20 @@ func TestSavingTheConfigurationRestartsTheMonitorWithIt(t *testing.T) {
 	for _, tc := range refused {
 		rec := answered(putSettings(t, app, cookie, tc.body))
 		if rec.Code != http.StatusUnprocessableEntity || !sameJSON(t, rec.Body.String(), tc.want) {
-			t.Errorf("PUT %s = %d %s, want 422 %s", tc.name, rec.Code, rec.Body.String(), tc.want)
+			t.Errorf("PUT %s = %d %s, want 422 %s", tc.name, rec.Code, shown(t, rec), tc.want)
 		}
 	}
 	token := adminToken(t, app)
 	if rec := answered(send(t, app, http.MethodPut, url, token, strings.NewReader(`{"document":{"events":5}}`))); rec.Code != http.StatusForbidden {
-		t.Errorf("PUT with a personal token = %d %s, want 403", rec.Code, rec.Body.String())
+		t.Errorf("PUT with a personal token = %d %s, want 403", rec.Code, shown(t, rec))
 	}
 	accountstest.Person(t, app.accounts, "testmonitor-viewer", "monitor:testmonitor:view", "monitor:testmonitor:check")
 	viewer := &http.Cookie{Name: gate.CookieName, Value: accountstest.Session(t, app.accounts, "testmonitor-viewer")}
 	if rec := answered(sendSigned(t, app, http.MethodGet, url, viewer, nil)); rec.Code != http.StatusForbidden {
-		t.Errorf("GET by a person without configure = %d %s, want 403", rec.Code, rec.Body.String())
+		t.Errorf("GET by a person without configure = %d %s, want 403", rec.Code, shown(t, rec))
 	}
 	if rec := answered(putSettings(t, app, viewer, `{"document":{"events":5}}`)); rec.Code != http.StatusForbidden {
-		t.Errorf("PUT by a person without configure = %d %s, want 403", rec.Code, rec.Body.String())
+		t.Errorf("PUT by a person without configure = %d %s, want 403", rec.Code, shown(t, rec))
 	}
 	if got := b.starts(); !slices.Equal(got, starts) {
 		t.Errorf("the monitor started %d times after the refused saves, want none", len(got)-len(starts))
@@ -433,7 +435,6 @@ func TestSavingTheConfigurationRestartsTheMonitorWithIt(t *testing.T) {
 }
 
 func TestTheDocumentNeverTouchesTheDisk(t *testing.T) {
-	const envPassword = "env-password-value"
 	tmp := t.TempDir()
 	b := newConfiguredBench(t, "TESTMONITOR__RECORD_FD=1", "TESTMONITOR__PASSWORD="+envPassword)
 	t.Setenv("TMPDIR", tmp)
@@ -443,7 +444,7 @@ func TestTheDocumentNeverTouchesTheDisk(t *testing.T) {
 	cookie := signIn(t, app)
 
 	if rec := putSettings(t, app, cookie, `{"secrets":{"password":"`+savedPassword+`"}}`); rec.Code != http.StatusAccepted {
-		t.Fatalf("PUT settings = %d %s, want 202", rec.Code, rec.Body.String())
+		t.Fatalf("PUT settings = %d %s, want 202", rec.Code, shown(t, rec))
 	}
 	waitProgress(t, app, cookie, monitorconfig.ProgressUp)
 
@@ -497,7 +498,7 @@ func TestTheDocumentNeverTouchesTheDisk(t *testing.T) {
 		} `json:"problems"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil || rec.Code != http.StatusUnprocessableEntity || len(answer.Problems) != 1 {
-		t.Fatalf("PUT with the validator reporting its environment = %d %s (%v)", rec.Code, rec.Body.String(), err)
+		t.Fatalf("PUT with the validator reporting its environment = %d %s (%v)", rec.Code, shown(t, rec), err)
 	}
 	names := strings.Split(answer.Problems[0].Message, ",")
 	if slices.Contains(names, "PASSWORD") || !slices.Contains(names, "MONITOR_HUB_CONFIG_FD") {
@@ -513,19 +514,19 @@ func TestAnEnvValueThatDoesNotConvertStopsTheMonitor(t *testing.T) {
 
 	const problem = `EVENTS is not an integer ("three")`
 	if record := logs.waitRecord(t, "monitor failed to start"); record["monitor"] != "testmonitor" || record["error"] != "events: "+problem {
-		t.Errorf("the failed start was logged as %v, want monitor testmonitor and error events: %s", record, problem)
+		t.Errorf("the failed start was logged as %v, want monitor testmonitor and error events: %s", withoutPasswords(fmt.Sprint(record)), problem)
 	}
 	cookie := signIn(t, app)
 	problems, _ := json.Marshal(readSettings(t, app, cookie)["problems"])
 	if want := `[{"path":"events","message":` + strconv.Quote(problem) + `}]`; !sameJSON(t, string(problems), want) {
-		t.Errorf("GET settings problems = %s, want %s", problems, want)
+		t.Errorf("GET settings problems = %s, want %s", withoutPasswords(string(problems)), want)
 	}
 	if starts := b.starts(); len(starts) != 0 {
 		t.Errorf("the monitor started %d times with text that does not convert, want none", len(starts))
 	}
 
 	if rec := putSettings(t, app, cookie, `{"document":{"events":4}}`); rec.Code != http.StatusAccepted {
-		t.Fatalf("PUT settings = %d %s, want 202", rec.Code, rec.Body.String())
+		t.Fatalf("PUT settings = %d %s, want 202", rec.Code, shown(t, rec))
 	}
 	waitProgress(t, app, cookie, monitorconfig.ProgressUp)
 	if events, _ := startedEvents(t, b); events != "4" {
@@ -546,14 +547,14 @@ func TestAFailedStartAfterASaveShowsItsReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rec := putSettings(t, app, cookie, string(body)); rec.Code != http.StatusAccepted {
-		t.Fatalf("PUT settings = %d %s, want 202", rec.Code, rec.Body.String())
+		t.Fatalf("PUT settings = %d %s, want 202", rec.Code, shown(t, rec))
 	}
 	if p := waitProgress(t, app, cookie, monitorconfig.ProgressFailed); p["reason"] != "connecting to the database: refused" {
 		t.Errorf("the failed restart has the reason %q, want connecting to the database: refused", p["reason"])
 	}
 
 	if rec := putSettings(t, app, cookie, `{"variables":{"unset":["EXIT_BEFORE_HANDSHAKE","STDERR_LINES"]}}`); rec.Code != http.StatusAccepted {
-		t.Fatalf("PUT settings = %d %s, want 202", rec.Code, rec.Body.String())
+		t.Fatalf("PUT settings = %d %s, want 202", rec.Code, shown(t, rec))
 	}
 	waitProgress(t, app, cookie, monitorconfig.ProgressUp)
 }
@@ -567,7 +568,7 @@ func TestARestartedMonitorKeepsNotifying(t *testing.T) {
 	cookie := signIn(t, app)
 
 	if rec := putSettings(t, app, cookie, `{"variables":{"set":{"NOTE":"x"}}}`); rec.Code != http.StatusAccepted {
-		t.Fatalf("PUT settings = %d %s, want 202", rec.Code, rec.Body.String())
+		t.Fatalf("PUT settings = %d %s, want 202", rec.Code, shown(t, rec))
 	}
 	waitProgress(t, app, cookie, monitorconfig.ProgressUp)
 
@@ -597,7 +598,7 @@ func TestTheDocumentIsDeliveredBeforeAnyoneSignsIn(t *testing.T) {
 		t.Errorf("the monitor received the document %s, want {\"events\":2}", config)
 	}
 	if rec := request(t, app, http.MethodGet, "/api/monitors/testmonitor/settings", ""); rec.Code != http.StatusUnauthorized {
-		t.Errorf("GET settings without a session = %d %s, want 401", rec.Code, rec.Body.String())
+		t.Errorf("GET settings without a session = %d %s, want 401", rec.Code, shown(t, rec))
 	}
 }
 
@@ -631,6 +632,16 @@ func TestAMonitorWithoutSettingsBehavesAsBefore(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("the monitor's environment = %q, want %q", got, want)
 	}
+	links, err := filepath.Glob("/proc/" + pid + "/fd/*")
+	if err != nil || len(links) == 0 {
+		t.Fatalf("the monitor's descriptors could not be listed (%d found, %v)", len(links), err)
+	}
+	for _, link := range links {
+		target, err := os.Readlink(link)
+		if err == nil && strings.HasPrefix(target, "/memfd:monitor-hub-config") {
+			t.Errorf("descriptor %s of the monitor is %s, want no configuration document", filepath.Base(link), target)
+		}
+	}
 
 	cookie := signIn(t, app)
 	if settings := readSettings(t, app, cookie); settings["declared"] != false {
@@ -639,7 +650,7 @@ func TestAMonitorWithoutSettingsBehavesAsBefore(t *testing.T) {
 	rec := putSettings(t, app, cookie, `{"document":{"events":3}}`)
 	want422 := `{"problems":[{"path":"","message":"the monitor ships no readable settings.json version 2, so its configuration cannot be changed here"}]}`
 	if rec.Code != http.StatusUnprocessableEntity || !sameJSON(t, rec.Body.String(), want422) {
-		t.Errorf("PUT settings = %d %s, want 422 %s", rec.Code, rec.Body.String(), want422)
+		t.Errorf("PUT settings = %d %s, want 422 %s", rec.Code, shown(t, rec), want422)
 	}
 }
 
@@ -653,7 +664,7 @@ func TestAVersion1FileIsLoggedAndIgnored(t *testing.T) {
 
 	record := logs.waitRecord(t, "the monitor's settings.json is ignored; none of its configuration can be changed here")
 	if text, _ := record["error"].(string); record["monitor"] != "testmonitor" || !strings.Contains(text, "settings.json: settings_version is 1, want 2") {
-		t.Errorf("the ignored settings.json was logged as %v, want monitor testmonitor and the version error", record)
+		t.Errorf("the ignored settings.json was logged as %v, want monitor testmonitor and the version error", withoutPasswords(fmt.Sprint(record)))
 	}
 	if settings := readSettings(t, app, signIn(t, app)); settings["declared"] != false {
 		t.Errorf("declared = %v, want false", settings["declared"])

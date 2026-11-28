@@ -458,7 +458,7 @@ func readSettings(t *testing.T, app *application, cookie *http.Cookie) map[strin
 	rec := sendSigned(t, app, http.MethodGet, "/api/monitors/testmonitor/settings", cookie, nil)
 	var settings map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &settings); err != nil || rec.Code != http.StatusOK {
-		t.Fatalf("GET settings = %d %s (%v)", rec.Code, rec.Body.String(), err)
+		t.Fatalf("GET settings = %d %s (%v)", rec.Code, shown(t, rec), err)
 	}
 	return settings
 }
@@ -476,7 +476,7 @@ func waitProgress(t *testing.T, app *application, cookie *http.Cookie, want moni
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("the progress did not reach %s within 15s; last: %s", want, last)
+	t.Fatalf("the progress did not reach %s within 15s; last: %s", want, withoutPasswords(last))
 	return nil
 }
 
@@ -524,4 +524,18 @@ func (l *jsonLogs) waitRecord(t *testing.T, msg string) map[string]any {
 	}
 	t.Fatalf("no %q log record within 15s", msg)
 	return nil
+}
+
+// shown is the body of rec without the passwords of these tests; a body that holds one fails the test.
+func shown(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	body := rec.Body.String()
+	if withoutPasswords(body) != body {
+		t.Error("a response body carries a password")
+	}
+	return withoutPasswords(body)
+}
+
+func withoutPasswords(text string) string {
+	return strings.NewReplacer(savedPassword, "[saved password]", envPassword, "[env password]", accountstest.Password, "[password]").Replace(text)
 }
