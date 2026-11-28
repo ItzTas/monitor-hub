@@ -319,15 +319,18 @@ func (a *assembler) undeclared() {
 // layer drops the variables the fields declare and adds the valid free variables.
 func (a *assembler) layer() catalog.Layer {
 	var layer catalog.Layer
+	secretEnv := map[string]bool{}
 	for _, f := range a.decl.Fields {
 		if f.Env != "" {
 			layer.Drop = append(layer.Drop, f.Env)
+			secretEnv[f.Env] = f.Secret
 		}
 	}
 	for _, key := range slices.Sorted(maps.Keys(a.saved.Variables)) {
 		v := a.saved.Variables[key]
 		if !variablePattern.MatchString(key) || settings.Reserved(key) || slices.Contains(layer.Drop, key) {
-			a.ignore("env:"+key, encode(v.Value), v.Secret, ReasonUndeclared)
+			// A free variable named after a secret field's env may hold that secret.
+			a.ignore("env:"+key, encode(v.Value), v.Secret || secretEnv[key], ReasonUndeclared)
 			continue
 		}
 		if layer.Add == nil {

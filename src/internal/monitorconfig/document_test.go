@@ -318,6 +318,16 @@ func TestAssembleSecrets(t *testing.T) {
 		}
 	})
 
+	t.Run("a plain free variable named after the env of a secret field", func(t *testing.T) {
+		s := saved("1234")
+		s.Variables["Q"] = Variable{Value: "old-free-8"}
+		a := Assemble(entryWith(decl), environ, "/data", s)
+		want := []plain{{"env:Q", `"old-free-8"`, true, ReasonUndeclared}}
+		if got := plainIgnored(a.Ignored); !slices.Equal(got, want) {
+			t.Errorf("ignored = %d entries, want env:Q as a secret undeclared value (values not shown)", len(got))
+		}
+	})
+
 	t.Run("a secret .env text that does not convert", func(t *testing.T) {
 		s := saved("")
 		delete(s.Secrets, "p")
