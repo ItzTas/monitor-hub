@@ -25,6 +25,7 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/accounts/accountstest"
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/api/monitors"
+	"github.com/ItzTas/monitor-hub/src/internal/api/session"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/ingest"
@@ -57,7 +58,7 @@ func newBench(t *testing.T, supervisor monitors.Supervisor, log *slog.Logger) *b
 	b := &bench{mux: http.NewServeMux(), pool: pool, svc: accounts.NewService(pool, time.Now)}
 	b.apis = []huma.API{
 		Register(b.mux, Deps{Pool: pool, Monitors: supervisor, Accounts: b.svc, Log: log, Consumers: consumers.NewService(pool), Registry: stream.NewRegistry()}),
-		RegisterAccess(b.mux, AccessDeps{Accounts: b.svc, Log: log, After: time.After}),
+		RegisterAccess(b.mux, AccessDeps{Accounts: b.svc, Log: log, Logins: session.NewLogins(time.After, nil)}),
 	}
 	return b
 }

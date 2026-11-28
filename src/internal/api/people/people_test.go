@@ -24,6 +24,7 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/api"
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/api/people"
+	"github.com/ItzTas/monitor-hub/src/internal/api/session"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 	"github.com/ItzTas/monitor-hub/src/internal/db"
 )
@@ -85,7 +86,7 @@ func newBench(t *testing.T) *bench {
 		c <- testNow
 		return c
 	}
-	api.RegisterAccess(b.mux, api.AccessDeps{Accounts: b.svc, Log: slog.New(slog.NewTextHandler(b.logs, nil)), After: now})
+	api.RegisterAccess(b.mux, api.AccessDeps{Accounts: b.svc, Log: slog.New(slog.NewTextHandler(b.logs, nil)), Logins: session.NewLogins(now, nil)})
 	return b
 }
 

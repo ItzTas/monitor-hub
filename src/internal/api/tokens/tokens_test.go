@@ -25,6 +25,7 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/accounts/accountstest"
 	"github.com/ItzTas/monitor-hub/src/internal/api"
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
+	"github.com/ItzTas/monitor-hub/src/internal/api/session"
 	"github.com/ItzTas/monitor-hub/src/internal/api/tokens"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
 )
@@ -117,7 +118,7 @@ func newBench(t *testing.T) *bench {
 	accountstest.Person(t, b.svc, "paulo-santos", "monitor:sei:view", "monitor:sei:check", "monitor:sei:hook", "monitor:*:hook")
 	accountstest.Person(t, b.svc, "ana-lima", "monitor:sei:hook")
 	accountstest.Admin(t, b.svc, "admin")
-	api.RegisterAccess(b.mux, api.AccessDeps{Accounts: b.svc, Log: slog.New(slog.NewTextHandler(b.logs, nil)), After: time.After})
+	api.RegisterAccess(b.mux, api.AccessDeps{Accounts: b.svc, Log: slog.New(slog.NewTextHandler(b.logs, nil)), Logins: session.NewLogins(time.After, nil)})
 	return b
 }
 
