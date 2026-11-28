@@ -2,6 +2,7 @@ package pages
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -110,6 +111,29 @@ func TestAListEditDrawsAt1000ItemsInAll(t *testing.T) {
 	}
 	if rows := count(rec.Body.String(), `\bvalue="remove:`); rows > maxItems {
 		t.Errorf("the answer draws %d item rows, want at most %d", rows, maxItems)
+	}
+}
+
+func TestAListEditDrawsAtMost100NewVariables(t *testing.T) {
+	mux, _, view := newEditSite(t, Deps{})
+	form := rulesForm(view, "add:labels")
+	for i := range 1000 {
+		form.Add("new_name", fmt.Sprintf("NEW_%d", i))
+		form.Add("new_value", "v")
+		form.Add("new_kind", "plain")
+	}
+
+	rec := edit(t, mux, form, withHeader("HX-Request", "true"))
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a list edit with 1000 new variables = %d, want 200", rec.Code)
+	}
+	if rows := count(body, `name="new_name"`); rows != 100 {
+		t.Errorf("the answer draws %d new variables, want the first 100", rows)
+	}
+	if !hasAttr(startTag(body, "new-99-name"), "value", "NEW_99") {
+		t.Errorf("the last new variable drawn is %q, want NEW_99", startTag(body, "new-99-name"))
 	}
 }
 

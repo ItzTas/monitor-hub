@@ -140,10 +140,13 @@ func (r *reader) item(it *settings.Item, path string) (any, bool) {
 	return r.simple(it.Type, path, true)
 }
 
-// newRows pairs the new variables by position; a missing value or kind is empty.
+// maxNewRows bounds the new variables read, since a list edit and a refused save draw each one back.
+const maxNewRows = 100
+
+// newRows pairs the first maxNewRows new variables by position; a missing value or kind is empty.
 func newRows(form url.Values) []newRow {
 	names, values, kinds := form["new_name"], form["new_value"], form["new_kind"]
-	rows := make([]newRow, max(len(names), len(values), len(kinds)))
+	rows := make([]newRow, min(max(len(names), len(values), len(kinds)), maxNewRows))
 	at := func(list []string, i int) string {
 		if i < len(list) {
 			return list[i]
