@@ -52,6 +52,34 @@ func (s *Service) Progress(ctx context.Context, name string) (Progress, error) {
 	return p, nil
 }
 
+// StartReport is how the monitor's last start went.
+type StartReport struct {
+	Phase  supervisor.Phase
+	Reason string
+}
+
+// LastStart reports the monitor's last start, with the secrets of the saved configuration
+// taken out of the reason.
+func (s *Service) LastStart(ctx context.Context, name string) (StartReport, error) {
+	entry, ok := s.entries[name]
+	if !ok {
+		return StartReport{}, ErrUnknown
+	}
+	a := s.deps.Supervisor.LastAttempt(name)
+	if a.Reason == "" {
+		return StartReport{Phase: a.Phase}, nil
+	}
+	// Without a declaration nothing is secret.
+	if entry.Settings == nil {
+		return StartReport{Phase: a.Phase, Reason: cut(a.Reason, reasonLimit)}, nil
+	}
+	_, assembly, err := s.load(ctx, entry)
+	if err != nil {
+		return StartReport{}, errors.Join(ErrDatabase, err)
+	}
+	return StartReport{Phase: a.Phase, Reason: cut(redact(a.Reason, assembly.Secrets), reasonLimit)}, nil
+}
+
 // progress is Progress with the reason as the supervisor gave it.
 func (s *Service) progress(ctx context.Context, name string) Progress {
 	s.mu.Lock()
