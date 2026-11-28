@@ -606,7 +606,7 @@ func TestTheDocumentIsDeliveredBeforeAnyoneSignsIn(t *testing.T) {
 	}
 }
 
-func TestAMonitorWithoutSettingsBehavesAsBefore(t *testing.T) {
+func TestAMonitorWithoutSettingsGetsOnlyItsEnvironment(t *testing.T) {
 	b := newBench(t)
 	app := b.assemble(slog.New(slog.DiscardHandler))
 	run(t, app)
