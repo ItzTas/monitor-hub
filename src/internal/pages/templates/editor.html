@@ -1,0 +1,64 @@
+{{define "editor"}}
+<div id="editor">
+<div id="outcome" class="outcome" aria-live="polite">{{template "outcome" .Outcome}}</div>
+{{- if .Declared}}
+<form method="post" action="/settings/{{.Monitor}}" hx-post="/settings/{{.Monitor}}" hx-target="#editor" hx-swap="outerHTML" hx-disabled-elt="#save" hx-indicator="#saving" autocomplete="off">
+{{- /* Enter in a field presses the form's first submit button: this one saves, not a list button. */}}
+<button type="submit" class="visually-hidden" tabindex="-1" aria-hidden="true"{{if .Restarting}} disabled{{end}}>Save and restart</button>
+{{- if .Summary}}
+<div id="error-summary" class="error-summary" role="alert" tabindex="-1" autofocus>
+<p>The hub saved nothing. Fix these values:</p>
+<ul>
+{{- range .Summary}}
+<li>{{if .Target}}<a href="#{{.Target}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}</li>
+{{- end}}
+</ul>
+</div>
+{{- end}}
+{{- if .TypedSecret}}
+<p class="notice">Secret values are never sent back to the page. Type them again.</p>
+{{- end}}
+{{- if .EnvProblems}}
+<div class="warning">
+<p>The monitor cannot start because these values in the hub's .env file do not fit their fields. Set them on this page, or fix the .env file and restart the hub:</p>
+<ul>
+{{- range .EnvProblems}}
+<li>{{.Path}}: {{.Message}}</li>
+{{- end}}
+</ul>
+</div>
+{{- end}}
+<p>Saving checks the values with the monitor, stores them and restarts the monitor.</p>
+{{template "hidden" .}}
+{{- range .Groups}}
+<fieldset>
+<legend>{{.Legend}}</legend>
+{{- range .Fields}}{{template "field" .}}{{end}}
+</fieldset>
+{{- end}}
+{{template "variables" .}}
+{{template "ignored" .Ignored}}
+<div class="actions">
+{{template "save-button" .Restarting}}
+<span id="saving" class="htmx-indicator">Checking the values with the monitor</span>
+</div>
+</form>
+{{- else}}
+<p>This monitor does not declare its settings, so nothing can be changed here. Its values come from the hub's .env file.</p>
+{{- if .Ignored}}
+<form method="post" action="/settings/{{.Monitor}}" hx-post="/settings/{{.Monitor}}" hx-target="#editor" hx-swap="outerHTML" autocomplete="off">
+{{template "hidden" .}}
+{{template "ignored" .Ignored}}
+<div class="actions"><button type="submit">Delete the selected values</button></div>
+</form>
+{{- end}}
+{{- end}}
+</div>
+{{- end}}
+
+{{define "hidden"}}
+<input type="hidden" name="revision" value="{{.Revision}}">
+<input type="hidden" name="declaration" value="{{.Declaration}}">
+{{- end}}
+
+{{define "save-button"}}<button id="save" type="submit"{{if .}} disabled{{end}}>{{if .}}Restarting{{else}}Save and restart{{end}}</button>{{end}}

@@ -1,0 +1,93 @@
+{{define "field"}}
+{{- if eq .Kind "object"}}
+<fieldset class="object">
+<legend>{{.Label}}{{if .Required}} <span class="required">Required</span>{{end}}</legend>
+{{template "notes" .}}
+{{- range .Children}}{{template "field" .}}{{end}}
+{{template "back" .Back}}
+</fieldset>
+{{- else if eq .Kind "list"}}
+<fieldset class="list">
+<legend>{{.Label}}{{if .Required}} <span class="required">Required</span>{{end}}</legend>
+{{template "notes" .}}
+<input type="hidden" name="n:{{.Path}}" value="{{len .Items}}">
+{{- range .Items}}
+{{- if .Children}}
+<fieldset class="item">
+<legend>Item {{.N}}</legend>
+{{- range .Children}}{{template "field" .}}{{end}}
+<div class="item-actions">
+{{- if not .First}}
+<button type="submit" class="secondary" name="op" value="up:{{.Path}}" formaction="{{$.Action}}" hx-post="{{$.Action}}" hx-target="#editor" hx-swap="outerHTML">Move up<span class="visually-hidden"> item {{.N}} of {{$.Label}}</span></button>
+{{- end}}
+{{- if not .Last}}
+<button type="submit" class="secondary" name="op" value="down:{{.Path}}" formaction="{{$.Action}}" hx-post="{{$.Action}}" hx-target="#editor" hx-swap="outerHTML">Move down<span class="visually-hidden"> item {{.N}} of {{$.Label}}</span></button>
+{{- end}}
+<button type="submit" class="secondary" name="op" value="remove:{{.Path}}" formaction="{{$.Action}}" hx-post="{{$.Action}}" hx-target="#editor" hx-swap="outerHTML">Remove<span class="visually-hidden"> item {{.N}} of {{$.Label}}</span></button>
+</div>
+</fieldset>
+{{- else}}
+<div class="list-item{{if .Field.Error}} has-error{{end}}">
+<div>
+<label class="visually-hidden" for="f-{{.Field.ID}}">Item {{.N}}</label>
+{{- if .Field.Error}}
+<p id="error-{{.Field.ID}}" class="error"><span class="visually-hidden">Error: </span>{{.Field.Error}}</p>
+{{- end}}
+{{template "control" .Field}}
+</div>
+<div class="item-actions">
+<button type="submit" class="secondary" name="op" value="remove:{{.Path}}" formaction="{{$.Action}}" hx-post="{{$.Action}}" hx-target="#editor" hx-swap="outerHTML">Remove<span class="visually-hidden"> item {{.N}} of {{$.Label}}</span></button>
+</div>
+</div>
+{{- end}}
+{{- else}}
+<p>No items yet.</p>
+{{- end}}
+<button type="submit" class="secondary" name="op" value="add:{{.Path}}" formaction="{{.Action}}" hx-post="{{.Action}}" hx-target="#editor" hx-swap="outerHTML">Add<span class="visually-hidden"> an item to {{.Label}}</span></button>
+{{template "back" .Back}}
+</fieldset>
+{{- else if eq .Kind "readonly"}}
+<div class="field">
+<p class="field-label">{{.Label}}</p>
+{{template "notes" .}}
+<p class="reason">Not editable here. {{.Reason}}</p>
+</div>
+{{- else}}
+<div class="field{{if .Error}} has-error{{end}}">
+<label for="f-{{.ID}}">{{.Label}}{{if .Required}} <span class="required">Required</span>{{end}}</label>
+{{template "notes" .}}
+{{- if .Error}}
+<p id="error-{{.ID}}" class="error"><span class="visually-hidden">Error: </span>{{.Error}}</p>
+{{- end}}
+{{template "control" .}}
+{{template "back" .Back}}
+</div>
+{{- end}}
+{{- end}}
+
+{{define "notes"}}
+{{- if .Notes}}<p id="help-{{.ID}}" class="help">{{range $i, $note := .Notes}}{{if $i}} {{end}}{{$note}}{{end}}</p>{{end}}
+{{- if .Source}}
+<p id="source-{{.ID}}" class="source">{{.Source}}</p>
+{{- end}}
+{{- end}}
+
+{{define "control"}}
+{{- if eq .Kind "select"}}
+<select id="f-{{.ID}}" name="v:{{.Path}}"{{if .DescribedBy}} aria-describedby="{{.DescribedBy}}"{{end}}{{if .Error}} aria-invalid="true"{{end}}>
+{{- range .Options}}
+<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Text}}</option>
+{{- end}}
+</select>
+{{- else if eq .Kind "password"}}
+<input id="f-{{.ID}}" name="s:{{.Path}}" type="password" autocomplete="new-password"{{if .DescribedBy}} aria-describedby="{{.DescribedBy}}"{{end}}{{if .Error}} aria-invalid="true"{{end}}>
+{{- else}}
+<input id="f-{{.ID}}" name="v:{{.Path}}" type="text" value="{{.Value}}"{{if .InputMode}} inputmode="{{.InputMode}}"{{end}}{{if .Placeholder}} placeholder="{{.Placeholder}}"{{end}} spellcheck="false" autocapitalize="off"{{if .DescribedBy}} aria-describedby="{{.DescribedBy}}"{{end}}{{if .Error}} aria-invalid="true"{{end}}>
+{{- end}}
+{{- end}}
+
+{{define "back"}}
+{{- with .}}
+<label class="inline-check"><input type="checkbox" name="{{.Name}}" value="{{.Value}}"{{if .Checked}} checked{{end}}> {{.Text}}</label>
+{{- end}}
+{{- end}}

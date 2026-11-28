@@ -1,0 +1,8 @@
+{{define "content"}}
+<h1>{{.Title}}</h1>
+{{- if ne .Title .Name}}
+<p class="monitor-name">{{.Name}}</p>
+{{- end}}
+{{template "status" .Status}}
+{{template "editor" .Editor}}
+{{end}}

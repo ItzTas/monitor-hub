@@ -1,0 +1,7 @@
+{{define "outcome"}}
+{{- if .Restarting}}
+<p>Saved. The monitor is restarting.</p>
+<div hx-get="/settings/{{.Monitor}}/progress?shown=restarting" hx-trigger="every 1s" hx-target="#outcome" hx-swap="innerHTML"></div>
+<noscript><a href="/settings/{{.Monitor}}/progress">Refresh to see whether it started</a></noscript>
+{{- end}}
+{{- end}}

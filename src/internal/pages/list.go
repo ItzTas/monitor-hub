@@ -51,14 +51,19 @@ func newMonitorCard(entry catalog.Entry, listed map[string]monitors.Monitor) mon
 	if !ok {
 		return c
 	}
-	states := map[string]string{"idle": "Idle", "checking": "Checking", "paused": "Paused", "failing": "Failing", "unknown": "Unknown"}
-	c.Shown, c.Running, c.Message, c.State = true, m.Running, m.Message, m.State
-	if _, known := states[m.State]; !known {
-		c.State = "unknown"
-	}
-	c.StateText = states[c.State]
+	c.Shown, c.Running, c.Message = true, m.Running, m.Message
+	c.State, c.StateText = monitorState(m.State)
 	if m.DisplayName != "" {
 		c.Title = m.DisplayName
 	}
 	return c
+}
+
+// monitorState is the state List gave and its text; a state the page does not know is unknown.
+func monitorState(state string) (string, string) {
+	states := map[string]string{"idle": "Idle", "checking": "Checking", "paused": "Paused", "failing": "Failing", "unknown": "Unknown"}
+	if _, known := states[state]; !known {
+		state = "unknown"
+	}
+	return state, states[state]
 }

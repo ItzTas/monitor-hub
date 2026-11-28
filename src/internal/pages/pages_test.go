@@ -79,29 +79,6 @@ func withoutPasswords(text string) string {
 	return text
 }
 
-// text is the body as a reader sees it, with the HTML escapes undone.
-func text(rec *httptest.ResponseRecorder) string {
-	return html.UnescapeString(rec.Body.String())
-}
-
-// startTag is the start tag of the element with this id, or "".
-func startTag(body, id string) string {
-	return regexp.MustCompile(`<[a-z]+\s[^>]*\bid="` + regexp.QuoteMeta(id) + `"[^>]*>`).FindString(body)
-}
-
-func attr(tag, name string) (string, bool) {
-	m := regexp.MustCompile(`\s` + regexp.QuoteMeta(name) + `(?:="([^"]*)")?[\s/>]`).FindStringSubmatch(tag)
-	if m == nil {
-		return "", false
-	}
-	return html.UnescapeString(m[1]), true
-}
-
-func hasAttr(tag, name, value string) bool {
-	got, ok := attr(tag, name)
-	return ok && got == value
-}
-
 func setCookie(rec *httptest.ResponseRecorder) *http.Cookie {
 	for _, line := range rec.Header().Values("Set-Cookie") {
 		c, err := http.ParseSetCookie(line)
@@ -510,10 +487,13 @@ func TestTheMonitorListShowsWhatThePersonMayConfigure(t *testing.T) {
 
 func TestAClientThatLeftGetsNothing(t *testing.T) {
 	logs := &lockedBuffer{}
-	mux, _, monitored, people := newTestSite(t, Deps{Log: slog.New(slog.NewTextHandler(logs, nil))})
+	mux, configs, monitored, people := newTestSite(t, Deps{
+		Entries: []catalog.Entry{{Manifest: catalog.Manifest{Name: "sei"}}},
+		Log:     slog.New(slog.NewTextHandler(logs, nil)),
+	})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	// In this order: once the session cannot be read, List and Logout are never reached.
+	// In this order: once the session cannot be read, nothing after it is reached.
 	failures := []struct {
 		name    string
 		fail    func()
@@ -524,6 +504,9 @@ func TestAClientThatLeftGetsNothing(t *testing.T) {
 		}},
 		{"Logout fails", func() { people.logoutErr = errors.New("database down") }, func() *httptest.ResponseRecorder {
 			return serve(ctx, mux, http.MethodPost, "/settings/logout", "", fromHub, withCookie(cookie("admin")))
+		}},
+		{"the monitor cannot be read", func() { configs.errs["Read"] = errors.New("database down") }, func() *httptest.ResponseRecorder {
+			return serve(ctx, mux, http.MethodGet, "/settings/sei", "", withCookie(cookie("admin")))
 		}},
 		{"the session cannot be read", func() { people.sessionErr = errors.New("database down") }, func() *httptest.ResponseRecorder {
 			return serve(ctx, mux, http.MethodGet, "/settings", "", withCookie(cookie("admin")))

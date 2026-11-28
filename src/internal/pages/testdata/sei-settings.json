@@ -1,0 +1,161 @@
+{
+  "settings_version": 2,
+  "fields": [
+    {
+      "name": "sei_url",
+      "label": "SEI address",
+      "help": "The SEI address without /sei at the end; use https, or http for localhost only. Changing it starts a new account whose first check announces nothing.",
+      "type": "string",
+      "required": true,
+      "group": "SEI account",
+      "env": "SEI_URL"
+    },
+    {
+      "name": "sei_api_url",
+      "label": "mod-wssei API address",
+      "help": "Set it only when the monitor cannot discover the mod-wssei address by itself.",
+      "type": "string",
+      "group": "SEI account",
+      "env": "SEI_API_URL"
+    },
+    {
+      "name": "sei_username",
+      "label": "SEI username",
+      "help": "Your SEI login. Changing it starts a new account whose first check announces nothing.",
+      "type": "string",
+      "required": true,
+      "group": "SEI account",
+      "env": "SEI_USERNAME"
+    },
+    {
+      "name": "sei_org",
+      "label": "Agency",
+      "help": "The agency acronym or numeric id, as the orgs command lists them. Changing it starts a new account whose first check announces nothing.",
+      "type": "string",
+      "required": true,
+      "group": "SEI account",
+      "env": "SEI_ORG"
+    },
+    {
+      "name": "sei_password",
+      "label": "SEI password",
+      "help": "Set this, the password file or the password command, and only one of them. Saving restarts the monitor, and with a valid password that is one login to SEI. A wrong password costs one rejected login and pauses the monitor until you request a check.",
+      "type": "string",
+      "secret": true,
+      "group": "SEI account",
+      "env": "SEI_PASSWORD"
+    },
+    {
+      "name": "sei_password_file",
+      "label": "SEI password file",
+      "help": "Path of a file that holds the password, read once at start-up.",
+      "type": "string",
+      "group": "SEI account",
+      "editable": false,
+      "reason": "It makes the monitor read a file inside the hub's container, so only the hub's .env sets it.",
+      "env": "SEI_PASSWORD_FILE"
+    },
+    {
+      "name": "sei_password_cmd",
+      "label": "SEI password command",
+      "help": "A command that prints the password, run at every login without a shell and with a 30-second limit.",
+      "type": "string",
+      "secret": true,
+      "group": "SEI account",
+      "editable": false,
+      "reason": "It makes the monitor run a program inside the hub's container, so only the hub's .env sets it.",
+      "env": "SEI_PASSWORD_CMD"
+    },
+    {
+      "name": "sei_timezone",
+      "label": "Time zone",
+      "help": "The time zone of the dates SEI shows. Roraima uses America/Boa_Vista.",
+      "type": "string",
+      "default": "America/Sao_Paulo",
+      "group": "SEI account",
+      "env": "SEI_TIMEZONE"
+    },
+    {
+      "name": "sei_units",
+      "label": "Units",
+      "help": "Unit acronyms separated by commas, or all. Empty watches your current unit.",
+      "type": "string",
+      "group": "What to watch",
+      "env": "SEI_UNITS"
+    },
+    {
+      "name": "poll_interval",
+      "label": "Check interval",
+      "help": "Time between checks, such as 15m or 1h. The minimum is 5m.",
+      "type": "duration",
+      "default": "15m",
+      "group": "Schedule and retention",
+      "env": "POLL_INTERVAL"
+    },
+    {
+      "name": "sei_concurrency",
+      "label": "Simultaneous calls",
+      "help": "How many calls to SEI run at once, from 1 to 10.",
+      "type": "string",
+      "default": "3",
+      "group": "Schedule and retention",
+      "env": "SEI_CONCURRENCY"
+    },
+    {
+      "name": "retention_days",
+      "label": "Retention (days)",
+      "help": "Days to keep events and the processes that left your units, up to 3650. Use at least the return warning plus 2, or 0 to keep everything.",
+      "type": "string",
+      "default": "90",
+      "group": "Schedule and retention",
+      "env": "RETENTION_DAYS"
+    },
+    {
+      "name": "return_warning_days",
+      "label": "Return warning (days)",
+      "help": "How many days before a scheduled return to warn you, from 0 to 60.",
+      "type": "string",
+      "default": "2",
+      "group": "Notifications",
+      "env": "RETURN_WARNING_DAYS"
+    },
+    {
+      "name": "notification_detail",
+      "label": "Notification detail",
+      "help": "full adds the process type and description, the activity text and the document name to each event. Choose it only if that content may pass through the hub's channels.",
+      "type": "choice",
+      "options": ["minimal", "full"],
+      "default": "minimal",
+      "group": "Notifications",
+      "env": "NOTIFICATION_DETAIL"
+    },
+    {
+      "name": "database_url",
+      "label": "Database address",
+      "help": "The monitor's Postgres, postgres://user:password@host/database, reached without TLS. Pointing it at another database leaves behind the record of a rejected login, so the next start tries the password again.",
+      "type": "string",
+      "secret": true,
+      "group": "Storage and logging",
+      "env": "DATABASE_URL"
+    },
+    {
+      "name": "database_url_file",
+      "label": "Database address file",
+      "help": "Path of a file that holds the database address, read once at start-up.",
+      "type": "string",
+      "group": "Storage and logging",
+      "editable": false,
+      "reason": "It makes the monitor read a file inside the hub's container, so only the hub's .env sets it.",
+      "env": "DATABASE_URL_FILE"
+    },
+    {
+      "name": "log_level",
+      "label": "Log level",
+      "help": "debug, info, warn or error.",
+      "type": "string",
+      "default": "info",
+      "group": "Storage and logging",
+      "env": "LOG_LEVEL"
+    }
+  ]
+}

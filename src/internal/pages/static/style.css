@@ -244,6 +244,15 @@ pre {
   margin: 1rem 0;
 }
 
+.outcome:empty {
+  display: none;
+}
+
+.field-label {
+  margin: 0;
+  font-weight: 600;
+}
+
 .field.has-error {
   padding-left: 0.75rem;
   border-left: 0.25rem solid var(--error);

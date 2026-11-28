@@ -1,0 +1,43 @@
+{
+  "settings_version": 2,
+  "fields": [
+    {
+      "name": "account",
+      "label": "Account",
+      "type": "object",
+      "fields": [
+        {"name": "user", "label": "User", "type": "string"},
+        {"name": "token", "label": "Token", "type": "string", "secret": true}
+      ]
+    },
+    {
+      "name": "rules",
+      "label": "Rules",
+      "type": "list",
+      "items": {
+        "type": "object",
+        "fields": [
+          {"name": "process", "label": "Process", "type": "string", "required": true},
+          {"name": "actions", "label": "Actions", "type": "list", "items": {"type": "choice", "options": ["urgent", "ignore"]}},
+          {"name": "limit", "label": "Limit", "type": "integer"},
+          {"name": "notify", "label": "Notify", "type": "boolean"}
+        ]
+      }
+    },
+    {"name": "labels", "label": "Labels", "type": "list", "items": {"type": "string"}},
+    {"name": "ratio", "label": "Ratio", "type": "number", "env": "RATIO"},
+    {"name": "enabled", "label": "Enabled", "type": "boolean", "default": true},
+    {"name": "when", "label": "When", "type": "duration", "default": "15m", "env": "WHEN"},
+    {"name": "level", "label": "Level", "type": "choice", "options": ["low", "high"], "env": "LEVEL"},
+    {"name": "count", "label": "Count", "type": "integer", "env": "COUNT"},
+    {
+      "name": "secret_key",
+      "label": "Secret key",
+      "type": "string",
+      "secret": true,
+      "editable": false,
+      "reason": "Only the hub's .env file sets it.",
+      "env": "SECRET_KEY"
+    }
+  ]
+}

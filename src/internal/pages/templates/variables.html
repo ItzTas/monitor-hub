@@ -1,0 +1,42 @@
+{{define "variables"}}
+<fieldset class="variables">
+<legend>Other variables</legend>
+<p class="help">These are variables the monitor does not declare, such as a proxy setting. Use the name the monitor reads, without the .env prefix. Names use capital letters, digits and _.</p>
+{{- range .Variables}}
+<div class="field{{if .Error}} has-error{{end}}">
+<label for="var-{{.Name}}">{{.Name}}</label>
+<p id="source-var-{{.Name}}" class="source">{{.Source}}</p>
+{{- if .Error}}
+<p id="error-var-{{.Name}}" class="error"><span class="visually-hidden">Error: </span>{{.Error}}</p>
+{{- end}}
+{{- if .Password}}
+<input id="var-{{.Name}}" name="var.{{.Name}}" type="password" autocomplete="new-password" aria-describedby="{{.DescribedBy}}"{{if .Error}} aria-invalid="true"{{end}}>
+{{- else}}
+<input id="var-{{.Name}}" name="var.{{.Name}}" type="text" value="{{.Value}}" spellcheck="false" autocapitalize="off" aria-describedby="{{.DescribedBy}}"{{if .Error}} aria-invalid="true"{{end}}>
+{{- end}}
+{{template "back" .Back}}
+</div>
+{{- end}}
+<div id="new-variables">
+{{- range .NewRows}}{{template "new-variable" .}}{{end}}
+</div>
+<p class="help">Rows with an empty name are skipped.</p>
+<button type="button" class="needs-js secondary" hx-get="/settings/{{.Monitor}}/variables/new" hx-target="#new-variables" hx-swap="beforeend">Add another variable</button>
+</fieldset>
+{{- end}}
+
+{{define "new-variable"}}
+<div class="new-variable">
+<div><label for="new-{{.I}}-name">Name</label><input id="new-{{.I}}-name" name="new_name" type="text" value="{{.Name}}" spellcheck="false" autocapitalize="off"></div>
+<div><label for="new-{{.I}}-value">Value</label><input id="new-{{.I}}-value" name="new_value" type="text" value="{{.Value}}" spellcheck="false" autocapitalize="off"></div>
+<div><label for="new-{{.I}}-kind">Kind</label><select id="new-{{.I}}-kind" name="new_kind"><option value="plain"{{if not .Secret}} selected{{end}}>Plain</option><option value="secret"{{if .Secret}} selected{{end}}>Secret</option></select></div>
+</div>
+{{- end}}
+
+{{define "new-variable-row"}}
+<div class="new-variable">
+<div><label>Name <input name="new_name" type="text" spellcheck="false" autocapitalize="off"></label></div>
+<div><label>Value <input name="new_value" type="text" spellcheck="false" autocapitalize="off"></label></div>
+<div><label>Kind <select name="new_kind"><option value="plain" selected>Plain</option><option value="secret">Secret</option></select></label></div>
+</div>
+{{- end}}

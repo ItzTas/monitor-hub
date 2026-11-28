@@ -1,0 +1,22 @@
+{{define "ignored"}}
+{{- if .}}
+<fieldset class="ignored-values">
+<legend>Saved values the hub does not apply</legend>
+{{- range .}}
+<div class="ignored{{if .Error}} has-error{{end}}" id="ignored-{{.I}}">
+<p><code>{{.Path}}</code></p>
+<p class="reason">{{.Reason}}</p>
+{{- if .Secret}}
+<p>Secret value. The page does not show it.</p>
+{{- else if .Value}}
+<pre class="ignored-value">{{.Value}}</pre>
+{{- end}}
+{{- if .Error}}
+<p class="error"><span class="visually-hidden">Error: </span>{{.Error}}</p>
+{{- end}}
+<label class="inline-check"><input type="checkbox" name="drop" value="{{.Path}}"{{if .Drop}} checked{{end}}> Delete</label>
+</div>
+{{- end}}
+</fieldset>
+{{- end}}
+{{- end}}

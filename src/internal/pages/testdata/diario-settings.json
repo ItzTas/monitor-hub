@@ -1,0 +1,53 @@
+{
+  "settings_version": 2,
+  "fields": [
+    {
+      "name": "watch_terms",
+      "label": "Watch terms",
+      "help": "Names or registration numbers to look for in each edition, one per item. Case, accents and repeated spaces do not matter. In the hub's .env file, separate them with commas.",
+      "type": "list",
+      "items": {"type": "string"},
+      "required": true,
+      "group": "Monitoring",
+      "env": "WATCH_TERMS"
+    },
+    {
+      "name": "check_interval_minutes",
+      "label": "Check interval (minutes)",
+      "help": "Time from the end of one check of the gazette to the start of the next. Decimals are allowed.",
+      "type": "string",
+      "default": "30",
+      "group": "Monitoring",
+      "env": "CHECK_INTERVAL_MINUTES"
+    },
+    {
+      "name": "start_after",
+      "label": "Start after",
+      "help": "Used only on the first start, while the database is empty: editions published earlier are skipped. A date (2026-11-01) or a timestamp (2026-11-01T08:30:00, UTC unless it carries a zone). Empty means 72 hours before that first start.",
+      "type": "string",
+      "group": "Monitoring",
+      "env": "START_AFTER"
+    },
+    {
+      "name": "database_url",
+      "label": "Database address",
+      "help": "Postgres address, password included. The monitor connects without TLS. Another database starts from scratch with a new welcome alert, and you must reset the hub's position for this monitor too.",
+      "type": "string",
+      "secret": true,
+      "required": true,
+      "group": "Connections",
+      "env": "DATABASE_URL"
+    },
+    {
+      "name": "gazette_api_url",
+      "label": "Gazette API address",
+      "help": "The gazette's WordPress media API.",
+      "type": "string",
+      "default": "https://diarios.al.rr.leg.br/wp-json/wp/v2/media",
+      "group": "Connections",
+      "editable": false,
+      "reason": "Only the tests change it. On this page it would let anyone with access send the monitor's requests anywhere, so set it in the hub's .env file.",
+      "env": "GAZETTE_API_URL"
+    }
+  ]
+}

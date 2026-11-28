@@ -1,5 +1,5 @@
-// Package pages serves the hub's settings pages: signing in and out, and the monitors a
-// person may configure.
+// Package pages serves the hub's settings pages: signing in and out, the monitors a person
+// may configure, and the configuration form of each one.
 package pages
 
 import (
@@ -47,11 +47,13 @@ type site struct {
 func Register(mux *http.ServeMux, deps Deps) {
 	s := newSite(deps)
 	routes := map[string]http.Handler{
-		"GET /static/{file}":    s.assets,
-		"GET /settings/login":   http.HandlerFunc(s.signInPage),
-		"POST /settings/login":  s.fromHub(s.signIn),
-		"POST /settings/logout": s.fromHub(s.signOut),
-		"GET /settings":         s.authed(s.list),
+		"GET /static/{file}":                 s.assets,
+		"GET /settings/login":                http.HandlerFunc(s.signInPage),
+		"POST /settings/login":               s.fromHub(s.signIn),
+		"POST /settings/logout":              s.fromHub(s.signOut),
+		"GET /settings":                      s.authed(s.list),
+		"GET /settings/{name}":               s.authed(s.may(access.Configure, s.monitor)),
+		"GET /settings/{name}/variables/new": s.authed(s.may(access.Configure, s.newVariable)),
 	}
 	for pattern, handler := range routes {
 		mux.Handle(pattern, secureHeaders(handler))

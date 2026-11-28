@@ -1,0 +1,27 @@
+{{define "status"}}
+<section id="status" class="card" aria-labelledby="status-title">
+<h2 id="status-title">Status</h2>
+{{- if .Listed}}
+<p>{{if .Running}}Running{{else}}<span class="state state-off">Not running</span>{{end}} <span class="state state-{{.State}}">{{.StateText}}</span></p>
+{{- if .Message}}
+<p class="pre-line">{{.Message}}</p>
+{{- end}}
+{{- if .LastSuccess}}
+<p>Last check that worked: {{.LastSuccess}}</p>
+{{- end}}
+{{- if .NextCheck}}
+<p>Next check: {{.NextCheck}}</p>
+{{- end}}
+{{- end}}
+{{- if .ShowStart}}
+<p>Last start: {{.Phase}}</p>
+{{- if .Reason}}
+<p class="reason pre-line">{{.Reason}}</p>
+{{- end}}
+{{- end}}
+{{- if .CanCheck}}
+<form method="post" action="/settings/{{.Monitor}}/check" hx-post="/settings/{{.Monitor}}/check" hx-target="#check-result" hx-swap="innerHTML"><button type="submit">Check now</button></form>
+<div id="check-result" role="status"></div>
+{{- end}}
+</section>
+{{- end}}

@@ -18,6 +18,9 @@ const (
 	msgTooLarge     = "The form is too large. The hub saved nothing."
 	msgIncomplete   = "The form is incomplete. Reload the page and try again."
 	msgInternal     = "Something went wrong. The hub's log has the details."
+	msgUnknown      = "No monitor has this name."
+	msgNoConfigure  = "You do not have permission to change this monitor's configuration. An admin can give you the configure permission."
+	msgNoCheck      = "You do not have permission to ask this monitor for a check."
 )
 
 type layout struct {
@@ -34,9 +37,11 @@ type errorPage struct {
 // parseTemplates gives the partials, which fragments run from, and one set per page:
 // the partials and the page's own file, which defines "content".
 func parseTemplates(funcs template.FuncMap) (*template.Template, map[string]*template.Template) {
-	partials := template.Must(template.New("partials").Funcs(funcs).ParseFS(templateFiles, "templates/layout.html", "templates/message.html"))
+	partials := template.Must(template.New("partials").Funcs(funcs).ParseFS(templateFiles,
+		"templates/layout.html", "templates/message.html", "templates/status.html", "templates/editor.html",
+		"templates/field.html", "templates/variables.html", "templates/ignored.html", "templates/outcome.html"))
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"login", "monitors", "error"} {
+	for _, name := range []string{"login", "monitors", "monitor", "error"} {
 		pages[name] = template.Must(template.Must(partials.Clone()).ParseFS(templateFiles, "templates/"+name+".html"))
 	}
 	return partials, pages

@@ -129,6 +129,12 @@ func (f *fakeSettings) LastStart(context.Context, string) (monitorconfig.StartRe
 	return f.start, f.errs["LastStart"]
 }
 
+func (f *fakeSettings) callCount(method string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[method]
+}
+
 // fakeMonitors.List gives only what the principal may view, like monitors.Service.List.
 type fakeMonitors struct {
 	mu       sync.Mutex
