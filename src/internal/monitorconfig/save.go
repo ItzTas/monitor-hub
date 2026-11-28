@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -87,7 +86,7 @@ func (s *Service) Save(ctx context.Context, name string, change Change) (SaveRes
 	if len(after.Problems) > 0 {
 		return SaveResult{}, &ProblemsError{after.Problems}
 	}
-	if bytes.Equal(before.Document, after.Document) && slices.Equal(before.Env, after.Env) {
+	if sameJSON(before.Document, after.Document) && slices.Equal(before.Env, after.Env) {
 		if err := s.put(ctx, name, next, saved.Revision); err != nil {
 			return SaveResult{}, err
 		}
@@ -220,8 +219,39 @@ func isNull(raw json.RawMessage) bool {
 	return len(trimmed) == 0 || string(trimmed) == "null"
 }
 
+// sameJSON compares by value: the database writes some numbers back in another form.
 func sameJSON(a, b json.RawMessage) bool {
-	return reflect.DeepEqual(decodeDefault(a), decodeDefault(b))
+	return sameValue(decodeDefault(a), decodeDefault(b))
+}
+
+func sameValue(a, b any) bool {
+	switch x := a.(type) {
+	case json.Number:
+		y, ok := b.(json.Number)
+		return ok && sameNumber(x, y)
+	case map[string]any:
+		y, ok := b.(map[string]any)
+		return ok && maps.EqualFunc(x, y, sameValue)
+	case []any:
+		y, ok := b.([]any)
+		return ok && slices.EqualFunc(x, y, sameValue)
+	}
+	return a == b
+}
+
+// sameNumber compares as a monitor reads numbers: whole numbers exactly, the rest as floats.
+func sameNumber(x, y json.Number) bool {
+	a, errA := x.Int64()
+	b, errB := y.Int64()
+	if errA == nil && errB == nil {
+		return a == b
+	}
+	f, errF := x.Float64()
+	g, errG := y.Float64()
+	if errF != nil || errG != nil {
+		return x == y
+	}
+	return f == g
 }
 
 func unchanged(a, b Saved) bool {

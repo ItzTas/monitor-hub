@@ -25,6 +25,7 @@ const saveFields = `[
 	{"name":"pin","label":"PIN","type":"integer","secret":true},
 	{"name":"level","label":"Level","type":"choice","options":["low","high"],"secret":true},
 	{"name":"mode","label":"Mode","type":"choice","options":["full","summary"]},
+	{"name":"ratio","label":"Ratio","type":"number"},
 	{"name":"cmd","label":"Cmd","type":"string","editable":false,"reason":"It runs a program.","env":"CMD"},
 	{"name":"signing","label":"Signing","type":"string","secret":true,"editable":false,"reason":"It signs requests.","env":"SIGNING"},
 	{"name":"mail","label":"Mail","type":"object","fields":[
@@ -556,6 +557,49 @@ func TestANullSecretClearsThePlainValueSavedBeforeTheFieldBecameSecret(t *testin
 	i := slices.IndexFunc(view.Secrets, func(st SecretState) bool { return st.Path == "db" })
 	if i < 0 || view.Secrets[i] != (SecretState{Path: "db"}) {
 		t.Errorf("secret states = %+v, want db neither set nor saved", view.Secrets)
+	}
+}
+
+// The database writes 1e-7 back as 0.0000001.
+func TestANumberCountsByValue(t *testing.T) {
+	s := newSaveScene(t, saveFields, saveEnviron)
+	if got := s.save(t, Change{Document: raws(t, `{"ratio":1e-7}`)}); !got.Restarted {
+		t.Fatalf("first Save = %+v, want a restart", got)
+	}
+
+	if got := s.save(t, Change{Document: raws(t, `{"ratio":1e-7}`)}); !reflect.DeepEqual(got, SaveResult{}) {
+		t.Errorf("sending the same number again = %+v, want nothing", got)
+	}
+	if got := s.stored(t, "testmonitor").Revision; got != 1 {
+		t.Errorf("revision %d, want 1", got)
+	}
+	// n saved as the .env has it leaves the document as it was.
+	if got, want := s.save(t, Change{Document: raws(t, `{"ratio":1e-7,"n":5}`)}), (SaveResult{Changed: []string{"n"}}); !reflect.DeepEqual(got, want) {
+		t.Errorf("Save = %+v, want %+v", got, want)
+	}
+	if n := s.supervisor.restartCount(); n != 1 {
+		t.Errorf("%d restarts, want 1", n)
+	}
+}
+
+func TestSameJSONComparesByValue(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{`1e-7`, `0.0000001`, true},
+		{`100`, `1e2`, true},
+		{`9007199254740993`, `9007199254740992`, false},
+		{`1`, `"1"`, false},
+		{`{"a":[1e-7,"x"]}`, `{"a":[0.0000001,"x"]}`, true},
+		{`{"a":[1]}`, `{"a":[1,2]}`, false},
+		{`{"a":1}`, `{"b":1}`, false},
+		{`true`, `true`, true},
+	}
+	for _, c := range cases {
+		if got := sameJSON(json.RawMessage(c.a), json.RawMessage(c.b)); got != c.want {
+			t.Errorf("sameJSON(%s, %s) = %v, want %v", c.a, c.b, got, c.want)
+		}
 	}
 }
 
