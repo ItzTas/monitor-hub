@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 type logBuffer struct {
@@ -197,4 +198,41 @@ func FuzzMonitorLogLines(f *testing.F) {
 			t.Errorf("%q gave %d records, want %d", line, got, want)
 		}
 	})
+}
+
+func TestReasonIsTheLastErrorLine(t *testing.T) {
+	w := newLogWriter(slog.New(slog.DiscardHandler), "sei")
+	if got := w.Reason(); got != "" {
+		t.Fatalf("Reason() before any line = %q, want empty", got)
+	}
+	steps := []struct {
+		lines []string
+		want  string
+	}{
+		{
+			[]string{
+				`{"@level":"info","@message":"logged in"}`,
+				`{"@level":"error","@message":"login failed","error":"a"}`,
+				"plain words on stderr",
+				`{"@level":"error","@message":"fatal b"}`,
+				`{"@level":"warn","@message":"careful"}`,
+			},
+			"fatal b",
+		},
+		{[]string{`{"@level":"error","@message":"fatal","error":{"x":1}}`}, "fatal"},
+		{[]string{`{"@level":"error","@message":"fatal","error":"  invalid configuration:\n  - EVENTS is wrong \n"}`}, "invalid configuration:\n  - EVENTS is wrong"},
+		{[]string{`{"@level":"error","@message":"` + strings.Repeat("x", maxLogLine) + `"}`}, "invalid configuration:\n  - EVENTS is wrong"},
+		{[]string{`{"@level":"error","@message":"` + strings.Repeat("é", 600) + `"}`}, strings.Repeat("é", reasonLimit)},
+	}
+	for i, step := range steps {
+		if _, err := w.Write([]byte(strings.Join(step.lines, "\n") + "\n")); err != nil {
+			t.Fatal(err)
+		}
+		if got := w.Reason(); got != step.want {
+			t.Fatalf("Reason() after step %d = %q, want %q", i, got, step.want)
+		}
+	}
+	if got := utf8.RuneCountInString(w.Reason()); got != 500 {
+		t.Errorf("Reason() has %d runes, want 500", got)
+	}
 }

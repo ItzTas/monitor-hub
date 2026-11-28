@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -33,6 +34,32 @@ const (
 	groupExitLimit    = 2 * time.Second
 	groupPollInterval = 5 * time.Millisecond
 )
+
+var ErrUnknownMonitor = errors.New("no monitor has this name")
+
+type Phase string
+
+const (
+	PhaseNotStarted Phase = "not_started"
+	PhaseStarting   Phase = "starting"
+	// PhaseRunning: the handshake, the health check and Dispense are done.
+	PhaseRunning Phase = "running"
+	// PhaseFailed: the process exited or failed before running.
+	PhaseFailed Phase = "failed"
+	// PhaseExited: the process exited after running.
+	PhaseExited Phase = "exited"
+)
+
+// Attempt is how the current start of a monitor goes. Request is the restart request it serves;
+// Settled is the highest request whose start got to running, failed or exited (a start a restart
+// or the hub's end interrupts settles nothing). Reason is from the last start that failed or
+// exited, and stays while the next one starts.
+type Attempt struct {
+	Request uint64
+	Phase   Phase
+	Settled uint64
+	Reason  string
+}
 
 // Delivery is what one start of a monitor receives: its environment and, for a monitor with a
 // declaration, its configuration document.
@@ -68,10 +95,15 @@ type Supervisor struct {
 	restartDelays []time.Duration
 	stableAfter   time.Duration
 	groupMembers  func(pgid int) ([]int, error)
+	after         func(time.Duration) <-chan time.Time
+	// restart holds one channel per monitor, made in New and never replaced.
+	restart map[string]chan struct{}
 
-	mu      sync.RWMutex
-	clients map[string]monitorpb.MonitorClient
-	changes map[string]chan struct{}
+	mu       sync.RWMutex
+	clients  map[string]monitorpb.MonitorClient
+	changes  map[string]chan struct{}
+	requests map[string]uint64
+	attempts map[string]Attempt
 }
 
 func New(entries []catalog.Entry, environ []string, dataRoot string, log *slog.Logger, options ...Option) *Supervisor {
@@ -82,8 +114,15 @@ func New(entries []catalog.Entry, environ []string, dataRoot string, log *slog.L
 		restartDelays: []time.Duration{time.Second, 5 * time.Second, 30 * time.Second, 2 * time.Minute, 5 * time.Minute},
 		stableAfter:   10 * time.Minute,
 		groupMembers:  liveMembers,
+		after:         time.After,
+		restart:       map[string]chan struct{}{},
 		clients:       map[string]monitorpb.MonitorClient{},
 		changes:       map[string]chan struct{}{},
+		requests:      map[string]uint64{},
+		attempts:      map[string]Attempt{},
+	}
+	for _, entry := range entries {
+		s.restart[entry.Manifest.Name] = make(chan struct{}, 1)
 	}
 	for _, option := range options {
 		option(s)
@@ -119,6 +158,32 @@ func (s *Supervisor) Track(name string) (monitorpb.MonitorClient, bool, <-chan s
 	return c, ok, changed
 }
 
+// Restart stops the monitor's current start or process and starts it again at once, without
+// counting a failure. It returns the number of this request.
+func (s *Supervisor) Restart(name string) (uint64, error) {
+	restart, ok := s.restart[name]
+	if !ok {
+		return 0, ErrUnknownMonitor
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.requests[name]++
+	select {
+	case restart <- struct{}{}:
+	default:
+	}
+	return s.requests[name], nil
+}
+
+func (s *Supervisor) LastAttempt(name string) Attempt {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if attempt, ok := s.attempts[name]; ok {
+		return attempt
+	}
+	return Attempt{Phase: PhaseNotStarted}
+}
+
 func (s *Supervisor) Names() []string {
 	names := make([]string, 0, len(s.entries))
 	for _, entry := range s.entries {
@@ -132,9 +197,12 @@ func (s *Supervisor) supervise(ctx context.Context, entry catalog.Entry) {
 	name := entry.Manifest.Name
 	failures := 0
 	for {
-		uptime, err := s.runOnce(ctx, entry)
+		uptime, restarted, err := s.runOnce(ctx, entry)
 		if ctx.Err() != nil {
 			return
+		}
+		if restarted {
+			continue
 		}
 		if uptime >= s.stableAfter {
 			failures = 0
@@ -145,7 +213,8 @@ func (s *Supervisor) supervise(ctx context.Context, entry catalog.Entry) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(delay):
+		case <-s.restart[name]:
+		case <-s.after(delay):
 		}
 	}
 }
@@ -158,11 +227,37 @@ func (s *Supervisor) reportStop(name string, uptime, delay time.Duration, startE
 	s.log.Warn("monitor exited", "monitor", name, "uptime", uptime.Round(time.Millisecond), "restart_in", delay)
 }
 
-func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Duration, error) {
+// runOnce makes one start of the monitor and, once it runs, waits for it to exit. A restart
+// request interrupts both and makes restarted true.
+func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Duration, bool, error) {
+	name := entry.Manifest.Name
+	s.beginAttempt(name)
+	attemptCtx, cancel := context.WithCancel(ctx)
+	var restarted atomic.Bool
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		select {
+		case <-s.restart[name]:
+			restarted.Store(true)
+			cancel()
+		case <-attemptCtx.Done():
+		}
+	}()
+	uptime, err := s.attempt(ctx, attemptCtx, entry)
+	cancel()
+	<-watched
+	return uptime, restarted.Load(), err
+}
+
+// attempt runs one start under attemptCtx, which only a restart request or the end of ctx cancels.
+func (s *Supervisor) attempt(ctx, attemptCtx context.Context, entry catalog.Entry) (time.Duration, error) {
 	name := entry.Manifest.Name
 	var ready atomic.Bool
-	client, cmd, err := s.newClient(ctx, entry, &ready)
+	stderr := newLogWriter(s.log, name)
+	client, cmd, err := s.newClient(attemptCtx, entry, &ready, stderr)
 	if err != nil {
+		s.end(attemptCtx, name, PhaseFailed, err.Error())
 		return 0, err
 	}
 	defer closePidfd(cmd)
@@ -173,28 +268,71 @@ func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Dur
 	}
 	if err != nil {
 		s.stop(name, client, cmd, false)
+		s.end(attemptCtx, name, PhaseFailed, cmp.Or(stderr.Reason(), err.Error()))
 		return 0, err
 	}
 	ready.Store(true)
+	s.update(name, func(a *Attempt) {
+		a.Phase = PhaseRunning
+		a.Settled = a.Request
+	})
 	s.setClient(name, rpc)
 	s.log.Info("monitor started", "monitor", name)
 	started := time.Now()
 	exited := watchExit(client, *cmd.SysProcAttr.PidFD)
 	select {
-	case <-ctx.Done():
+	case <-attemptCtx.Done():
 	case <-exited:
 	}
 	uptime := time.Since(started)
 	s.dropClient(name)
-	s.stop(name, client, cmd, ctx.Err() != nil)
+	if ctx.Err() == nil && attemptCtx.Err() != nil {
+		s.log.Info("monitor restarting", "monitor", name)
+	}
+	s.stop(name, client, cmd, attemptCtx.Err() != nil)
 	<-exited
 	if ctx.Err() != nil {
 		s.log.Info("monitor stopped", "monitor", name)
 	}
+	s.end(attemptCtx, name, PhaseExited, stderr.Reason())
 	return uptime, nil
 }
 
-func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *atomic.Bool) (*plugin.Client, *exec.Cmd, error) {
+// beginAttempt drops any pending restart request: the start that begins here serves it.
+func (s *Supervisor) beginAttempt(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.restart[name]:
+	default:
+	}
+	attempt := s.attempts[name]
+	attempt.Request = s.requests[name]
+	attempt.Phase = PhaseStarting
+	s.attempts[name] = attempt
+}
+
+// end settles the start in phase, unless a restart or the hub's end interrupted it.
+func (s *Supervisor) end(attemptCtx context.Context, name string, phase Phase, reason string) {
+	if attemptCtx.Err() != nil {
+		return
+	}
+	s.update(name, func(a *Attempt) {
+		a.Phase = phase
+		a.Settled = a.Request
+		a.Reason = reason
+	})
+}
+
+func (s *Supervisor) update(name string, change func(*Attempt)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	attempt := s.attempts[name]
+	change(&attempt)
+	s.attempts[name] = attempt
+}
+
+func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *atomic.Bool, stderr *logWriter) (*plugin.Client, *exec.Cmd, error) {
 	delivery, err := s.documents.Prepare(ctx, entry.Manifest.Name)
 	if err != nil {
 		return nil, nil, err
@@ -233,7 +371,7 @@ func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *
 		Cmd:              cmd,
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
 		SkipHostEnv:      true,
-		Stderr:           newLogWriter(s.log, entry.Manifest.Name),
+		Stderr:           stderr,
 		Logger:           hclog.New(&hclog.LoggerOptions{Output: io.Discard, Level: hclog.Off}),
 	}), cmd, nil
 }

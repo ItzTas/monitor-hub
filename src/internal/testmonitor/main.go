@@ -61,6 +61,9 @@ func main() {
 	if os.Getenv("EXIT_BEFORE_HANDSHAKE") == "1" {
 		os.Exit(1)
 	}
+	if delay, err := time.ParseDuration(os.Getenv("HANDSHAKE_DELAY")); err == nil {
+		time.Sleep(delay)
+	}
 	if os.Getenv("STALL_STATUS") != "" {
 		serveOneAtATime()
 		return

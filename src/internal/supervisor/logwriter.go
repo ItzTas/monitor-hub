@@ -9,16 +9,21 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 )
 
-const maxLogLine = 64 << 10
+const (
+	maxLogLine  = 64 << 10
+	reasonLimit = 500
+)
 
 type logWriter struct {
 	log      *slog.Logger
 	mu       sync.Mutex
 	pending  []byte
 	dropping bool
+	reason   string
 }
 
 func newLogWriter(log *slog.Logger, monitor string) *logWriter {
@@ -71,7 +76,33 @@ func (w *logWriter) emit(line []byte) {
 		w.log.LogAttrs(context.Background(), slog.LevelDebug, string(line))
 		return
 	}
+	if level == "error" {
+		w.reason = reasonOf(fields, message)
+	}
 	w.log.LogAttrs(context.Background(), levelOf(level), message, attributes(fields)...)
+}
+
+// Reason is the cause the monitor gave on its last error line.
+func (w *logWriter) Reason() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.reason
+}
+
+func reasonOf(fields map[string]any, message string) string {
+	reason := message
+	if text, ok := fields["error"].(string); ok && strings.TrimSpace(text) != "" {
+		reason = text
+	}
+	reason = strings.TrimSpace(reason)
+	runes := 0
+	for i := range reason {
+		if runes == reasonLimit {
+			return reason[:i]
+		}
+		runes++
+	}
+	return reason
 }
 
 func decodeObject(line []byte) (map[string]any, bool) {
