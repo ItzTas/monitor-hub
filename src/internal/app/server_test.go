@@ -63,6 +63,13 @@ func TestBodyLimit(t *testing.T) {
 		"/api/monitors/sei/settings/progress": 1024,
 		"/api/monitors/a/b/settings":          1024,
 		"/api/session":                        1024,
+		"/settings/sei":                       131072,
+		"/settings/sei/form":                  131072,
+		"/settings":                           1024,
+		"/settings/login":                     1024,
+		"/settings/logout":                    1024,
+		"/settings/sei/check":                 1024,
+		"/settings/sei/progress":              1024,
 	}
 	for path, want := range cases {
 		if got := bodyLimit(path); got != want {

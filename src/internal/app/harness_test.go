@@ -7,14 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -537,5 +540,104 @@ func shown(t *testing.T, rec *httptest.ResponseRecorder) string {
 }
 
 func withoutPasswords(text string) string {
-	return strings.NewReplacer(savedPassword, "[saved password]", envPassword, "[env password]", accountstest.Password, "[password]").Replace(text)
+	return strings.NewReplacer(savedPassword, "[saved password]", envPassword, "[env password]", accountstest.Password, "[password]", wrongPassword, "[wrong password]").Replace(text)
+}
+
+// pageRequest sends what a browser sends from a settings page: the form, the session cookie
+// and the hub's Origin; htmx adds HX-Request.
+func pageRequest(t *testing.T, app *application, method, target string, form url.Values, cookie *http.Cookie, htmx bool) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(t.Context(), method, target, strings.NewReader(form.Encode()))
+	req.Header.Set("Origin", "http://"+req.Host)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	if htmx {
+		req.Header.Set("HX-Request", "true")
+	}
+	rec := httptest.NewRecorder()
+	app.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// pageSignIn signs login in through the sign-in page and returns the session cookie.
+func pageSignIn(t *testing.T, app *application, login, password string) *http.Cookie {
+	t.Helper()
+	rec := pageRequest(t, app, http.MethodPost, "/settings/login", url.Values{"login": {login}, "password": {password}}, nil, false)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /settings/login = %d %s, want 303", rec.Code, shown(t, rec))
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == gate.CookieName && cookie.Value != "" {
+			return cookie
+		}
+	}
+	t.Fatal("POST /settings/login set no session cookie")
+	return nil
+}
+
+// waitPage polls the restart as the page does until the answer holds want, and returns it.
+func waitPage(t *testing.T, app *application, cookie *http.Cookie, name, want string) string {
+	t.Helper()
+	var last string
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		rec := pageRequest(t, app, http.MethodGet, "/settings/"+name+"/progress", nil, cookie, true)
+		last = rec.Body.String()
+		if rec.Code != http.StatusNoContent && strings.Contains(html.UnescapeString(last), want) {
+			return last
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("the progress of %s did not say %q within 15s; last: %s", name, want, withoutPasswords(last))
+	return ""
+}
+
+var (
+	inputTag  = regexp.MustCompile(`<input\s[^>]*>`)
+	selectTag = regexp.MustCompile(`(?s)<select\s([^>]*)>(.*?)</select>`)
+	optionTag = regexp.MustCompile(`<option\s[^>]*>`)
+)
+
+// pageForm is what a browser would send from the page as it stands: every input with a name,
+// checked boxes only, and each select's chosen option. Buttons are left out.
+func pageForm(t *testing.T, body string) url.Values {
+	t.Helper()
+	form := url.Values{}
+	for _, tag := range inputTag.FindAllString(body, -1) {
+		name, named := attribute(tag, "name")
+		kind, _ := attribute(tag, "type")
+		if _, checked := attribute(tag, "checked"); !named || (kind == "checkbox" && !checked) {
+			continue
+		}
+		value, _ := attribute(tag, "value")
+		form.Add(name, value)
+	}
+	for _, m := range selectTag.FindAllStringSubmatch(body, -1) {
+		name, named := attribute("<select "+m[1]+">", "name")
+		options := optionTag.FindAllString(m[2], -1)
+		if !named || len(options) == 0 {
+			continue
+		}
+		chosen := options[0]
+		if i := slices.IndexFunc(options, func(o string) bool { _, ok := attribute(o, "selected"); return ok }); i >= 0 {
+			chosen = options[i]
+		}
+		value, _ := attribute(chosen, "value")
+		form.Add(name, value)
+	}
+	if len(form) == 0 {
+		t.Fatalf("the page has no form controls:\n%s", withoutPasswords(body))
+	}
+	return form
+}
+
+// attribute reads one attribute of a start tag; one without a value is present and empty.
+func attribute(tag, name string) (string, bool) {
+	m := regexp.MustCompile(`\s` + regexp.QuoteMeta(name) + `(?:="([^"]*)")?[\s>]`).FindStringSubmatch(tag)
+	if m == nil {
+		return "", false
+	}
+	return html.UnescapeString(m[1]), true
 }

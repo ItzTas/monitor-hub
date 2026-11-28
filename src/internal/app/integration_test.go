@@ -5,14 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,6 +23,7 @@ import (
 	"time"
 
 	sdk "github.com/ItzTas/monitor-hub/sdk-go"
+	"github.com/ItzTas/monitor-hub/src/internal/access"
 	"github.com/ItzTas/monitor-hub/src/internal/accounts/accountstest"
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
@@ -668,5 +672,317 @@ func TestAVersion1FileIsLoggedAndIgnored(t *testing.T) {
 	}
 	if settings := readSettings(t, app, signIn(t, app)); settings["declared"] != false {
 		t.Errorf("declared = %v, want false", settings["declared"])
+	}
+}
+
+const (
+	pagesSettings = `{"settings_version":2,"fields":[` +
+		`{"name":"events","label":"Events","type":"integer","default":0,"env":"EVENTS"},` +
+		`{"name":"password","label":"Password","type":"string","secret":true,"env":"PASSWORD"},` +
+		`{"name":"labels","label":"Labels","type":"list","items":{"type":"string"}}]}`
+	wrongPassword = "not the password of paulo-santos"
+	textRunning   = "The monitor is running with the new values."
+	textEnvBroken = "The monitor cannot start because these values in the hub's .env file do not fit their fields. Set them on this page, or fix the .env file and restart the hub:"
+)
+
+// newPagesBench installs the test monitor with pagesSettings and a validator that refuses a
+// negative EVENTS.
+func newPagesBench(t *testing.T, extra ...string) *bench {
+	t.Helper()
+	b := newBench(t, extra...)
+	installTestmonitor(t, filepath.Join(b.monitorsDir, "testmonitor"), pagesSettings, "events")
+	return b
+}
+
+// text is the body of a page as a person reads it, the passwords of these tests taken out.
+func text(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	return html.UnescapeString(shown(t, rec))
+}
+
+func TestTheSettingsPageChangesAMonitor(t *testing.T) {
+	b := newPagesBench(t)
+	logs := &syncBuffer{}
+	app := b.assemble(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	stop := run(t, app)
+	waitForMonitor(t, app)
+	ensureAdmin(t, app)
+	cookie := pageSignIn(t, app, "paulo-santos", accountstest.Password)
+	var answers []*httptest.ResponseRecorder
+	page := func(method, target string, form url.Values, htmx bool) *httptest.ResponseRecorder {
+		rec := pageRequest(t, app, method, target, form, cookie, htmx)
+		answers = append(answers, rec)
+		return rec
+	}
+
+	if rec := page(http.MethodGet, "/settings", nil, false); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `href="/settings/testmonitor"`) {
+		t.Errorf("GET /settings = %d, want 200 listing testmonitor:\n%s", rec.Code, shown(t, rec))
+	}
+	rec := page(http.MethodGet, "/settings/testmonitor", nil, false)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `id="f-events" name="v:events" type="text" value="2"`) || !strings.Contains(rec.Body.String(), "From .env") {
+		t.Fatalf("GET /settings/testmonitor = %d, want events 2 from the .env:\n%s", rec.Code, shown(t, rec))
+	}
+	form := pageForm(t, rec.Body.String())
+	form.Set("v:events", "3")
+	form.Set("s:password", savedPassword)
+	rec = page(http.MethodPost, "/settings/testmonitor", form, true)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `hx-get="/settings/testmonitor/progress?shown=restarting"`) {
+		t.Fatalf("POST /settings/testmonitor = %d, want 200 with the element that polls the restart:\n%s", rec.Code, shown(t, rec))
+	}
+	waitPage(t, app, cookie, "testmonitor", textRunning)
+	if events, _ := startedEvents(t, b); events != "3" {
+		t.Errorf("the monitor started with EVENTS %q, want 3", events)
+	}
+
+	rec = page(http.MethodGet, "/settings/testmonitor", nil, false)
+	password := regexp.MustCompile(`<input id="f-password"[^>]*>`).FindString(rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `<p id="source-password" class="source">Set on this page</p>`) || password == "" || strings.Contains(password, "value=") {
+		t.Errorf("the password after the save is %q, want it set on this page and drawn without a value:\n%s", password, shown(t, rec))
+	}
+	starts := b.starts()
+	form = pageForm(t, rec.Body.String())
+	form.Set("v:events", "x")
+	rec = page(http.MethodPost, "/settings/testmonitor", form, true)
+	field := regexp.MustCompile(`(?s)<div class="field has-error">\s*<label for="f-events">.*?</div>`).FindString(rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(field, "use a whole number") || !strings.Contains(field, `aria-invalid="true"`) {
+		t.Errorf("POST with events x = %d, want 422 with use a whole number next to f-events:\n%s", rec.Code, shown(t, rec))
+	}
+	form.Set("v:events", "4")
+	form.Set("pad", strings.Repeat("x", 140<<10))
+	if rec := page(http.MethodPost, "/settings/testmonitor", form, true); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("a POST of 140 KiB = %d, want 413:\n%s", rec.Code, shown(t, rec))
+	}
+	if got := b.starts(); !slices.Equal(got, starts) {
+		t.Errorf("the monitor started %d times after the refused saves, want none", len(got)-len(starts))
+	}
+
+	stop()
+	secrets := map[string]string{
+		"the saved password":       savedPassword,
+		"the password of a person": accountstest.Password,
+		"the session cookie":       cookie.Value,
+	}
+	for name, secret := range secrets {
+		if strings.Contains(logs.String(), secret) {
+			t.Errorf("the logs contain %s", name)
+		}
+		for i, answer := range answers {
+			if strings.Contains(answer.Body.String(), secret) || strings.Contains(fmt.Sprint(answer.Header()), secret) {
+				t.Errorf("answer %d contains %s", i, name)
+			}
+		}
+	}
+}
+
+// listEdit sends the editor's form with one list operation and returns the editor drawn again.
+func listEdit(t *testing.T, app *application, cookie *http.Cookie, form url.Values, op string) string {
+	t.Helper()
+	form.Set("op", op)
+	rec := pageRequest(t, app, http.MethodPost, "/settings/testmonitor/form", form, cookie, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the list edit %s = %d, want 200:\n%s", op, rec.Code, shown(t, rec))
+	}
+	return rec.Body.String()
+}
+
+// savePage saves the form and waits until the monitor runs with it.
+func savePage(t *testing.T, app *application, cookie *http.Cookie, form url.Values) {
+	t.Helper()
+	if rec := pageRequest(t, app, http.MethodPost, "/settings/testmonitor", form, cookie, true); rec.Code != http.StatusOK {
+		t.Fatalf("POST /settings/testmonitor = %d, want 200:\n%s", rec.Code, shown(t, rec))
+	}
+	waitPage(t, app, cookie, "testmonitor", textRunning)
+}
+
+func savedLabels(t *testing.T, app *application, cookie *http.Cookie) any {
+	t.Helper()
+	document, _ := readSettings(t, app, cookie)["document"].(map[string]any)
+	return document["labels"]
+}
+
+func TestTheListEditorRoundTrip(t *testing.T) {
+	b := newPagesBench(t)
+	app := b.assemble(slog.New(slog.DiscardHandler))
+	run(t, app)
+	waitForMonitor(t, app)
+	ensureAdmin(t, app)
+	cookie := pageSignIn(t, app, "paulo-santos", accountstest.Password)
+	starts := b.starts()
+	before := readSettings(t, app, cookie)
+
+	rec := pageRequest(t, app, http.MethodGet, "/settings/testmonitor", nil, cookie, false)
+	editor := listEdit(t, app, cookie, pageForm(t, rec.Body.String()), "add:labels")
+	form := pageForm(t, editor)
+	form.Set("v:labels[0]", "alpha")
+	form = pageForm(t, listEdit(t, app, cookie, form, "add:labels"))
+	form.Set("v:labels[1]", "beta")
+	if got := form["v:labels[0]"]; !slices.Equal(got, []string{"alpha"}) {
+		t.Errorf("the second item went in, and the first holds %q, want alpha", got)
+	}
+	if got := b.starts(); !slices.Equal(got, starts) {
+		t.Errorf("the monitor started %d times after the list edits, want none", len(got)-len(starts))
+	}
+	if after := readSettings(t, app, cookie); !reflect.DeepEqual(after, before) {
+		t.Errorf("the list edits changed the configuration: %v, want %v", withoutPasswords(fmt.Sprint(after)), withoutPasswords(fmt.Sprint(before)))
+	}
+
+	savePage(t, app, cookie, form)
+	if got := savedLabels(t, app, cookie); !reflect.DeepEqual(got, []any{"alpha", "beta"}) {
+		t.Errorf("labels after the save = %v, want [alpha beta]", got)
+	}
+
+	rec = pageRequest(t, app, http.MethodGet, "/settings/testmonitor", nil, cookie, false)
+	editor = listEdit(t, app, cookie, pageForm(t, rec.Body.String()), "remove:labels[0]")
+	form = pageForm(t, editor)
+	if got := form["v:labels[0]"]; !slices.Equal(got, []string{"beta"}) || form.Has("v:labels[1]") {
+		t.Errorf("after removing alpha the items are %q and %q, want only beta", got, form["v:labels[1]"])
+	}
+	if got := savedLabels(t, app, cookie); !reflect.DeepEqual(got, []any{"alpha", "beta"}) {
+		t.Errorf("labels after removing an item without saving = %v, want [alpha beta]", got)
+	}
+
+	form.Del("op")
+	savePage(t, app, cookie, form)
+	if got := savedLabels(t, app, cookie); !reflect.DeepEqual(got, []any{"beta"}) {
+		t.Errorf("labels after the second save = %v, want [beta]", got)
+	}
+}
+
+func TestAnEnvValueThatDoesNotConvertShowsOnThePage(t *testing.T) {
+	b := newPagesBench(t, "TESTMONITOR__EVENTS=three")
+	app := b.assemble(slog.New(slog.DiscardHandler))
+	run(t, app)
+	ensureAdmin(t, app)
+	cookie := pageSignIn(t, app, "paulo-santos", accountstest.Password)
+
+	rec := pageRequest(t, app, http.MethodGet, "/settings/testmonitor", nil, cookie, false)
+	if body := text(t, rec); rec.Code != http.StatusOK || !strings.Contains(body, textEnvBroken) || !strings.Contains(body, `events: EVENTS is not an integer ("three")`) {
+		t.Fatalf("GET /settings/testmonitor = %d, want the .env problem of events:\n%s", rec.Code, body)
+	}
+	form := pageForm(t, rec.Body.String())
+	form.Set("v:events", "4")
+	if rec := pageRequest(t, app, http.MethodPost, "/settings/testmonitor", form, cookie, true); rec.Code != http.StatusOK {
+		t.Fatalf("POST /settings/testmonitor = %d, want 200:\n%s", rec.Code, shown(t, rec))
+	}
+	waitPage(t, app, cookie, "testmonitor", textRunning)
+	if events, _ := startedEvents(t, b); events != "4" {
+		t.Errorf("the monitor started with EVENTS %q, want 4", events)
+	}
+}
+
+func TestTheSettingsPageShowsWhyAMonitorDidNotStart(t *testing.T) {
+	b := newPagesBench(t)
+	app := b.assemble(slog.New(slog.DiscardHandler))
+	run(t, app)
+	waitForMonitor(t, app)
+	ensureAdmin(t, app)
+	cookie := pageSignIn(t, app, "paulo-santos", accountstest.Password)
+
+	rec := pageRequest(t, app, http.MethodGet, "/settings/testmonitor", nil, cookie, false)
+	form := pageForm(t, rec.Body.String())
+	form["new_name"] = []string{"EXIT_BEFORE_HANDSHAKE", "STDERR_LINES"}
+	form["new_value"] = []string{"1", `{"@level":"error","@message":"fatal","error":"connecting to the database: refused"}`}
+	form["new_kind"] = []string{"plain", "plain"}
+	if rec := pageRequest(t, app, http.MethodPost, "/settings/testmonitor", form, cookie, true); rec.Code != http.StatusOK {
+		t.Fatalf("POST with the new variables = %d, want 200:\n%s", rec.Code, shown(t, rec))
+	}
+	failed := html.UnescapeString(waitPage(t, app, cookie, "testmonitor", "The monitor did not start."))
+	if !strings.Contains(failed, "connecting to the database: refused") || strings.Contains(failed, "running with the new values") {
+		t.Errorf("the failed start shows %s, want the reason and no running text", withoutPasswords(failed))
+	}
+
+	rec = pageRequest(t, app, http.MethodGet, "/settings/testmonitor", nil, cookie, false)
+	form = pageForm(t, rec.Body.String())
+	form["var_unset"] = []string{"EXIT_BEFORE_HANDSHAKE", "STDERR_LINES"}
+	if rec := pageRequest(t, app, http.MethodPost, "/settings/testmonitor", form, cookie, true); rec.Code != http.StatusOK {
+		t.Fatalf("POST unsetting the variables = %d, want 200:\n%s", rec.Code, shown(t, rec))
+	}
+	waitPage(t, app, cookie, "testmonitor", textRunning)
+}
+
+func TestThePagesFollowThePermissions(t *testing.T) {
+	b := newPagesBench(t)
+	app := b.assemble(slog.New(slog.DiscardHandler))
+	run(t, app)
+	waitForMonitor(t, app)
+	ensureAdmin(t, app)
+	admin := pageSignIn(t, app, "paulo-santos", accountstest.Password)
+	accountstest.Person(t, app.accounts, "testmonitor-viewer", "monitor:testmonitor:view")
+	viewer := &http.Cookie{Name: gate.CookieName, Value: accountstest.Session(t, app.accounts, "testmonitor-viewer")}
+	starts := b.starts()
+
+	rec := pageRequest(t, app, http.MethodGet, "/settings", nil, viewer, false)
+	if body := text(t, rec); rec.Code != http.StatusOK || !strings.Contains(body, "You cannot change the configuration of any monitor. An admin can give you the configure permission.") {
+		t.Errorf("GET /settings by a viewer = %d, want 200 saying there is nothing to configure:\n%s", rec.Code, body)
+	}
+	const noConfigure = "You do not have permission to change this monitor's configuration. An admin can give you the configure permission."
+	rec = pageRequest(t, app, http.MethodGet, "/settings/testmonitor", nil, viewer, false)
+	if body := text(t, rec); rec.Code != http.StatusForbidden || !strings.Contains(body, noConfigure) {
+		t.Errorf("GET /settings/testmonitor by a viewer = %d, want 403 with the refusal:\n%s", rec.Code, body)
+	}
+	form := pageForm(t, pageRequest(t, app, http.MethodGet, "/settings/testmonitor", nil, admin, false).Body.String())
+	form.Set("v:events", "5")
+	if rec := pageRequest(t, app, http.MethodPost, "/settings/testmonitor", form, viewer, true); rec.Code != http.StatusForbidden {
+		t.Errorf("POST /settings/testmonitor by a viewer = %d, want 403:\n%s", rec.Code, shown(t, rec))
+	}
+	if got := b.starts(); !slices.Equal(got, starts) {
+		t.Errorf("the monitor started %d times after the viewer's save, want none", len(got)-len(starts))
+	}
+
+	perms := []access.Permission{{Monitor: "testmonitor", Action: access.View}, {Monitor: "testmonitor", Action: access.Configure}}
+	if err := app.accounts.SetPermissions(t.Context(), "testmonitor-viewer", perms); err != nil {
+		t.Fatal(err)
+	}
+	rec = pageRequest(t, app, http.MethodGet, "/settings/testmonitor", nil, viewer, false)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `id="f-events"`) || strings.Contains(rec.Body.String(), `action="/settings/testmonitor/check"`) {
+		t.Errorf("GET /settings/testmonitor with configure = %d, want 200 with the form and without the check:\n%s", rec.Code, shown(t, rec))
+	}
+
+	token := adminToken(t, app)
+	rec = request(t, app, http.MethodGet, "/settings", token)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/login" {
+		t.Errorf("GET /settings with only a personal token = %d to %q, want 303 to /settings/login", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestSigningInAndOutThroughThePages(t *testing.T) {
+	b := newPagesBench(t)
+	logs := &syncBuffer{}
+	app := b.assemble(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	run(t, app)
+	waitForMonitor(t, app)
+	ensureAdmin(t, app)
+
+	rec := pageRequest(t, app, http.MethodGet, "/settings/login", nil, nil, false)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `<form method="post" action="/settings/login">`) || !strings.Contains(rec.Body.String(), `id="password" name="password" type="password"`) {
+		t.Errorf("GET /settings/login = %d, want 200 with the sign-in form:\n%s", rec.Code, shown(t, rec))
+	}
+	rec = pageRequest(t, app, http.MethodPost, "/settings/login", url.Values{"login": {"paulo-santos"}, "password": {wrongPassword}}, nil, false)
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "wrong login or password") || strings.Contains(rec.Body.String(), wrongPassword) {
+		t.Errorf("POST /settings/login with a wrong password = %d, want 401 with wrong login or password and without the password:\n%s", rec.Code, shown(t, rec))
+	}
+	if len(rec.Result().Cookies()) != 0 {
+		t.Error("a wrong password set a cookie")
+	}
+
+	cookie := pageSignIn(t, app, "paulo-santos", accountstest.Password)
+	if rec := pageRequest(t, app, http.MethodGet, "/settings", nil, cookie, false); rec.Code != http.StatusOK {
+		t.Errorf("GET /settings after signing in = %d, want 200", rec.Code)
+	}
+	if rec := sendSigned(t, app, http.MethodGet, "/api/me", cookie, nil); rec.Code != http.StatusOK {
+		t.Errorf("GET /api/me with the page's session = %d, want 200:\n%s", rec.Code, shown(t, rec))
+	}
+	rec = pageRequest(t, app, http.MethodPost, "/settings/logout", nil, cookie, false)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/login" {
+		t.Errorf("POST /settings/logout = %d to %q, want 303 to /settings/login", rec.Code, rec.Header().Get("Location"))
+	}
+	rec = pageRequest(t, app, http.MethodGet, "/settings", nil, cookie, false)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/login" {
+		t.Errorf("GET /settings with the ended session = %d to %q, want 303 to /settings/login", rec.Code, rec.Header().Get("Location"))
+	}
+	for name, secret := range map[string]string{"the password": accountstest.Password, "the wrong password": wrongPassword} {
+		if strings.Contains(logs.String(), secret) {
+			t.Errorf("the logs contain %s", name)
+		}
 	}
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/ItzTas/monitor-hub/src/internal/accounts"
 	"github.com/ItzTas/monitor-hub/src/internal/api"
+	monitorsapi "github.com/ItzTas/monitor-hub/src/internal/api/monitors"
 	"github.com/ItzTas/monitor-hub/src/internal/api/session"
 	"github.com/ItzTas/monitor-hub/src/internal/catalog"
 	"github.com/ItzTas/monitor-hub/src/internal/consumerapi"
@@ -26,6 +27,7 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/modules/health"
 	"github.com/ItzTas/monitor-hub/src/internal/monitorconfig"
 	"github.com/ItzTas/monitor-hub/src/internal/notify"
+	"github.com/ItzTas/monitor-hub/src/internal/pages"
 	"github.com/ItzTas/monitor-hub/src/internal/stream"
 	"github.com/ItzTas/monitor-hub/src/internal/supervisor"
 )
@@ -88,6 +90,15 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 	api.Register(mux, api.Deps{Pool: pool, Monitors: monitors, Accounts: accountService, PublicURL: cfg.PublicURL, Log: logger, Consumers: consumerService, Registry: registry, Settings: settings})
 	logins := session.NewLogins(time.After, nil)
 	api.RegisterAccess(mux, api.AccessDeps{Accounts: accountService, Log: logger, PublicURL: cfg.PublicURL, Logins: logins})
+	pages.Register(mux, pages.Deps{
+		Entries:   entries,
+		Settings:  settings,
+		Monitors:  monitorsapi.NewService(monitorsapi.NewPostgres(pool), monitors),
+		Accounts:  accountService,
+		Logins:    logins,
+		PublicURL: cfg.PublicURL,
+		Log:       logger,
+	})
 	dispatcher := notify.NewDispatcher(notify.NewOutbox(pool), channels, logger, notify.WithClock(now, time.After))
 	return &application{
 		address:    cfg.HTTPAddress,

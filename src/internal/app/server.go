@@ -97,12 +97,28 @@ func withMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 	})
 }
 
-// bodyLimit lets only a configuration save, /api/monitors/<name>/settings, send a large body.
+// bodyLimit lets only a configuration save send a large body: /api/monitors/<name>/settings,
+// and the settings page's /settings/<name> and /settings/<name>/form.
 func bodyLimit(path string) int64 {
-	rest, monitors := strings.CutPrefix(path, "/api/monitors/")
-	name, settings := strings.CutSuffix(rest, "/settings")
-	if !monitors || !settings || name == "" || strings.Contains(name, "/") {
+	if !savesConfiguration(path) {
 		return maxBodyBytes
 	}
 	return monitorsettings.BodyBytes
+}
+
+func savesConfiguration(path string) bool {
+	if rest, ok := strings.CutPrefix(path, "/api/monitors/"); ok {
+		name, settings := strings.CutSuffix(rest, "/settings")
+		return settings && oneSegment(name)
+	}
+	rest, ok := strings.CutPrefix(path, "/settings/")
+	if !ok {
+		return false
+	}
+	name, _ := strings.CutSuffix(rest, "/form")
+	return oneSegment(name) && name != "login" && name != "logout"
+}
+
+func oneSegment(s string) bool {
+	return s != "" && !strings.Contains(s, "/")
 }
