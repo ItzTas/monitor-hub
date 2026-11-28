@@ -1,0 +1,23 @@
+{{define "content"}}
+<h1>Sign in</h1>
+<p>Use your monitor-hub login and password.</p>
+{{- if not .Encrypted}}
+<p class="warning">This connection is not encrypted, so your password and the session cookie travel in clear text. Use this page only on your local network or through a VPN, or put HTTPS in front of the hub.</p>
+{{- end}}
+<form method="post" action="/settings/login">
+<div class="field">
+<label for="login">Login</label>
+<input id="login" name="login" type="text" value="{{.Login}}" autocomplete="username" autocapitalize="off" spellcheck="false">
+</div>
+<div class="field{{if .Wrong}} has-error{{end}}">
+<label for="password">Password</label>
+{{- if .Wrong}}
+<p id="error-password" class="error" role="alert"><span class="visually-hidden">Error: </span>{{.Wrong}}</p>
+<input id="password" name="password" type="password" autocomplete="current-password" aria-invalid="true" aria-describedby="error-password">
+{{- else}}
+<input id="password" name="password" type="password" autocomplete="current-password">
+{{- end}}
+</div>
+<button type="submit">Sign in</button>
+</form>
+{{end}}

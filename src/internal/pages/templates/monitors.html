@@ -1,0 +1,20 @@
+{{define "content"}}
+<h1>Monitors</h1>
+{{- range .}}
+<article class="card" id="monitor-{{.Name}}">
+<h2 id="title-{{.Name}}">{{.Title}}</h2>
+{{- if .Shown}}
+<p>{{if .Running}}Running{{else}}<span class="state state-off">Not running</span>{{end}} <span class="state state-{{.State}}">{{.StateText}}</span></p>
+{{- if .Message}}
+<p class="pre-line">{{.Message}}</p>
+{{- end}}
+{{- end}}
+{{- if not .Declared}}
+<p>Declares no settings</p>
+{{- end}}
+<p><a href="/settings/{{.Name}}" aria-describedby="title-{{.Name}}">Open settings</a></p>
+</article>
+{{- else}}
+<p>You cannot change the configuration of any monitor. An admin can give you the configure permission.</p>
+{{- end}}
+{{end}}

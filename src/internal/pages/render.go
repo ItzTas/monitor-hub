@@ -1,0 +1,127 @@
+package pages
+
+import (
+	"bytes"
+	"embed"
+	"html/template"
+	"net/http"
+
+	"github.com/ItzTas/monitor-hub/src/internal/access"
+)
+
+//go:embed templates
+var templateFiles embed.FS
+
+const (
+	msgOrigin       = "The hub refused this request because it came from another site."
+	msgDatabaseRead = "The hub's database cannot be reached, so the settings cannot be shown."
+	msgTooLarge     = "The form is too large. The hub saved nothing."
+	msgIncomplete   = "The form is incomplete. Reload the page and try again."
+	msgInternal     = "Something went wrong. The hub's log has the details."
+)
+
+type layout struct {
+	Title   string
+	Login   string // empty without a session
+	Content any
+}
+
+type errorPage struct {
+	Title   string
+	Message string
+}
+
+// parseTemplates gives the partials, which fragments run from, and one set per page:
+// the partials and the page's own file, which defines "content".
+func parseTemplates(funcs template.FuncMap) (*template.Template, map[string]*template.Template) {
+	partials := template.Must(template.New("partials").Funcs(funcs).ParseFS(templateFiles, "templates/layout.html", "templates/message.html"))
+	pages := map[string]*template.Template{}
+	for _, name := range []string{"login", "monitors", "error"} {
+		pages[name] = template.Must(template.Must(partials.Clone()).ParseFS(templateFiles, "templates/"+name+".html"))
+	}
+	return partials, pages
+}
+
+func (s *site) page(w http.ResponseWriter, r *http.Request, status int, name, title string, content any) {
+	data := layout{Title: title, Login: access.FromContext(r.Context()).Login(), Content: content}
+	s.write(w, status, s.pages[name], "layout", data)
+}
+
+func (s *site) fragment(w http.ResponseWriter, status int, name string, data any) {
+	s.write(w, status, s.fragments, name, data)
+}
+
+// write renders into a buffer first, so a template error never leaves half a page.
+func (s *site) write(w http.ResponseWriter, status int, set *template.Template, name string, data any) {
+	var buf bytes.Buffer
+	if err := set.ExecuteTemplate(&buf, name, data); err != nil {
+		s.deps.Log.Error("could not render a settings page", "template", name, "error", err)
+		http.Error(w, msgInternal, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = buf.WriteTo(w)
+}
+
+// fail answers htmx with only the message, in place of the outcome, and a page
+// load with the error page.
+func (s *site) fail(w http.ResponseWriter, r *http.Request, status int, message string) {
+	if isHTMX(r) {
+		w.Header().Set("HX-Retarget", "#outcome")
+		w.Header().Set("HX-Reswap", "innerHTML")
+		s.fragment(w, status, "message", message)
+		return
+	}
+	titles := map[int]string{
+		http.StatusBadRequest:            "Incomplete form",
+		http.StatusForbidden:             "Request refused",
+		http.StatusNotFound:              "Not found",
+		http.StatusRequestEntityTooLarge: "Form too large",
+		http.StatusInternalServerError:   "Something went wrong",
+		http.StatusBadGateway:            "The monitor could not check the values",
+		http.StatusServiceUnavailable:    "Database unavailable",
+	}
+	title := titles[status]
+	s.page(w, r, status, "error", title, errorPage{Title: title, Message: message})
+}
+
+func (s *site) fromHub(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r, s.deps.PublicURL) {
+			s.fail(w, r, http.StatusForbidden, msgOrigin)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// authed lets in only a session, and hands next the principal in the context.
+func (s *site) authed(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, err := principal(r, s.deps.Accounts)
+		if err != nil {
+			if r.Context().Err() != nil {
+				return
+			}
+			s.deps.Log.ErrorContext(r.Context(), "could not read the session of a settings page", "error", err)
+			s.fail(w, r, http.StatusServiceUnavailable, msgDatabaseRead)
+			return
+		}
+		if p.Kind() == access.Nobody {
+			signInFirst(w, r)
+			return
+		}
+		next(w, r.WithContext(access.WithPrincipal(r.Context(), p)))
+	}
+}
+
+// signInFirst sends htmx to the sign-in page by header: it would swap a redirect's body in place.
+func signInFirst(w http.ResponseWriter, r *http.Request) {
+	if isHTMX(r) {
+		w.Header().Set("HX-Redirect", "/settings/login")
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	http.Redirect(w, r, "/settings/login", http.StatusSeeOther)
+}
