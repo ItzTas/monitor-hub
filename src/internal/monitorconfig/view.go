@@ -131,12 +131,13 @@ func secretStates(f settings.Field, path string, value any, editable bool, saved
 	return states
 }
 
-// ignoredViews hides the value of what was secret when saved or is secret today.
+// ignoredViews hides, and marks secret, the value of what was secret when saved or is secret
+// today.
 func ignoredViews(decl *settings.Declaration, ignored []IgnoredValue) []IgnoredView {
 	var views []IgnoredView
 	for _, v := range ignored {
-		view := IgnoredView{Path: v.Path, Secret: v.Secret, Reason: v.Reason}
-		if !v.Secret && !secretToday(decl, v.Path) {
+		view := IgnoredView{Path: v.Path, Secret: v.Secret || secretToday(decl, v.Path), Reason: v.Reason}
+		if !view.Secret {
 			view.Value = bytes.Clone(v.Value)
 		}
 		views = append(views, view)
@@ -167,7 +168,8 @@ func secretToday(decl *settings.Declaration, path string) bool {
 }
 
 // variables are the free variables that reach the monitor: the saved ones, and the prefixed
-// ones of the .env no field declares, which the hub cannot tell are not secret.
+// ones of the .env no field declares, which the hub cannot tell are not secret. An empty .env
+// text counts as absent.
 func (s *Service) variables(name string, decl *settings.Declaration, saved Saved) []VariableView {
 	declared := map[string]bool{}
 	for _, f := range decl.Fields {
@@ -189,10 +191,10 @@ func (s *Service) variables(name string, decl *settings.Declaration, saved Saved
 		byName[key] = view
 	}
 	for key, text := range env {
-		if _, ok := byName[key]; ok || key == "" || !reaches(key) {
+		if _, ok := byName[key]; ok || key == "" || text == "" || !reaches(key) {
 			continue
 		}
-		byName[key] = VariableView{Name: key, Secret: true, Source: SourceEnv, EnvSet: text != ""}
+		byName[key] = VariableView{Name: key, Secret: true, Source: SourceEnv, EnvSet: true}
 	}
 	var views []VariableView
 	for _, key := range slices.Sorted(maps.Keys(byName)) {

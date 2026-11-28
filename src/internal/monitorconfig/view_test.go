@@ -162,7 +162,6 @@ func TestReadShowsWhereEachValueComesFrom(t *testing.T) {
 		},
 		Variables: []VariableView{
 			{Name: "API_KEY", Secret: true, Source: SourcePage, Saved: true},
-			{Name: "EXTRA", Secret: true, Source: SourceEnv},
 			{Name: "FREE", Source: SourcePage, Value: text("v"), Saved: true, EnvSet: true},
 			{Name: "PROXY", Secret: true, Source: SourceEnv, EnvSet: true},
 		},
@@ -201,7 +200,7 @@ func TestReadShowsIgnoredValues(t *testing.T) {
 	want := []IgnoredView{
 		{Path: "host_name", Value: json.RawMessage(`"mail.example.test"`), Reason: ReasonUndeclared},
 		{Path: "pass", Secret: true, Reason: ReasonUndeclared},
-		{Path: "password", Reason: ReasonType},
+		{Path: "password", Secret: true, Reason: ReasonType},
 	}
 	if got := readView(t, scene.service, "testmonitor").Ignored; !reflect.DeepEqual(got, want) {
 		t.Errorf("Ignored = %s, want %s", masked(t, got), masked(t, want))
