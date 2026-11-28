@@ -283,7 +283,7 @@ func TestLoadReadsTheDeclarationBesideTheManifest(t *testing.T) {
 			t.Errorf("%s: Settings = %+v, SettingsError = %v, want nil and %q", name, e.Settings, e.SettingsError, want)
 		}
 	}
-	if d, want := byName["dd"], filepath.Join(root, "dd", settings.File)+" is not a regular file"; d.Settings != nil || d.SettingsError == nil || d.SettingsError.Error() != want {
+	if d, want := byName["dd"], settings.File+" is not a regular file"; d.Settings != nil || d.SettingsError == nil || d.SettingsError.Error() != want {
 		t.Errorf("dd: Settings = %+v, SettingsError = %v, want nil and %q", d.Settings, d.SettingsError, want)
 	}
 	if g := byName["gg"]; g.Settings != nil || g.SettingsError == nil || !strings.Contains(g.SettingsError.Error(), "path escapes from parent") {
@@ -315,7 +315,7 @@ func TestLoadRefusesASettingsFileThatIsAFIFO(t *testing.T) {
 	if got.err != nil || len(got.entries) != 1 {
 		t.Fatalf("Load = %d entries, %v; want one entry", len(got.entries), got.err)
 	}
-	want := filepath.Join(root, "fifo", settings.File) + " is not a regular file"
+	want := settings.File + " is not a regular file"
 	if e := got.entries[0]; e.Settings != nil || e.SettingsError == nil || e.SettingsError.Error() != want {
 		t.Errorf("Settings = %+v, SettingsError = %v, want nil and %q", e.Settings, e.SettingsError, want)
 	}

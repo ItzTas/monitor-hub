@@ -146,7 +146,7 @@ func readSettings(root *os.Root) (*settings.Declaration, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", filepath.Join(root.Name(), settings.File))
+		return nil, fmt.Errorf("%s is not a regular file", settings.File)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, settingsLimit+1))
 	if err != nil {
