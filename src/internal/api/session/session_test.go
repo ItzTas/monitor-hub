@@ -171,13 +171,17 @@ func (b *bench) serve(ctx context.Context, method, path, body string, edits ...e
 func shown(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 	body := rec.Body.String()
-	for _, password := range []string{accountstest.Password, wrongPassword} {
-		if strings.Contains(body, password) {
-			t.Error("a response body carries a password")
-			body = strings.ReplaceAll(body, password, "[password]")
-		}
+	if redacted(body) != body {
+		t.Error("a response body carries a password")
 	}
-	return body
+	return redacted(body)
+}
+
+func redacted(text string) string {
+	for _, password := range []string{accountstest.Password, wrongPassword} {
+		text = strings.ReplaceAll(text, password, "[password]")
+	}
+	return text
 }
 
 func sessionCookie(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
@@ -342,7 +346,7 @@ func TestAClientThatLeavesIsNotAServerError(t *testing.T) {
 		t.Errorf("the sign-ins ran as %v, want %v", b.journal.all(), want)
 	}
 	if strings.Contains(b.logs.String(), "API request failed") {
-		t.Errorf("a client that left was logged as a failure:\n%s", b.logs.String())
+		t.Errorf("a client that left was logged as a failure:\n%s", redacted(b.logs.String()))
 	}
 	if rec := b.serve(t.Context(), http.MethodPost, "/api/session", right); rec.Code != http.StatusOK {
 		t.Errorf("a sign-in after the others left = %d %s, want 200", rec.Code, shown(t, rec))

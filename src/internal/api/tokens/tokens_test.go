@@ -154,7 +154,11 @@ var hidden = regexp.MustCompile(`mh[tk]_[A-Za-z0-9_-]+|[0-9a-f]{64}`)
 
 // shown is the body of rec for a failure message, with secrets and hashes replaced.
 func shown(rec *httptest.ResponseRecorder) string {
-	return hidden.ReplaceAllString(rec.Body.String(), "[hidden]")
+	return redacted(rec.Body.String())
+}
+
+func redacted(text string) string {
+	return hidden.ReplaceAllString(text, "[hidden]")
 }
 
 // create makes a token or credential named name over the API and returns its id and secret.
@@ -592,6 +596,6 @@ func TestAClientThatLeavesIsNotAServerError(t *testing.T) {
 		}
 	}
 	if strings.Contains(logs.String(), "API request failed") {
-		t.Errorf("a client that left was logged as a failure:\n%s", logs.String())
+		t.Errorf("a client that left was logged as a failure:\n%s", redacted(logs.String()))
 	}
 }
