@@ -500,7 +500,7 @@ The session lasts 12 hours. Section 8, "People, tokens and credentials", uses it
 
    Expected: no output, or only lines you can explain, such as the `poll a monitor` warnings for `sei` before it reached SEI (item 3). Leave `LOG_LEVEL=debug` off unless you are chasing something.
 
-Finally open `http://hub.lan` if the proxy is set up.
+Finally open `http://hub.lan/settings` if the proxy is set up, and sign in there (section 8, "Changing a monitor's configuration without editing `.env`").
 
 ## Add the anhanguera monitor
 
@@ -708,15 +708,15 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
 
   The monitor also stores the reason in its database, so the pause survives restarts. A monitor that starts with a reason on record is held: it does not log in at all, `/api/monitors` shows `paused` with the reason followed by `nothing is logging in: request a check once the configuration is fixed`, and it records one more `account_login_failed` event, at most once per UTC day. Restarting the hub is not a retry, on purpose: the hub also restarts the monitor by itself, for example after a lost database connection, and every rejected attempt counts toward SEI locking the account. Only a check you request tries the login again. To resume:
 
-  1. Fix the password: in SEI, or in `.env`, the secret file or the password command. When the password is not in a file or a command, you can also save it through the configuration API ("Changing a monitor's configuration without editing `.env`", below). That save restarts only `sei`, which starts held with the new password, so skip item 2.
+  1. Fix the password: in SEI, or in `.env`, the secret file or the password command. When the password is not in a file or a command, you can also save it on the settings page or through the configuration API ("Changing a monitor's configuration without editing `.env`", below). That save restarts only `sei`, which starts held with the new password, so skip item 2.
   2. Restart the hub so the monitor starts held with the new configuration. After editing `.env`, run `docker compose up -d` in `/opt/stacks/monitor-hub` (a plain `restart` keeps the old environment); otherwise `docker compose restart monitor-hub`. You can skip this when `sei` already shows the held message and its configuration did not change: you fixed the password in SEI, or it comes from `SEI__SEI_PASSWORD_CMD`, which runs at every login.
-  3. Request a check:
+  3. Request a check: choose "Check now" on `sei`'s settings page, or run
 
      ```bash
      curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/api/monitors/sei/check
      ```
 
-     Expected: `{"accepted":true,"message":""}`. `accepted:false` with `sei-monitor has not reached SEI yet` means the monitor is still connecting after the restart: ask again in a minute. `accepted:false` with `monitoring is paused because SEI rejected the login` means the monitor is paused, not held: do item 2 first.
+     Expected: `{"accepted":true,"message":""}`. `accepted:false` with `sei-monitor has not reached SEI yet` means the monitor is still connecting after the restart: ask again in a minute. `accepted:false` with `monitoring is paused because SEI rejected the login` means the monitor is paused, not held: do item 2 first. The page shows the same answer as `The monitor started a check.` or `The monitor did not start a check.`, followed by the monitor's message.
   4. Read `/api/monitors` after half a minute. `sei` should be `idle` with a `last_success_at` later than your request. If SEI rejected the password again, it is `paused` with the first message: start over from item 1.
 
   Once SEI accepts the login of a requested check, the monitor erases the recorded reason, even when something later in that check fails, and then retries on its own as for any failing check. If the erase did not reach the database, a restart before the monitor's next good check finds the reason still recorded and holds the monitor again, without a login: request another check. A check whose login got no answer from SEI (an error page or a time-out) also leaves the monitor held: request another one later.
@@ -756,7 +756,7 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
   ```
 
   A `cursor_at` in the future means this happened. The other one: a PDF without a text layer, such as a scan saved as images, reads as "no match", with no alert and no error.
-- **A monitor that never starts.** If `running` stays false, the monitor's configuration error is in the hub log. After a save through the configuration API, the progress route (below) shows it in `reason` too. Text in `.env` that does not fit a field's type stops the start before the monitor runs, and `GET /api/monitors/<monitor>/settings` lists it in `problems`. A value saved through the API wins over `.env`, so when a change to `.env` seems to do nothing, read that `GET` and look at the field's `source` in `fields`. A misspelled `SEI__`, `DIARIO__` or `ANHANGUERA__` name is not an error: the monitor never sees it and uses the default or reports the variable missing.
+- **A monitor that never starts.** If `running` stays false, the monitor's configuration error is in the hub log. After a save, the settings page shows it too, and so does the progress route (below), in `reason`. Text in `.env` that does not fit a field's type stops the start before the monitor runs. The monitor's settings page shows it in a warning above the form, and `GET /api/monitors/<monitor>/settings` lists it in `problems`. A saved value wins over `.env`, so when a change to `.env` seems to do nothing, look at where the field's value comes from: on the settings page, or in the field's `source` in `fields` of that `GET`. A misspelled `SEI__`, `DIARIO__` or `ANHANGUERA__` name is not an error: the monitor never sees it and uses the default or reports the variable missing.
 - **Secrets from files.** `_FILE` variables need the file inside the container. The compose file mounts none, so add a volume before using one. The hub and its monitors run as user `65532`, which must be able to read the file. For the SEI password, for example, put it in `/opt/stacks/monitor-hub/secrets/sei_password`, then:
 
   ```bash
@@ -766,7 +766,7 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
 
   Uncomment the matching `volumes` line in `compose.yaml`, which mounts the file read-only at `/run/secrets/sei_password`, set `SEI__SEI_PASSWORD_FILE=/run/secrets/sei_password` and leave `SEI__SEI_PASSWORD` out. The monitor reads the file once, at start, so restart the hub after you change it. `SEI__DATABASE_URL_FILE` works the same way. The gazette monitor has no `_FILE` form.
 - **The SEI password command.** `SEI__SEI_PASSWORD_CMD` runs at every login, without a shell, with a 30-second limit, and without the secret variables in its environment. Its program must exist inside the hub's image, which has no password manager. The monitor refuses to start when it cannot find the program on `PATH`.
-- **People, tokens and credentials.** Everyone who uses the API or the feed is a person with a login and a password. The `users` command manages them inside the container:
+- **People, tokens and credentials.** Everyone who uses the API, the feed or the settings pages is a person with a login and a password. The `users` command manages them inside the container:
 
   ```bash
   docker exec -it monitor-hub monitor-hub users create --admin <login>
@@ -777,7 +777,7 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
 
   Leave out `--admin` for a person who is not an admin. `create` and `passwd` ask for the password twice: at least 12 characters and at most 256 bytes. `passwd` is the way back in after a forgotten password. It also ends that person's sessions, while their personal tokens keep working. `list` shows each login, whether it is an admin and whether it is disabled. `delete` removes the person with their sessions, tokens and credentials.
 
-  An admin can do everything: every action on every monitor, people and their permissions (`/api/users`), everyone's tokens and credentials (`?everyone=true` on the lists), and `GET /api/consumers`. The admin mark counts only in a signed-in session. Other people get permissions given to them directly, each written as `monitor:<name>:<action>`, or `monitor:*:<action>` for every monitor. The actions are `view` (the monitor in `/api/monitors`, its events in `/api/events` and in the feed), `check` (`POST /api/monitors/<name>/check`), `hook` and `configure`. `configure` opens `GET` and `PUT /api/monitors/<name>/settings` and `GET /api/monitors/<name>/settings/progress`, and only in a signed-in session, because a token never carries it. An admin has it on every monitor. `hook` opens no route yet. An admin sets a person's whole list at once. This gives `ana-lima` `view` on every monitor and `check` on `sei`:
+  An admin can do everything: every action on every monitor, people and their permissions (`/api/users`), everyone's tokens and credentials (`?everyone=true` on the lists), and `GET /api/consumers`. The admin mark counts only in a signed-in session. Other people get permissions given to them directly, each written as `monitor:<name>:<action>`, or `monitor:*:<action>` for every monitor. The actions are `view` (the monitor in `/api/monitors`, its events in `/api/events` and in the feed), `check` (`POST /api/monitors/<name>/check`), `hook` and `configure`. `configure` opens `GET` and `PUT /api/monitors/<name>/settings`, `GET /api/monitors/<name>/settings/progress` and the monitor's settings page at `/settings/<name>`, and only in a signed-in session, because a token never carries it. An admin has it on every monitor. On that page, `check` also shows "Check now". `hook` opens no route yet. An admin sets a person's whole list at once. This gives `ana-lima` `view` on every monitor and `check` on `sei`:
 
   ```bash
   curl -s -X PUT -b cookies.txt -H "Origin: http://127.0.0.1:8090" -H 'Content-Type: application/json' -d '{"permissions":["monitor:*:view","monitor:sei:check"]}' http://127.0.0.1:8090/api/users/ana-lima/permissions
@@ -800,7 +800,24 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
   curl -s -X DELETE -b cookies.txt -H "Origin: http://127.0.0.1:8090" http://127.0.0.1:8090/api/session && rm cookies.txt
   ```
 
-- **Changing a monitor's configuration without editing `.env`.** diario, sei and anhanguera ship a `settings.json` version 2, so the hub's API can change their configuration. A value saved there wins over `.env`, and a save restarts only that monitor, without `docker compose up -d`. The three routes need a signed-in session with `configure` on that monitor. Read the configuration first:
+- **Changing a monitor's configuration without editing `.env`.** diario, sei and anhanguera ship a `settings.json` version 2, so you can change their configuration on the hub's settings pages or through its API. A value saved there wins over `.env`, and a save restarts only that monitor, without `docker compose up -d`. Both need a signed-in session with `configure` on that monitor.
+
+  Open `http://hub.lan/settings` and sign in with your login and password. It is the same 12-hour session the API uses, and "Sign out", in the page header, ends it. A wrong login or password gets `wrong login or password` after one second, as on the API. A personal token never opens a page. Nothing on the pages needs JavaScript. Without it everything works except two things: the page does not follow a restart by itself, and "Add another variable" is hidden.
+
+  `/settings` lists the monitors you have `configure` on. A monitor's state shows there and on its page only when you also have `view` on it, and "Check now" shows only when you have `check`. When the monitor is not running, or you lack `view`, its page shows how its last start went, with the error when there is one. Below that comes a form built from the monitor's `settings.json`:
+  - Each field says where its value comes from: "Saved on this page", "From .env", "Using the default" or "Not set". A secret field is an empty password box that says only "Set on this page", "Set in .env" or "Empty". Leave it empty to keep the secret as it is. A field with `editable: false` shows its reason and never its value.
+  - A field with a saved value gets a box that takes that value out on the next save. It reads "Use the .env value", "Use the default" or "Clear", by what the field goes back to.
+  - "Add", "Remove", "Move up" and "Move down" edit lists and lists of objects. They save nothing until you choose "Save and restart". Without JavaScript each of them reloads the page. The page does not send back the secrets you typed, so type them again before you save.
+  - A form holds at most 1000 list items in all. When the saved lists already hold more, the page shows the fields that hold lists read-only, with a notice, and a save leaves them as they are. Change those through the API.
+  - "Other variables" holds the free variables that no field declares, such as a proxy. The page never shows a variable saved as secret, nor a prefixed `.env` variable that no field declares. Without JavaScript the page draws one empty row, so you add one variable per save.
+  - "Saved values the hub does not apply" lists the ignored values, each with its old path and its reason, and with its value unless it is or was secret. Tick "Delete" and save to delete one.
+  - When `.env` text does not fit a field, a warning at the top of the form lists each value with its problem, because the monitor cannot start with it. Set the value on the page, or fix `.env` and restart the hub.
+
+  "Save and restart" checks the values with the monitor, saves them and restarts that monitor. The page then says whether the monitor started with the new values, why it did not start, or that it gave no answer within 75 seconds. The button stays disabled, reading "Restarting", until the restart settles. Without JavaScript, use the "Refresh to see whether it started" link. A save that changes nothing the monitor receives restarts nothing, and the page says so. The page saves nothing and says why when someone saved in between, when the monitor's fields changed since the page loaded, or while another save or the last restart is still running. In the first two cases it also shows the current values. On `sei`, a save costs one login like any restart of it, and after SEI refused the login, "Check now" is the request that tries again ("When SEI refuses the login").
+
+  Over plain HTTP on your local network the password and the session cookie travel in clear text, and the sign-in page says so. Put HTTPS in front of the hub, or reach it through a VPN. The cookie gets `Secure` only when the request comes over HTTPS or the proxy sends `X-Forwarded-Proto: https`. Every change from the pages needs an `Origin` header of the hub, under the API's rule: `http://<host>`, `https://<host>` or the origin of `PUBLIC_URL`. Browsers send it on their own. If a proxy changes `Host`, set `PUBLIC_URL`, or the pages refuse every change with `The hub refused this request because it came from another site.` The configuration form is at most 128 KiB when sent.
+
+  The API does the same from a script. Read the configuration first:
 
   ```bash
   curl -s -b cookies.txt -H "Origin: http://127.0.0.1:8090" http://127.0.0.1:8090/api/monitors/diario/settings
@@ -833,7 +850,7 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
 
   A save on `sei` costs what any restart of it costs: one login to SEI, unless the monitor is held after a refused login. A wrong password costs one rejected login and pauses the monitor ("When SEI refuses the login"). The hub never requests a check after a save, so a save causes at most one login, and a save that changes nothing the monitor receives causes none.
 
-  The values the API saves, secrets included, sit in plain text in the hub's database, in the table `monitor_configs`. A dump of that database, such as the ones in "Coming forward again" and "Resetting a monitor's database", holds the SEI password, so keep it private with `chmod 600 ~/monitor_hub-*.dump`. Give `configure` with care. Nobody reads a secret through the API, but whoever has `configure` on `sei` can point `sei_url` at another server, which then receives the SEI password at the next login, and can point `database_url` at another database. The session cookie and the values cross the network in clear over plain HTTP, so do not expose the hub's port outside your local network without HTTPS in front of it.
+  The values the pages and the API save, secrets included, sit in plain text in the hub's database, in the table `monitor_configs`. A dump of that database, such as the ones in "Coming forward again" and "Resetting a monitor's database", holds the SEI password, so keep it private with `chmod 600 ~/monitor_hub-*.dump`. Give `configure` with care. Nobody reads a secret on the pages or through the API, but whoever has `configure` on `sei` can point `sei_url` at another server, which then receives the SEI password at the next login, and can point `database_url` at another database. The session cookie and the values cross the network in clear over plain HTTP, so do not expose the hub's port outside your local network without HTTPS in front of it.
 
 - **Consumers.** A consumer is a program that receives the hub's notifications; [`protocol.md`](protocol.md#consumers) describes the contract. Create one inside the container. The token prints once, so copy it now:
 
@@ -861,7 +878,7 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
 ## 9. What changed for you
 
 - **AMQP.** The exchange is `monitor-hub` unless you set `AMQP_EXCHANGE`, the routing key is `<monitor>.<kind>` for one event and `<monitor>.batch` for several, and the body is `{"events":[...]}` instead of one bare event per message. Delivery is at-least-once, and each message carries a message id derived from its body so a consumer can drop a repeat. Rebind consumers of the old exchange.
-- **The SEI web page and routes.** The SEI service's web page (`/ui/`) and its domain routes (`/processes`, `/status` with SEI details) have no replacement yet. The API is the hub's: `/api/monitors`, `/api/monitors/{name}/check`, `/api/events`, with a different response shape and a personal token in the header `Authorization: Bearer <token>` (step 5).
+- **The SEI web page and routes.** The hub's only web pages are its settings pages, at `/settings`. The SEI service's web page (`/ui/`) and its domain routes (`/processes`, `/status` with SEI details) have no replacement yet. The API is the hub's: `/api/monitors`, `/api/monitors/{name}/check`, `/api/events`, with a different response shape and a personal token in the header `Authorization: Bearer <token>` (step 5).
 - **Feeds.** The old gazette service served its own public `/feed.xml`. The old SEI service served `/feed/<old feed token>.xml`. The hub serves one feed for all monitors at `/feed.xml?token=<token>`, with a personal token, filtered with `&monitor=diario` or `&monitor=sei`. It lists only the monitors the token can view. Subscribers of the old addresses must change them.
 - **The image.** `ghcr.io/itztas/monitor-hub` is public on the registry, so `docker compose pull` needs no login. It carries the monitors, so there is one image to pull instead of one per service.
 - **A refused SEI login.** The Go program tried the login again at every start. The monitor does not: after SEI refuses it, only a check you request tries again (section 8).
