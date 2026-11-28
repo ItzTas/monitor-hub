@@ -20,6 +20,8 @@ const viewFields = `[
 	{"name":"db","label":"DB","type":"string","secret":true,"env":"DB"},
 	{"name":"token","label":"Token","type":"string","secret":true,"env":"TOKEN"},
 	{"name":"cmd","label":"Cmd","type":"string","editable":false,"reason":"It runs a program.","env":"CMD"},
+	{"name":"signing","label":"Signing","type":"string","secret":true,"editable":false,"reason":"It signs requests.","env":"SIGNING"},
+	{"name":"pin","label":"PIN","type":"integer","secret":true},
 	{"name":"note","label":"Note","type":"string"},
 	{"name":"mail","label":"Mail","type":"object","fields":[
 		{"name":"host","label":"Host","type":"string","default":"localhost"},
@@ -34,6 +36,7 @@ var viewEnviron = []string{
 	"TESTMONITOR__DB=env-db-secret-value",
 	"TESTMONITOR__TOKEN=env-token-secret-value",
 	"TESTMONITOR__CMD=x",
+	"TESTMONITOR__SIGNING=env-signing-secret-value",
 	"TESTMONITOR__FREE=f",
 	"TESTMONITOR__PROXY=env-proxy-secret-value",
 	"TESTMONITOR__EXTRA=",
@@ -48,11 +51,22 @@ var viewEnviron = []string{
 func viewSaved(t *testing.T) Saved {
 	t.Helper()
 	return Saved{
-		Document: raws(t, `{"watch":["b"],"db":"old-plain-db-value","cmd":"y","mail":{"port":587},"gone":"w"}`),
-		Secrets:  map[string]string{"db": "row-db-secret-value", "mail.password": "row-mail-secret-value", "pass": "row-pass-secret-value"},
-		Ignored:  []IgnoredValue{{Path: "older", Value: json.RawMessage(`"kept"`), Reason: ReasonUndeclared}},
+		Document: raws(t, `{"watch":["b"],"db":"old-plain-db-value","cmd":"y","signing":"plain-signing-value","mail":{"port":587,"password":"old-mail-plain-value"},"gone":"w"}`),
+		Secrets: map[string]string{
+			"db":            "row-db-secret-value",
+			"signing":       "row-signing-secret-value",
+			"pin":           "not-a-number-pin",
+			"mail.password": "row-mail-secret-value",
+			"pass":          "row-pass-secret-value",
+		},
+		Ignored: []IgnoredValue{
+			{Path: "older", Value: json.RawMessage(`"kept"`), Reason: ReasonUndeclared},
+			// Stored as not secret, under the env of a field that is secret today.
+			{Path: "env:TOKEN", Value: json.RawMessage(`"stored-token-secret-value"`), Reason: ReasonUndeclared},
+		},
 		Variables: map[string]Variable{
 			"FREE":    {Value: "v"},
+			"DB":      {Value: "free-db-secret-value"},
 			"API_KEY": {Value: "row-free-secret-value", Secret: true},
 			"PATH":    {Value: "/y"},
 			"lower":   {Value: "l"},
@@ -71,6 +85,13 @@ var viewSecrets = map[string]string{
 	".env-only variable":      "env-proxy-secret-value",
 	"replaced ignored value":  "old-plain-db-value",
 	"undeclared saved secret": "row-pass-secret-value",
+	"free variable named after a secret field's env":   "free-db-secret-value",
+	"stored ignored value under a secret field's env":  "stored-token-secret-value",
+	"saved secret of a non-editable field":             "row-signing-secret-value",
+	"saved plain value of a non-editable secret field": "plain-signing-value",
+	".env secret of a non-editable field":              "env-signing-secret-value",
+	"replaced value inside an object":                  "old-mail-plain-value",
+	"saved secret of the wrong type":                   "not-a-number-pin",
 }
 
 type serviceScene struct {
@@ -142,21 +163,31 @@ func TestReadShowsWhereEachValueComesFrom(t *testing.T) {
 			{Name: "db", Source: SourcePage, Saved: true, EnvSet: true},
 			{Name: "token", Source: SourceEnv, EnvSet: true},
 			{Name: "cmd", Source: SourceEnv, EnvSet: true},
+			{Name: "signing", Source: SourceEnv, EnvSet: true},
+			{Name: "pin", Source: SourceUnset, Saved: true},
 			{Name: "note", Source: SourceUnset},
 			{Name: "mail", Source: SourcePage, Saved: true},
 		},
 		Secrets: []SecretState{
 			{Path: "db", Set: true, Saved: true, EnvSet: true},
 			{Path: "token", Set: true, EnvSet: true},
+			{Path: "signing", Set: true, EnvSet: true},
+			{Path: "pin", Saved: true},
 			{Path: "mail.password", Set: true, Saved: true},
 			{Path: "mail.key"},
 		},
 		Ignored: []IgnoredView{
 			{Path: "db", Secret: true, Reason: ReasonReplaced},
 			{Path: "cmd", Value: json.RawMessage(`"y"`), Reason: ReasonNotEditable},
+			{Path: "signing", Secret: true, Reason: ReasonNotEditable},
+			{Path: "signing", Secret: true, Reason: ReasonNotEditable},
+			{Path: "pin", Secret: true, Reason: ReasonType},
+			{Path: "mail.password", Secret: true, Reason: ReasonReplaced},
 			{Path: "gone", Value: json.RawMessage(`"w"`), Reason: ReasonUndeclared},
 			{Path: "pass", Secret: true, Reason: ReasonUndeclared},
 			{Path: "older", Value: json.RawMessage(`"kept"`), Reason: ReasonUndeclared},
+			{Path: "env:TOKEN", Secret: true, Reason: ReasonUndeclared},
+			{Path: "env:DB", Secret: true, Reason: ReasonUndeclared},
 			{Path: "env:PATH", Value: json.RawMessage(`"/y"`), Reason: ReasonUndeclared},
 			{Path: "env:lower", Value: json.RawMessage(`"l"`), Reason: ReasonUndeclared},
 		},
@@ -238,6 +269,9 @@ func TestReadShowsEnvProblems(t *testing.T) {
 	view := readView(t, scene.service, "testmonitor")
 	if want := []Problem{{"n", `N is not an integer ("three")`}}; !reflect.DeepEqual(view.Problems, want) {
 		t.Errorf("Problems = %v, want %v", view.Problems, want)
+	}
+	if len(view.Fields) != 2 {
+		t.Fatalf("Read gave %d fields, want 2", len(view.Fields))
 	}
 	if want := (FieldState{Name: "n", Source: SourceEnv, EnvSet: true}); view.Fields[0] != want {
 		t.Errorf("field n = %+v, want %+v", view.Fields[0], want)
@@ -323,13 +357,12 @@ func TestWarnIgnoredNamesOnlyPaths(t *testing.T) {
 	s.WarnIgnored(t.Context())
 
 	want := []map[string]any{
-		{"level": "WARN", "msg": "saved configuration values are not applied", "monitor": "testmonitor", "paths": []any{"db", "cmd", "gone", "pass", "older", "env:PATH", "env:lower"}},
+		{"level": "WARN", "msg": "saved configuration values are not applied", "monitor": "testmonitor", "paths": []any{"db", "cmd", "signing", "signing", "pin", "mail.password", "gone", "pass", "older", "env:TOKEN", "env:DB", "env:PATH", "env:lower"}},
 		{"level": "WARN", "msg": "the saved configuration could not be read", "monitor": "down", "error": "dial tcp 127.0.0.1:5432: connection refused"},
 		{"level": "WARN", "msg": "saved configuration values are not applied", "monitor": "bare", "paths": []any{"n"}},
 	}
-	// Records carry only paths, so they can be printed.
 	if got := logRecords(t, &buf); !reflect.DeepEqual(got, want) {
-		t.Errorf("log records = %v, want %v", got, want)
+		t.Errorf("log records = %s, want %s", masked(t, got), masked(t, want))
 	}
 	values := map[string]string{"plain ignored value": `"w"`, "not editable value": `"y"`, "kept value": "kept", "plain value without declaration": "bare-plain-5"}
 	for label, secret := range viewSecrets {
