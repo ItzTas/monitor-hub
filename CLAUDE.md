@@ -1,5 +1,14 @@
 # monitor-hub
 
+<!-- prerelease:start -->
+<!-- prerelease:remove-when: monitor-hub deployed on the owner's server with every monitor in monitors.json (diario, sei, anhanguera) running and working -->
+## Not deployed yet
+
+The hub does not run on the server yet: the runbook in `docs/deploy.md` has not been carried out, so no hub database holds real data and no deployed monitor depends on the current protocol. Large rewrites and deletions are fine. Change `sql/schema/00001_hub.sql` in place instead of adding a `00002` goose migration, and recreate the dev hub database afterwards; the hub applies the schema when it starts. Change the API, `proto/monitorhub`, the manifest and `settings.json` formats, `sdk-go` and `sdk-rust` outright, and keep `protocol_version` and `settings_version` at a single accepted value instead of reading old and new side by side. The monitors pin the Rust SDK by tag (`sdk-rust/v0.5.0`), so they move to the new tag when they need it. Leave no compatibility layers, don't give up on a change because it breaks dev data, and pick the best solution, not the one that breaks the least. The monitors' own databases are not covered: the old gazette and SEI services already hold real data there.
+
+**Remove this section once the hub runs on the owner's server with diario, sei and anhanguera all working.** From then on `00001_hub.sql` no longer changes, every schema change goes into a new numbered migration, and protocol or settings format changes must keep the deployed monitors working.
+<!-- prerelease:end -->
+
 ## Vocabulary
 
 A monitor is a process the hub starts to watch something: `diario`, `sei` and `anhanguera` are monitors. Code, logs, the API and the docs call it a monitor.
