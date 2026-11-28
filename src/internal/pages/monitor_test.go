@@ -208,6 +208,10 @@ func TestMonitorTextIsEscapedAtEveryDepth(t *testing.T) {
 	if got := options(body, "f-rules-0--kind"); !slices.Contains(got, choice{`"><b>x</b>`, `"><b>x</b>`, false}) {
 		t.Errorf("f-rules-0--kind has the options %+v, want the declared one as text", got)
 	}
+	odd := variableID(`X"><svg onload=alert(4)>`)
+	if tag := startTag(body, "var-"+odd); !hasAttr(tag, "aria-describedby", "source-var-"+odd) || startTag(body, "source-var-"+odd) == "" {
+		t.Errorf("the variable with an odd name is %q, want one id and one description for it", tag)
+	}
 	if tag := startTag(body, "var-FREE"); !hasAttr(tag, "value", free) {
 		t.Errorf("var-FREE is %q, want its value as text", tag)
 	}

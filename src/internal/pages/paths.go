@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/ItzTas/monitor-hub/src/internal/monitorconfig"
@@ -17,6 +18,20 @@ func idSuffix(path string) string {
 
 func controlID(path string) string {
 	return "f-" + idSuffix(path)
+}
+
+// variableID is the id suffix of a variable: its name, with each byte outside [A-Za-z0-9_] as
+// -hex, so an odd name from the .env still makes one id. Variable names have no -.
+func variableID(name string) string {
+	var b strings.Builder
+	for _, c := range []byte(name) {
+		if c == '_' || '0' <= c && c <= '9' || 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z' {
+			b.WriteByte(c)
+			continue
+		}
+		fmt.Fprintf(&b, "-%02x", c)
+	}
+	return b.String()
 }
 
 // declarationKey changes with anything in the declaration, so a form drawn from an older one

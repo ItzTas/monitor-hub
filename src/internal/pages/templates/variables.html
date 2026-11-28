@@ -4,15 +4,15 @@
 <p class="help">These are variables the monitor does not declare, such as a proxy setting. Use the name the monitor reads, without the .env prefix. Names use capital letters, digits and _.</p>
 {{- range .Variables}}
 <div class="field{{if .Error}} has-error{{end}}">
-<label for="var-{{.Name}}">{{.Name}}</label>
-<p id="source-var-{{.Name}}" class="source">{{.Source}}</p>
+<label for="var-{{.ID}}">{{.Name}}</label>
+<p id="source-var-{{.ID}}" class="source">{{.Source}}</p>
 {{- if .Error}}
-<p id="error-var-{{.Name}}" class="error"><span class="visually-hidden">Error: </span>{{.Error}}</p>
+<p id="error-var-{{.ID}}" class="error"><span class="visually-hidden">Error: </span>{{.Error}}</p>
 {{- end}}
 {{- if .Password}}
-<input id="var-{{.Name}}" name="var.{{.Name}}" type="password" autocomplete="new-password" aria-describedby="{{.DescribedBy}}"{{if .Error}} aria-invalid="true"{{end}}>
+<input id="var-{{.ID}}" name="var.{{.Name}}" type="password" autocomplete="new-password" aria-describedby="{{.DescribedBy}}"{{if .Error}} aria-invalid="true"{{end}}>
 {{- else}}
-<input id="var-{{.Name}}" name="var.{{.Name}}" type="text" value="{{.Value}}" spellcheck="false" autocapitalize="off" aria-describedby="{{.DescribedBy}}"{{if .Error}} aria-invalid="true"{{end}}>
+<input id="var-{{.ID}}" name="var.{{.Name}}" type="text" value="{{.Value}}" spellcheck="false" autocapitalize="off" aria-describedby="{{.DescribedBy}}"{{if .Error}} aria-invalid="true"{{end}}>
 {{- end}}
 {{template "back" .Back}}
 </div>

@@ -109,6 +109,7 @@ type item struct {
 
 type variableRow struct {
 	Name        string
+	ID          string
 	Source      string
 	Value       string
 	Password    bool
@@ -354,7 +355,7 @@ func (b *builder) text(path string, value any) string {
 func (b *builder) variables() []variableRow {
 	var rows []variableRow
 	for _, v := range b.view.Variables {
-		row := variableRow{Name: v.Name, Password: v.Secret || v.Value == nil}
+		row := variableRow{Name: v.Name, ID: variableID(v.Name), Password: v.Secret || v.Value == nil}
 		if !row.Password {
 			row.Value = *v.Value
 			if b.posted != nil {
@@ -367,10 +368,10 @@ func (b *builder) variables() []variableRow {
 			text := map[bool]string{true: "Use the .env value", false: "Remove"}[v.EnvSet]
 			row.Back = &checkbox{Name: "var_unset", Value: v.Name, Text: text, Checked: b.posted != nil && b.posted.VarUnset[v.Name]}
 		}
-		ids := "source-var-" + v.Name
+		ids := "source-var-" + row.ID
 		if message, ok := b.errs["env:"+v.Name]; ok {
-			row.Error, ids = message, ids+" error-var-"+v.Name
-			b.drawn["env:"+v.Name] = "var-" + v.Name
+			row.Error, ids = message, ids+" error-var-"+row.ID
+			b.drawn["env:"+v.Name] = "var-" + row.ID
 		}
 		row.DescribedBy = ids
 		rows = append(rows, row)

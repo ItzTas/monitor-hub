@@ -22,6 +22,19 @@ func TestControlIDs(t *testing.T) {
 	}
 }
 
+func TestVariableIDs(t *testing.T) {
+	ids := map[string]string{
+		"HTTP_PROXY":               `HTTP_PROXY`,
+		`X"><svg onload=alert(4)>`: `X-22-3e-3csvg-20onload-3dalert-284-29-3e`,
+	}
+
+	for name, want := range ids {
+		if got := variableID(name); got != want {
+			t.Errorf("variableID(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestDeclarationKey(t *testing.T) {
 	view := func(change func(*monitorconfig.View)) monitorconfig.View {
 		v := monitorconfig.View{Declared: true, Declaration: &settings.Declaration{Fields: []settings.Field{
