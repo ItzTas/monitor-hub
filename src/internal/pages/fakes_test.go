@@ -94,6 +94,8 @@ type fakeSettings struct {
 	errs     map[string]error
 	changes  []monitorconfig.Change
 	calls    map[string]int
+	// onSave runs inside Save, with the lock held, to change what the calls after it get.
+	onSave func()
 }
 
 func newFakeSettings() *fakeSettings {
@@ -112,6 +114,9 @@ func (f *fakeSettings) Save(_ context.Context, _ string, change monitorconfig.Ch
 	defer f.mu.Unlock()
 	f.calls["Save"]++
 	f.changes = append(f.changes, change)
+	if f.onSave != nil {
+		f.onSave()
+	}
 	return f.saved, f.errs["Save"]
 }
 

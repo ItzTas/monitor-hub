@@ -54,7 +54,10 @@ func Register(mux *http.ServeMux, deps Deps) {
 		"GET /settings":                      s.authed(s.list),
 		"GET /settings/{name}":               s.authed(s.may(access.Configure, s.monitor)),
 		"GET /settings/{name}/variables/new": s.authed(s.may(access.Configure, s.newVariable)),
+		"POST /settings/{name}":              s.changes(s.may(access.Configure, s.saveForm)),
 		"POST /settings/{name}/form":         s.changes(s.may(access.Configure, s.edit)),
+		"GET /settings/{name}/progress":      s.authed(s.may(access.Configure, s.followRestart)),
+		"POST /settings/{name}/check":        s.changes(s.may(access.Check, s.checkNow)),
 	}
 	for pattern, handler := range routes {
 		mux.Handle(pattern, secureHeaders(handler))

@@ -3,6 +3,7 @@ package pages
 import (
 	"html"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -158,4 +159,39 @@ func options(body, id string) []choice {
 func handlers(body string) []string {
 	unquoted := regexp.MustCompile(`="[^"]*"`).ReplaceAllString(body, `=""`)
 	return regexp.MustCompile(`<[^>]*\son[a-z]+=`).FindAllString(unquoted, -1)
+}
+
+// drawnForm is what a browser sends for the forms in body when no button is pressed: every
+// named input, a checkbox only when checked, and each select's selected option, else its first.
+func drawnForm(body string) url.Values {
+	form := url.Values{}
+	for _, tag := range regexp.MustCompile(`<input\b[^>]*>`).FindAllString(body, -1) {
+		name, ok := attr(tag, "name")
+		_, checked := attr(tag, "checked")
+		if !ok || hasAttr(tag, "type", "checkbox") && !checked {
+			continue
+		}
+		value, _ := attr(tag, "value")
+		form.Add(name, value)
+	}
+	for _, m := range regexp.MustCompile(`(?s)<select\b([^>]*)>(.*?)</select>`).FindAllStringSubmatch(body, -1) {
+		name, _ := attr("<select"+m[1]+">", "name")
+		var first, picked *string
+		for _, o := range regexp.MustCompile(`<option\b[^>]*>`).FindAllString(m[2], -1) {
+			value, _ := attr(o, "value")
+			if first == nil {
+				first = &value
+			}
+			if _, selected := attr(o, "selected"); selected && picked == nil {
+				picked = &value
+			}
+		}
+		if picked == nil {
+			picked = first
+		}
+		if picked != nil {
+			form.Add(name, *picked)
+		}
+	}
+	return form
 }

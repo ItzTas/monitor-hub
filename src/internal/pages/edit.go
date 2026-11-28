@@ -24,13 +24,11 @@ func (s *site) edit(w http.ResponseWriter, r *http.Request) {
 	}
 	l, err := s.load(r.Context(), name, access.FromContext(r.Context()), !isHTMX(r))
 	if err != nil {
-		s.failToLoad(w, r, name, err)
+		s.failToLoad(w, r, name, err, msgDatabaseRead)
 		return
 	}
 	if sent != declarationKey(l.view) {
-		e := buildEditor(name, l.view, l.progress, nil, nil)
-		e.Outcome.Message = msgDeclaration
-		s.drawEditor(w, r, http.StatusConflict, name, l, e)
+		s.refresh(w, r, name, l, msgDeclaration)
 		return
 	}
 	sub := applyOp(l.view.Declaration, parseSubmission(l.view, r.PostForm), r.PostForm.Get("op"))

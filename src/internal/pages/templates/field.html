@@ -1,15 +1,17 @@
 {{define "field"}}
 {{- if eq .Kind "object"}}
-<fieldset class="object">
+<fieldset class="object{{if .Error}} has-error{{end}}" id="f-{{.ID}}"{{if .DescribedBy}} aria-describedby="{{.DescribedBy}}"{{end}}>
 <legend>{{.Label}}{{if .Required}} <span class="required">Required</span>{{end}}</legend>
 {{template "notes" .}}
+{{template "error" .}}
 {{- range .Children}}{{template "field" .}}{{end}}
 {{template "back" .Back}}
 </fieldset>
 {{- else if eq .Kind "list"}}
-<fieldset class="list">
+<fieldset class="list{{if .Error}} has-error{{end}}" id="f-{{.ID}}"{{if .DescribedBy}} aria-describedby="{{.DescribedBy}}"{{end}}>
 <legend>{{.Label}}{{if .Required}} <span class="required">Required</span>{{end}}</legend>
 {{template "notes" .}}
+{{template "error" .}}
 <input type="hidden" name="n:{{.Path}}" value="{{len .Items}}">
 {{- range .Items}}
 {{- if .Children}}
@@ -56,9 +58,7 @@
 <div class="field{{if .Error}} has-error{{end}}">
 <label for="f-{{.ID}}">{{.Label}}{{if .Required}} <span class="required">Required</span>{{end}}</label>
 {{template "notes" .}}
-{{- if .Error}}
-<p id="error-{{.ID}}" class="error"><span class="visually-hidden">Error: </span>{{.Error}}</p>
-{{- end}}
+{{template "error" .}}
 {{template "control" .}}
 {{template "back" .Back}}
 </div>
@@ -89,5 +89,11 @@
 {{define "back"}}
 {{- with .}}
 <label class="inline-check"><input type="checkbox" name="{{.Name}}" value="{{.Value}}"{{if .Checked}} checked{{end}}> {{.Text}}</label>
+{{- end}}
+{{- end}}
+
+{{define "error"}}
+{{- if .Error}}
+<p id="error-{{.ID}}" class="error"><span class="visually-hidden">Error: </span>{{.Error}}</p>
 {{- end}}
 {{- end}}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/ItzTas/monitor-hub/src/internal/access"
+	"github.com/ItzTas/monitor-hub/src/internal/monitorconfig"
 )
 
 //go:embed templates
@@ -23,6 +24,15 @@ const (
 	msgNoCheck      = "You do not have permission to ask this monitor for a check."
 	msgDeclaration  = "This monitor's settings changed since the page was loaded. The form now shows the current ones. The hub saved nothing."
 	msgNotSaved     = "Nothing is saved yet. Choose Save and restart to keep these changes."
+	msgRevision     = "The saved values changed in another tab or window. The form now shows them. The hub saved nothing, so make your changes again."
+	msgRestarting   = "The monitor is still restarting after the last save. Wait until it settles, then save again. The hub saved nothing."
+	msgBusy         = "Another save of this monitor is in progress. The hub saved nothing."
+	msgDatabaseSave = "The hub's database cannot be reached. The hub saved nothing."
+	msgValidator    = "The monitor could not check the values, so the hub saved nothing. Reason: "
+	msgChanged      = "Saved. The monitor's environment did not change, so the hub did not restart it."
+	msgNothing      = "Nothing to save: no value changed."
+	msgReread       = "The hub saved the values but could not read them back. Reload the page."
+	msgTooManyItems = "The lists in this configuration hold more than 1000 items in all, which is too many for this page. Change this field through the hub's API."
 )
 
 type layout struct {
@@ -43,7 +53,7 @@ func parseTemplates(funcs template.FuncMap) (*template.Template, map[string]*tem
 		"templates/layout.html", "templates/message.html", "templates/status.html", "templates/editor.html",
 		"templates/field.html", "templates/variables.html", "templates/ignored.html", "templates/outcome.html"))
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"login", "monitors", "monitor", "error"} {
+	for _, name := range []string{"login", "monitors", "monitor", "check", "error"} {
 		pages[name] = template.Must(template.Must(partials.Clone()).ParseFS(templateFiles, "templates/"+name+".html"))
 	}
 	return partials, pages
@@ -84,6 +94,7 @@ func (s *site) fail(w http.ResponseWriter, r *http.Request, status int, message 
 		http.StatusBadRequest:            "Incomplete form",
 		http.StatusForbidden:             "Request refused",
 		http.StatusNotFound:              "Not found",
+		http.StatusConflict:              "Not saved",
 		http.StatusRequestEntityTooLarge: "Form too large",
 		http.StatusInternalServerError:   "Something went wrong",
 		http.StatusBadGateway:            "The monitor could not check the values",
@@ -91,6 +102,18 @@ func (s *site) fail(w http.ResponseWriter, r *http.Request, status int, message 
 	}
 	title := titles[status]
 	s.page(w, r, status, "error", title, errorPage{Title: title, Message: message})
+}
+
+// failWith is fail for a save refused while the last one restarts: htmx also gets the element
+// that polls the restart.
+func (s *site) failWith(w http.ResponseWriter, r *http.Request, status int, message string, progress monitorconfig.Progress) {
+	if !isHTMX(r) || progress.State != monitorconfig.ProgressRestarting {
+		s.fail(w, r, status, message)
+		return
+	}
+	w.Header().Set("HX-Retarget", "#outcome")
+	w.Header().Set("HX-Reswap", "innerHTML")
+	s.fragment(w, status, "outcome", outcome{Monitor: r.PathValue("name"), Waiting: true, Message: message})
 }
 
 func (s *site) fromHub(next http.HandlerFunc) http.HandlerFunc {

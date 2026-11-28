@@ -521,6 +521,12 @@ func TestAClientThatLeftGetsNothing(t *testing.T) {
 		{"the monitor cannot be read for a list edit", func() { configs.errs["Read"] = errors.New("database down") }, func() *httptest.ResponseRecorder {
 			return serve(ctx, mux, http.MethodPost, "/settings/sei/form", "declaration=x&op=add:labels", fromHub, withCookie(cookie("admin")))
 		}},
+		{"the progress cannot be read", func() { configs.errs["Progress"] = errors.New("database down") }, func() *httptest.ResponseRecorder {
+			return serve(ctx, mux, http.MethodGet, "/settings/sei/progress", "", withCookie(cookie("admin")), withHeader("HX-Request", "true"))
+		}},
+		{"the check fails", func() { monitored.checkErr = errors.New("deadline exceeded") }, func() *httptest.ResponseRecorder {
+			return serve(ctx, mux, http.MethodPost, "/settings/sei/check", "", fromHub, withCookie(cookie("admin")), withHeader("HX-Request", "true"))
+		}},
 		{"the session cannot be read", func() { people.sessionErr = errors.New("database down") }, func() *httptest.ResponseRecorder {
 			return serve(ctx, mux, http.MethodGet, "/settings", "", withCookie(cookie("admin")))
 		}},

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/ItzTas/monitor-hub/src/internal/monitorconfig"
@@ -32,6 +33,38 @@ func variableID(name string) string {
 		fmt.Fprintf(&b, "-%02x", c)
 	}
 	return b.String()
+}
+
+// formPaths moves each list index of the problems from the saved document to the form, list by
+// list from the outside in, since the form may hold empty items the save dropped. An index
+// the form does not have stays as it came.
+func formPaths(problems []monitorconfig.Problem, indexes map[string][]int) []monitorconfig.Problem {
+	out := make([]monitorconfig.Problem, len(problems))
+	for i, p := range problems {
+		out[i] = monitorconfig.Problem{Path: formPath(p.Path, indexes), Message: p.Message}
+	}
+	return out
+}
+
+func formPath(path string, indexes map[string][]int) string {
+	var b strings.Builder
+	rest := path
+	for {
+		open := strings.Index(rest, "[")
+		end := strings.Index(rest, "]")
+		if open < 0 || end < open {
+			b.WriteString(rest)
+			return b.String()
+		}
+		b.WriteString(rest[:open])
+		digits := rest[open+1 : end]
+		form := indexes[b.String()]
+		if i, err := strconv.Atoi(digits); err == nil && 0 <= i && i < len(form) {
+			digits = strconv.Itoa(form[i])
+		}
+		b.WriteString("[" + digits + "]")
+		rest = rest[end+1:]
+	}
 }
 
 // declarationKey changes with anything in the declaration, so a form drawn from an older one

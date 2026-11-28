@@ -1,10 +1,47 @@
 {{define "outcome"}}
+{{- if .Focus}}
+<div tabindex="-1" autofocus>{{template "result" .}}</div>
+{{- else}}{{template "result" .}}{{end}}
+{{- end}}
+
+{{define "result"}}
 {{- with .Message}}
 <p>{{.}}</p>
 {{- end}}
+{{- if or .Restarting .Waiting}}
 {{- if .Restarting}}
 <p>Saved. The monitor is restarting.</p>
+{{- end}}
 <div hx-get="/settings/{{.Monitor}}/progress?shown=restarting" hx-trigger="every 1s" hx-target="#outcome" hx-swap="innerHTML"></div>
 <noscript><a href="/settings/{{.Monitor}}/progress">Refresh to see whether it started</a></noscript>
+{{- else if eq .Settled "up"}}
+<p class="outcome-ok">The monitor is running with the new values.</p>
+<p><span class="state state-{{.State}}">{{.StateText}}</span></p>
+{{- with .Said}}
+<p class="pre-line">{{.}}</p>
+{{- end}}
+{{- else if eq .Settled "failed"}}
+<p class="outcome-bad">The monitor did not start.</p>
+{{- with .Reason}}
+<p class="pre-line">{{.}}</p>
+{{- end}}
+<p>The hub keeps the new values and keeps retrying at its usual intervals. Fix the values and save again.</p>
+{{- else if eq .Settled "no_answer"}}
+<p class="outcome-bad">The monitor did not answer within 75 seconds. Last known phase: {{.Phase}}.</p>
+{{- end}}
+{{- end}}
+
+{{define "progress"}}
+{{- template "outcome" .Outcome}}
+{{- if .Settled}}
+{{template "default-button" .Buttons}}
+{{template "save-button" .Buttons}}
+{{- end}}
+{{- end}}
+
+{{define "check-result"}}
+<p>{{.Text}}</p>
+{{- with .Said}}
+<p class="pre-line">{{.}}</p>
 {{- end}}
 {{- end}}

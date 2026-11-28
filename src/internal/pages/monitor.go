@@ -37,6 +37,7 @@ type statusView struct {
 	Phase       string
 	Reason      string
 	CanCheck    bool
+	Check       *checkView
 }
 
 // may refuses before anything is looked up, so the refusal does not tell whether the monitor exists.
@@ -63,18 +64,20 @@ func (s *site) monitor(w http.ResponseWriter, r *http.Request) {
 	}
 	l, err := s.load(r.Context(), name, access.FromContext(r.Context()), true)
 	if err != nil {
-		s.failToLoad(w, r, name, err)
+		s.failToLoad(w, r, name, err, msgDatabaseRead)
 		return
 	}
 	s.wholePage(w, r, http.StatusOK, name, l, buildEditor(name, l.view, l.progress, nil, nil))
 }
 
-// loaded is what a monitor's page is drawn from; start and listed only for the whole page.
+// loaded is what a monitor's page is drawn from; start and listed only for the whole page,
+// and check only after a check.
 type loaded struct {
 	view     monitorconfig.View
 	progress monitorconfig.Progress
 	start    monitorconfig.StartReport
 	listed   []monitors.Monitor
+	check    *checkView
 }
 
 func (s *site) load(ctx context.Context, name string, p access.Principal, whole bool) (loaded, error) {
@@ -96,13 +99,15 @@ func (s *site) wholePage(w http.ResponseWriter, r *http.Request, status int, nam
 		shown = &l.listed[i]
 	}
 	page := monitorPage{Name: name, Title: name, Status: newStatus(name, p, l.start, shown), Editor: e}
+	page.Status.Check = l.check
 	if shown != nil && shown.DisplayName != "" {
 		page.Title = shown.DisplayName
 	}
 	s.page(w, r, status, "monitor", page.Title, page)
 }
 
-func (s *site) failToLoad(w http.ResponseWriter, r *http.Request, name string, err error) {
+// failToLoad answers a failed load; message says what the database failure stopped.
+func (s *site) failToLoad(w http.ResponseWriter, r *http.Request, name string, err error, message string) {
 	if r.Context().Err() != nil {
 		return
 	}
@@ -111,7 +116,7 @@ func (s *site) failToLoad(w http.ResponseWriter, r *http.Request, name string, e
 		return
 	}
 	s.deps.Log.ErrorContext(r.Context(), "could not read a monitor for the settings page", "monitor", name, "error", err)
-	s.fail(w, r, http.StatusServiceUnavailable, msgDatabaseRead)
+	s.fail(w, r, http.StatusServiceUnavailable, message)
 }
 
 // newVariable is one more blank row for "Add another variable", which only htmx asks for.
@@ -130,18 +135,7 @@ func (s *site) newVariable(w http.ResponseWriter, r *http.Request) {
 
 // newStatus takes the monitor as List gave it, or nil when List left it out.
 func newStatus(name string, p access.Principal, start monitorconfig.StartReport, m *monitors.Monitor) statusView {
-	phases := map[supervisor.Phase]string{
-		supervisor.PhaseNotStarted: "Not started yet",
-		supervisor.PhaseStarting:   "Starting",
-		supervisor.PhaseRunning:    "Running",
-		supervisor.PhaseFailed:     "Failed to start",
-		supervisor.PhaseExited:     "Stopped after starting",
-	}
-	v := statusView{Monitor: name, CanCheck: p.Can(access.Check, name), Reason: start.Reason}
-	v.Phase = phases[start.Phase]
-	if v.Phase == "" {
-		v.Phase = phases[supervisor.PhaseNotStarted]
-	}
+	v := statusView{Monitor: name, CanCheck: p.Can(access.Check, name), Reason: start.Reason, Phase: phaseText(start.Phase)}
 	if m != nil {
 		v.Listed, v.Running, v.Message = true, m.Running, m.Message
 		v.State, v.StateText = monitorState(m.State)
@@ -149,6 +143,21 @@ func newStatus(name string, p access.Principal, start monitorconfig.StartReport,
 	}
 	v.ShowStart = !v.Listed || !v.Running
 	return v
+}
+
+// phaseText reads a phase the page does not know, the zero one included, as not started.
+func phaseText(phase supervisor.Phase) string {
+	phases := map[supervisor.Phase]string{
+		supervisor.PhaseNotStarted: "Not started yet",
+		supervisor.PhaseStarting:   "Starting",
+		supervisor.PhaseRunning:    "Running",
+		supervisor.PhaseFailed:     "Failed to start",
+		supervisor.PhaseExited:     "Stopped after starting",
+	}
+	if text, ok := phases[phase]; ok {
+		return text
+	}
+	return phases[supervisor.PhaseNotStarted]
 }
 
 func localTime(t *time.Time) string {

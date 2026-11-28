@@ -21,7 +21,7 @@
 {{- end}}
 {{- if .CanCheck}}
 <form method="post" action="/settings/{{.Monitor}}/check" hx-post="/settings/{{.Monitor}}/check" hx-target="#check-result" hx-swap="innerHTML"><button type="submit">Check now</button></form>
-<div id="check-result" role="status"></div>
+<div id="check-result" role="status">{{with .Check}}{{template "check-result" .}}{{end}}</div>
 {{- end}}
 </section>
 {{- end}}

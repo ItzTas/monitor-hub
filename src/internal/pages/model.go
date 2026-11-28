@@ -44,7 +44,7 @@ type editor struct {
 	Revision    int64
 	Declaration string
 	Outcome     outcome
-	Restarting  bool
+	Buttons     buttons
 	EnvProblems []monitorconfig.Problem
 	Summary     []summaryLine
 	TypedSecret bool
@@ -54,10 +54,27 @@ type editor struct {
 	Ignored     []ignoredRow
 }
 
+// outcome is what the last save or restart came to. Focus is for the answer to a save, so the
+// result takes the focus; what the poll brings never does.
 type outcome struct {
 	Monitor    string
 	Restarting bool
+	Waiting    bool // polls for an earlier save's restart without saying this one saved
 	Message    string
+	Focus      bool
+	Settled    monitorconfig.ProgressState
+	State      string
+	StateText  string
+	Said       string
+	Reason     string
+	Phase      string
+}
+
+// buttons are the visible save button and the hidden one Enter presses; OutOfBand swaps them
+// in from a progress answer.
+type buttons struct {
+	Restarting bool
+	OutOfBand  bool
 }
 
 // summaryLine links to where its problem is drawn, when it is.
@@ -149,10 +166,11 @@ func buildEditor(name string, view monitorconfig.View, progress monitorconfig.Pr
 		Revision:    view.Revision,
 		Declaration: declarationKey(view),
 		Outcome:     outcome{Monitor: name, Restarting: restarting},
-		Restarting:  restarting,
+		Buttons:     buttons{Restarting: restarting},
 		EnvProblems: view.Problems,
 	}
 	b := newBuilder(name, view, posted, problems)
+	b.long = tooManyItems(view.Document)
 	if view.Declared {
 		e.Groups = b.groups()
 		e.Variables = b.variables()
@@ -170,6 +188,7 @@ type builder struct {
 	errs    map[string]string
 	drawn   map[string]string // problem path → id of where it is drawn
 	action  string
+	long    bool // the lists hold more items than a form may send
 	fields  map[string]monitorconfig.FieldState
 	secrets map[string]monitorconfig.SecretState
 }
@@ -247,6 +266,10 @@ func (b *builder) field(f settings.Field, path string, value any, top *monitorco
 		out.Kind, out.Reason = "readonly", f.Reason
 		return out
 	}
+	if top != nil && b.long && holdsList(f) {
+		out.Kind, out.Reason = "readonly", msgTooManyItems
+		return out
+	}
 	if f.Secret {
 		return b.secret(f, out, top)
 	}
@@ -257,10 +280,10 @@ func (b *builder) field(f settings.Field, path string, value any, top *monitorco
 	switch c.kind {
 	case "object":
 		out.Children = b.children(f.Fields, path, value)
-		return out
+		return b.withError(out)
 	case "list":
 		out.Items = b.items(f, path, value)
-		return out
+		return b.withError(out)
 	case "select":
 		out.Options = selectOptions(f, text, shown)
 	default:
