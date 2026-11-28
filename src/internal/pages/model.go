@@ -15,16 +15,21 @@ import (
 
 // submission is what a sent form holds, by path. Secrets and the typed values of secret
 // variables are read only to tell that something secret was typed: they are never drawn.
+// Indexes gives, for each list, the form index of each item in Values.
 type submission struct {
-	Texts     map[string]string
-	Counts    map[string]int
-	Secrets   map[string]string
-	Unset     map[string]bool
-	Clear     map[string]bool
-	Drop      map[string]bool
-	Variables map[string]string
-	VarUnset  map[string]bool
-	New       []newRow
+	Revision, Declaration string
+	Values                map[string]any
+	Texts                 map[string]string
+	Counts                map[string]int
+	Indexes               map[string][]int
+	Secrets               map[string]string
+	Unset                 map[string]bool
+	Clear                 map[string]bool
+	Drop                  map[string]bool
+	Variables             map[string]string
+	VarUnset              map[string]bool
+	New                   []newRow
+	Problems              []monitorconfig.Problem
 }
 
 type newRow struct {
@@ -52,6 +57,7 @@ type editor struct {
 type outcome struct {
 	Monitor    string
 	Restarting bool
+	Message    string
 }
 
 // summaryLine links to where its problem is drawn, when it is.

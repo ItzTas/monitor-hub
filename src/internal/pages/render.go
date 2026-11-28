@@ -21,6 +21,8 @@ const (
 	msgUnknown      = "No monitor has this name."
 	msgNoConfigure  = "You do not have permission to change this monitor's configuration. An admin can give you the configure permission."
 	msgNoCheck      = "You do not have permission to ask this monitor for a check."
+	msgDeclaration  = "This monitor's settings changed since the page was loaded. The form now shows the current ones. The hub saved nothing."
+	msgNotSaved     = "Nothing is saved yet. Choose Save and restart to keep these changes."
 )
 
 type layout struct {
@@ -99,6 +101,12 @@ func (s *site) fromHub(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// changes guards a route that changes state: the origin, then the session; the route's own
+// permission check comes after.
+func (s *site) changes(next http.HandlerFunc) http.HandlerFunc {
+	return s.fromHub(s.authed(next))
 }
 
 // authed lets in only a session, and hands next the principal in the context.

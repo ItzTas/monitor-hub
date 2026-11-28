@@ -1,4 +1,7 @@
 {{define "outcome"}}
+{{- with .Message}}
+<p>{{.}}</p>
+{{- end}}
 {{- if .Restarting}}
 <p>Saved. The monitor is restarting.</p>
 <div hx-get="/settings/{{.Monitor}}/progress?shown=restarting" hx-trigger="every 1s" hx-target="#outcome" hx-swap="innerHTML"></div>

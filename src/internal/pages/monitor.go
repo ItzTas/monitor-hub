@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"slices"
@@ -60,31 +61,45 @@ func (s *site) monitor(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusNotFound, msgUnknown)
 		return
 	}
-	p := access.FromContext(r.Context())
-	var (
-		view     monitorconfig.View
-		progress monitorconfig.Progress
-		start    monitorconfig.StartReport
-		listed   []monitors.Monitor
-	)
-	g, ctx := errgroup.WithContext(r.Context())
-	g.Go(func() (err error) { view, err = s.deps.Settings.Read(ctx, name); return err })
-	g.Go(func() (err error) { progress, err = s.deps.Settings.Progress(ctx, name); return err })
-	g.Go(func() (err error) { start, err = s.deps.Settings.LastStart(ctx, name); return err })
-	g.Go(func() (err error) { listed, err = s.deps.Monitors.List(ctx, p); return err })
-	if err := g.Wait(); err != nil {
+	l, err := s.load(r.Context(), name, access.FromContext(r.Context()), true)
+	if err != nil {
 		s.failToLoad(w, r, name, err)
 		return
 	}
-	var shown *monitors.Monitor
-	if i := slices.IndexFunc(listed, func(m monitors.Monitor) bool { return m.Name == name }); i >= 0 {
-		shown = &listed[i]
+	s.wholePage(w, r, http.StatusOK, name, l, buildEditor(name, l.view, l.progress, nil, nil))
+}
+
+// loaded is what a monitor's page is drawn from; start and listed only for the whole page.
+type loaded struct {
+	view     monitorconfig.View
+	progress monitorconfig.Progress
+	start    monitorconfig.StartReport
+	listed   []monitors.Monitor
+}
+
+func (s *site) load(ctx context.Context, name string, p access.Principal, whole bool) (loaded, error) {
+	var l loaded
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() (err error) { l.view, err = s.deps.Settings.Read(ctx, name); return err })
+	g.Go(func() (err error) { l.progress, err = s.deps.Settings.Progress(ctx, name); return err })
+	if whole {
+		g.Go(func() (err error) { l.start, err = s.deps.Settings.LastStart(ctx, name); return err })
+		g.Go(func() (err error) { l.listed, err = s.deps.Monitors.List(ctx, p); return err })
 	}
-	page := monitorPage{Name: name, Title: name, Status: newStatus(name, p, start, shown), Editor: buildEditor(name, view, progress, nil, nil)}
+	return l, g.Wait()
+}
+
+func (s *site) wholePage(w http.ResponseWriter, r *http.Request, status int, name string, l loaded, e editor) {
+	p := access.FromContext(r.Context())
+	var shown *monitors.Monitor
+	if i := slices.IndexFunc(l.listed, func(m monitors.Monitor) bool { return m.Name == name }); i >= 0 {
+		shown = &l.listed[i]
+	}
+	page := monitorPage{Name: name, Title: name, Status: newStatus(name, p, l.start, shown), Editor: e}
 	if shown != nil && shown.DisplayName != "" {
 		page.Title = shown.DisplayName
 	}
-	s.page(w, r, http.StatusOK, "monitor", page.Title, page)
+	s.page(w, r, status, "monitor", page.Title, page)
 }
 
 func (s *site) failToLoad(w http.ResponseWriter, r *http.Request, name string, err error) {
