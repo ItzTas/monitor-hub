@@ -42,6 +42,15 @@ CREATE TABLE deliveries (
 );
 CREATE INDEX deliveries_due ON deliveries (channel, next_attempt_at) WHERE status = 'pending';
 
+CREATE TABLE delivery_recipients (
+    event_seq BIGINT NOT NULL,
+    channel TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (event_seq, channel, recipient),
+    FOREIGN KEY (event_seq, channel) REFERENCES deliveries (event_seq, channel) ON DELETE CASCADE
+);
+
 CREATE TABLE consumers (
     name       TEXT PRIMARY KEY,
     token_hash TEXT NOT NULL UNIQUE,

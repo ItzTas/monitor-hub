@@ -46,6 +46,13 @@ type Delivery struct {
 	LastError     string
 }
 
+type DeliveryRecipient struct {
+	EventSeq  int64
+	Channel   string
+	Recipient string
+	SentAt    time.Time
+}
+
 type Event struct {
 	Seq        int64
 	Monitor    string

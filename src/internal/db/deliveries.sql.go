@@ -97,6 +97,58 @@ func (q *Queries) QueueDeliveries(ctx context.Context, arg QueueDeliveriesParams
 	return err
 }
 
+const reachedRecipients = `-- name: ReachedRecipients :many
+SELECT event_seq, recipient FROM delivery_recipients
+WHERE channel = $1 AND event_seq = ANY($2::bigint[])
+`
+
+type ReachedRecipientsParams struct {
+	Channel string
+	Seqs    []int64
+}
+
+type ReachedRecipientsRow struct {
+	EventSeq  int64
+	Recipient string
+}
+
+func (q *Queries) ReachedRecipients(ctx context.Context, arg ReachedRecipientsParams) ([]ReachedRecipientsRow, error) {
+	rows, err := q.db.Query(ctx, reachedRecipients, arg.Channel, arg.Seqs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReachedRecipientsRow
+	for rows.Next() {
+		var i ReachedRecipientsRow
+		if err := rows.Scan(&i.EventSeq, &i.Recipient); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recordRecipient = `-- name: RecordRecipient :exec
+INSERT INTO delivery_recipients (event_seq, channel, recipient)
+SELECT unnest($1::bigint[]), $2::text, $3::text
+ON CONFLICT DO NOTHING
+`
+
+type RecordRecipientParams struct {
+	Seqs      []int64
+	Channel   string
+	Recipient string
+}
+
+func (q *Queries) RecordRecipient(ctx context.Context, arg RecordRecipientParams) error {
+	_, err := q.db.Exec(ctx, recordRecipient, arg.Seqs, arg.Channel, arg.Recipient)
+	return err
+}
+
 const updateDelivery = `-- name: UpdateDelivery :exec
 UPDATE deliveries
 SET status = $3, attempts = $4, next_attempt_at = $5, last_error = $6, sent_at = $7

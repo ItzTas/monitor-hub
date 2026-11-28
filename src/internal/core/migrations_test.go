@@ -144,3 +144,20 @@ func TestAccessTablesCascadeAndCheckTheirValues(t *testing.T) {
 		expect(t, table, count(t, db, table), 0)
 	}
 }
+
+func TestDeliveryRecipientsBelongToTheirDelivery(t *testing.T) {
+	db := migratedDatabase(t)
+	execAll(t, db,
+		`INSERT INTO monitors (name, display_name, version) VALUES ('sei', 'SEI', '')`,
+		`INSERT INTO events (monitor, event_id, monitor_seq, kind, severity, occurred_at, title, body, url)
+			VALUES ('sei', 'e1', 1, 'k', 1, now(), 't', '', '')`,
+		`INSERT INTO deliveries (event_seq, channel, next_attempt_at) SELECT seq, 'whatsapp', now() FROM events`,
+		`INSERT INTO delivery_recipients (event_seq, channel, recipient) SELECT seq, 'whatsapp', '5500900000001' FROM events`,
+	)
+
+	expectCode(t, db, "same recipient twice", `INSERT INTO delivery_recipients (event_seq, channel, recipient) SELECT seq, 'whatsapp', '5500900000001' FROM events`, "23505")
+	expectCode(t, db, "recipient without a delivery", `INSERT INTO delivery_recipients (event_seq, channel, recipient) SELECT seq, 'telegram', '5500900000001' FROM events`, "23503")
+
+	execAll(t, db, `DELETE FROM events`)
+	expect(t, "delivery recipients of a deleted event", count(t, db, "delivery_recipients"), 0)
+}

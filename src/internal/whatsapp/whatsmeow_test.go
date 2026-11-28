@@ -118,7 +118,7 @@ func TestConnectsOnDemand(t *testing.T) {
 		"login times out": {&fakeMessenger{paired: true}, "the WhatsApp session did not log in within 30s"},
 	}
 	for name, tt := range tests {
-		err := NewChannel(NewWhatsmeow(tt.messenger), []string{number}).Send(t.Context(), notify.NewTestMessage())
+		err := NewChannel(NewWhatsmeow(tt.messenger), []string{number}, newLedger()).Send(t.Context(), notify.NewTestMessage())
 
 		got := ""
 		if err != nil {
@@ -131,7 +131,7 @@ func TestConnectsOnDemand(t *testing.T) {
 			t.Errorf("%s: sent %d messages", name, len(tt.messenger.sent))
 		}
 	}
-	if !errors.Is(NewChannel(NewWhatsmeow(&fakeMessenger{connectErr: ErrNotPaired}), nil).Send(t.Context(), notify.NewTestMessage()), ErrNotPaired) {
+	if !errors.Is(NewChannel(NewWhatsmeow(&fakeMessenger{connectErr: ErrNotPaired}), nil, newLedger()).Send(t.Context(), notify.NewTestMessage()), ErrNotPaired) {
 		t.Error("the not paired error does not unwrap to ErrNotPaired")
 	}
 }
@@ -147,7 +147,7 @@ func TestReadyOnlyWithAPairedSession(t *testing.T) {
 func TestConnectReturnsWhenTheContextEnds(t *testing.T) {
 	hung := &fakeMessenger{paired: true, hang: make(chan struct{})}
 	t.Cleanup(func() { close(hung.hang) })
-	channel := NewChannel(NewWhatsmeow(hung), []string{number})
+	channel := NewChannel(NewWhatsmeow(hung), []string{number}, newLedger())
 	for attempt := 1; attempt <= 2; attempt++ {
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 
@@ -178,7 +178,7 @@ func TestFailedLoginAnswersAtOnceUntilTheRetryWindowEnds(t *testing.T) {
 		now := time.Unix(1_800_000_000, 0)
 		gateway := NewWhatsmeow(tt.messenger)
 		gateway.now = func() time.Time { return now }
-		channel := NewChannel(gateway, []string{number})
+		channel := NewChannel(gateway, []string{number}, newLedger())
 		calls := func() int { return tt.messenger.connects + tt.messenger.waits }
 
 		first := channel.Send(t.Context(), notify.NewTestMessage())
@@ -215,7 +215,7 @@ func TestLimitsEndASendWithoutADeadline(t *testing.T) {
 	for name, tt := range tests {
 		gateway := NewWhatsmeow(tt.messenger)
 		gateway.loginTimeout = 20 * time.Millisecond
-		channel := NewChannel(gateway, []string{number})
+		channel := NewChannel(gateway, []string{number}, newLedger())
 		channel.sendTimeout = 20 * time.Millisecond
 
 		err := sendWithin(t, t.Context(), channel)
@@ -234,10 +234,10 @@ func TestWhatsmeowLooksNumbersUpWithAPlus(t *testing.T) {
 	_, offErr := gateway.Lookup(t.Context(), other)
 
 	if err != nil || chat != numberChat {
-		t.Errorf("Lookup = %v, the chat is the JID WhatsApp knows: %v", err, chat == numberChat)
+		t.Errorf("Lookup = %s, the chat is the JID WhatsApp knows: %v", redact(fmt.Sprint(err)), chat == numberChat)
 	}
 	if !errors.Is(offErr, ErrNotOnWhatsApp) {
-		t.Errorf("Lookup of a number off WhatsApp = %v", offErr)
+		t.Errorf("Lookup of a number off WhatsApp = %s", redact(fmt.Sprint(offErr)))
 	}
 	want := [][]string{{"+" + number}, {"+" + other}}
 	if !slices.EqualFunc(messenger.queried, want, slices.Equal) {
@@ -254,6 +254,6 @@ func TestWhatsmeowSendsTheTextToTheChat(t *testing.T) {
 
 	want := []delivered{{registered, "hello"}, {groupJID, "hi all"}}
 	if errs != nil || !slices.Equal(messenger.sent, want) {
-		t.Errorf("SendText = %v, sent %d messages, as expected: %v", errs, len(messenger.sent), slices.Equal(messenger.sent, want))
+		t.Errorf("SendText = %s, sent %d messages, as expected: %v", redact(fmt.Sprint(errs)), len(messenger.sent), slices.Equal(messenger.sent, want))
 	}
 }
