@@ -78,6 +78,10 @@ func (h *Handler) Progress(ctx context.Context, input *NameInput) (*ProgressOutp
 }
 
 func failure(ctx context.Context, err error) error {
+	// A client that left also cancels the database calls; that is no database failure.
+	if ctx.Err() != nil {
+		return gate.Failure(ctx, err)
+	}
 	var problems *monitorconfig.ProblemsError
 	if errors.As(err, &problems) {
 		return &ProblemsResponse{Problems: problemsOf(problems.Problems)}

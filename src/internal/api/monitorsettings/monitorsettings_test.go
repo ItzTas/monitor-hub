@@ -42,6 +42,8 @@ type fakeService struct {
 	err      error
 	changes  []monitorconfig.Change
 	calls    map[string]int
+	// leave, when set, runs on every call, as a client that goes away mid-request.
+	leave func()
 }
 
 func (f *fakeService) note(method string) {
@@ -49,6 +51,9 @@ func (f *fakeService) note(method string) {
 		f.calls = map[string]int{}
 	}
 	f.calls[method]++
+	if f.leave != nil {
+		f.leave()
+	}
 }
 
 func (f *fakeService) Read(context.Context, string) (monitorconfig.View, error) {
@@ -139,6 +144,10 @@ func withOrigin(origin string) edit {
 
 func withoutOrigin(r *http.Request) {
 	r.Header.Del("Origin")
+}
+
+func withContext(ctx context.Context) edit {
+	return func(r *http.Request) { *r = *r.WithContext(ctx) }
 }
 
 func (b *bench) serve(t *testing.T, method, target, body string, edits ...edit) *httptest.ResponseRecorder {
@@ -509,6 +518,23 @@ func TestSettingsErrorsAnswerTheirStatus(t *testing.T) {
 				t.Errorf("the logs miss the failed request:\n%s", redacted(b.logs.String()))
 			}
 		})
+	}
+}
+
+func TestAClientThatLeavesGets499(t *testing.T) {
+	b := newBench(t)
+	b.fake.err = errors.Join(monitorconfig.ErrDatabase, context.Canceled)
+	session := b.session(t, "paulo-santos")
+	for _, r := range routes {
+		ctx, cancel := context.WithCancel(t.Context())
+		b.fake.leave = cancel
+		rec := b.serve(t, r.method, r.target, r.body, session, withContext(ctx))
+		if rec.Code != 499 {
+			t.Errorf("%s %s for a client that left = %d %s, want 499", r.method, r.target, rec.Code, shown(t, rec))
+		}
+	}
+	if strings.Contains(b.logs.String(), "API request failed") {
+		t.Errorf("a client that left was logged as a failure:\n%s", redacted(b.logs.String()))
 	}
 }
 
