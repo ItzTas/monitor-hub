@@ -107,7 +107,7 @@ func TestSecureHeaders(t *testing.T) {
 	want := map[string]string{
 		"Content-Security-Policy":    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
 		"X-Frame-Options":            "DENY",
-		"Referrer-Policy":            "no-referrer",
+		"Referrer-Policy":            "same-origin",
 		"Cross-Origin-Opener-Policy": "same-origin",
 	}
 	for name, value := range want {

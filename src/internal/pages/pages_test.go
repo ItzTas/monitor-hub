@@ -555,7 +555,7 @@ func TestEveryPageCarriesTheSecurityHeaders(t *testing.T) {
 	want := map[string]string{
 		"Content-Security-Policy":    contentSecurityPolicy,
 		"X-Frame-Options":            "DENY",
-		"Referrer-Policy":            "no-referrer",
+		"Referrer-Policy":            "same-origin",
 		"Cross-Origin-Opener-Policy": "same-origin",
 	}
 
