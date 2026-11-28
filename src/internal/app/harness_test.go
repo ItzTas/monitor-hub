@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -24,6 +26,7 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/core"
 	"github.com/ItzTas/monitor-hub/src/internal/core/coretest"
+	"github.com/ItzTas/monitor-hub/src/internal/monitorconfig"
 )
 
 const ntfyToken = "tk_ntfy0123456789abcdef"
@@ -63,17 +66,18 @@ func (b *ntfyInbox) messages() []notification {
 }
 
 type bench struct {
-	t       *testing.T
-	environ []string
-	dataDir string
-	ntfy    *ntfyInbox
+	t           *testing.T
+	environ     []string
+	monitorsDir string
+	dataDir     string
+	ntfy        *ntfyInbox
 }
 
 func newBench(t *testing.T, extra ...string) *bench {
 	t.Helper()
 	monitorsDir := t.TempDir()
-	installTestmonitor(t, filepath.Join(monitorsDir, "testmonitor"))
-	b := &bench{t: t, dataDir: t.TempDir(), ntfy: &ntfyInbox{arrived: make(chan notification, 16)}}
+	installTestmonitor(t, filepath.Join(monitorsDir, "testmonitor"), "", "")
+	b := &bench{t: t, monitorsDir: monitorsDir, dataDir: t.TempDir(), ntfy: &ntfyInbox{arrived: make(chan notification, 16)}}
 	ntfy := httptest.NewServer(b.ntfy)
 	t.Cleanup(ntfy.Close)
 	b.environ = append([]string{
@@ -85,11 +89,14 @@ func newBench(t *testing.T, extra ...string) *bench {
 		"NTFY_TOKEN=" + ntfyToken,
 		"PATH=" + os.Getenv("PATH"),
 		"TESTMONITOR__EVENTS=2",
+		"TESTMONITOR__RECORD_START=EVENTS",
 	}, extra...)
 	return b
 }
 
-func installTestmonitor(t *testing.T, dir string) {
+// installTestmonitor writes the test monitor into dir, with settingsJSON as its settings.json
+// and validatorMode as its validator-mode file; an empty text writes no file.
+func installTestmonitor(t *testing.T, dir, settingsJSON, validatorMode string) {
 	t.Helper()
 	binary, err := os.ReadFile(testmonitorBinary)
 	if err != nil {
@@ -104,6 +111,15 @@ func installTestmonitor(t *testing.T, dir string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "testmonitor"), binary, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	optional := map[string]string{"settings.json": settingsJSON, "validator-mode": validatorMode}
+	for name, content := range optional {
+		if content == "" {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -409,4 +425,103 @@ func fieldNames(t *testing.T, object string) []string {
 		names = append(names, fmt.Sprint(name))
 	}
 	return names
+}
+
+// run runs the hub until the test ends or the returned stop is called; stop waits for Run to return.
+func run(t *testing.T, app *application) (stop func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- app.Run(ctx) }()
+	stop = sync.OnceFunc(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("Run returned %v", err)
+			}
+		case <-time.After(15 * time.Second):
+			t.Error("Run did not return within 15s of the cancellation")
+		}
+	})
+	t.Cleanup(stop)
+	return stop
+}
+
+func putSettings(t *testing.T, app *application, cookie *http.Cookie, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return sendSigned(t, app, http.MethodPut, "/api/monitors/testmonitor/settings", cookie, strings.NewReader(body))
+}
+
+func readSettings(t *testing.T, app *application, cookie *http.Cookie) map[string]any {
+	t.Helper()
+	rec := sendSigned(t, app, http.MethodGet, "/api/monitors/testmonitor/settings", cookie, nil)
+	var settings map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &settings); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("GET settings = %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
+	return settings
+}
+
+func waitProgress(t *testing.T, app *application, cookie *http.Cookie, want monitorconfig.ProgressState) map[string]any {
+	t.Helper()
+	var last string
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		rec := sendSigned(t, app, http.MethodGet, "/api/monitors/testmonitor/settings/progress", cookie, nil)
+		last = rec.Body.String()
+		var progress map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &progress); err == nil && rec.Code == http.StatusOK && progress["state"] == string(want) {
+			return progress
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("the progress did not reach %s within 15s; last: %s", want, last)
+	return nil
+}
+
+// starts lists the lines the test monitor writes as each process starts: its pid and its EVENTS.
+func (b *bench) starts() []string {
+	b.t.Helper()
+	data, err := os.ReadFile(filepath.Join(b.dataDir, "monitors", "testmonitor", "starts"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		b.t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+}
+
+type jsonLogs struct {
+	syncBuffer
+}
+
+func (l *jsonLogs) records(t *testing.T) []map[string]any {
+	t.Helper()
+	var records []map[string]any
+	for line := range strings.Lines(l.String()) {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("a log line is not JSON: %v", err)
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+// waitRecord waits up to 15s for a log record with message msg and returns it.
+func (l *jsonLogs) waitRecord(t *testing.T, msg string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, record := range l.records(t) {
+			if record["msg"] == msg {
+				return record
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("no %q log record within 15s", msg)
+	return nil
 }

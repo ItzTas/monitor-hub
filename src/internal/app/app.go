@@ -23,6 +23,7 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/ingest"
 	"github.com/ItzTas/monitor-hub/src/internal/modules/feed"
 	"github.com/ItzTas/monitor-hub/src/internal/modules/health"
+	"github.com/ItzTas/monitor-hub/src/internal/monitorconfig"
 	"github.com/ItzTas/monitor-hub/src/internal/notify"
 	"github.com/ItzTas/monitor-hub/src/internal/stream"
 	"github.com/ItzTas/monitor-hub/src/internal/supervisor"
@@ -48,16 +49,30 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 	if err != nil {
 		return nil, err
 	}
+	warnIgnoredSettings(entries, logger)
 	pool, err := core.OpenDatabase(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, err
 	}
-	monitors := supervisor.New(entries, environ, cfg.DataDir, logger)
+	store := monitorconfig.NewPostgres(pool)
+	documents := monitorconfig.NewDocuments(entries, environ, cfg.DataDir, store, logger)
+	monitors := supervisor.New(entries, environ, cfg.DataDir, logger, supervisor.WithDocuments(documents))
 	accountService := accounts.NewService(pool, now)
 	if err := accountService.Prepare(ctx, monitors.Names()); err != nil {
 		pool.Close()
 		return nil, err
 	}
+	settings := monitorconfig.NewService(monitorconfig.Deps{
+		Entries:    entries,
+		Environ:    environ,
+		DataRoot:   cfg.DataDir,
+		Store:      store,
+		Supervisor: monitors,
+		Checker:    monitorconfig.NewValidator(),
+		Log:        logger,
+		Now:        now,
+	})
+	settings.WarnIgnored(ctx)
 	link, sessions := whatsAppChannels(ctx, cfg.Channels.WhatsApp, pool, logger)
 	channels := notify.Channels(cfg.Channels, userAgent(), sessions...)
 	names := notify.ChannelNames(channels)
@@ -69,7 +84,7 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 	feed.Configure(mux, pool, feed.Options{PublicURL: cfg.PublicURL}, accountService, logger)
 	icons.Register(mux)
 	consumerapi.Register(mux, consumerapi.Deps{Consumers: consumerService, Stream: stream.NewService(stream.NewPostgres(pool), signal, registry), Log: logger})
-	api.Register(mux, api.Deps{Pool: pool, Monitors: monitors, Accounts: accountService, PublicURL: cfg.PublicURL, Log: logger, Consumers: consumerService, Registry: registry})
+	api.Register(mux, api.Deps{Pool: pool, Monitors: monitors, Accounts: accountService, PublicURL: cfg.PublicURL, Log: logger, Consumers: consumerService, Registry: registry, Settings: settings})
 	api.RegisterAccess(mux, api.AccessDeps{Accounts: accountService, Log: logger, PublicURL: cfg.PublicURL, After: time.After})
 	dispatcher := notify.NewDispatcher(notify.NewOutbox(pool), channels, logger, notify.WithClock(now, time.After))
 	return &application{
@@ -86,6 +101,14 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 		signal:     signal,
 		accounts:   accountService,
 	}, nil
+}
+
+func warnIgnoredSettings(entries []catalog.Entry, logger *slog.Logger) {
+	for _, entry := range entries {
+		if entry.SettingsError != nil {
+			logger.Warn("the monitor's settings.json is ignored; none of its configuration can be changed here", "monitor", entry.Manifest.Name, "error", entry.SettingsError)
+		}
+	}
 }
 
 func (a *application) Run(ctx context.Context) error {
