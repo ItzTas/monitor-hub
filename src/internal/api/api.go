@@ -14,6 +14,7 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/api/events"
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 	"github.com/ItzTas/monitor-hub/src/internal/api/monitors"
+	"github.com/ItzTas/monitor-hub/src/internal/api/monitorsettings"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
 	"github.com/ItzTas/monitor-hub/src/internal/stream"
 )
@@ -31,17 +32,19 @@ type Deps struct {
 	Log       *slog.Logger
 	Consumers *consumers.Service
 	Registry  *stream.Registry
+	Settings  monitorsettings.Service
 }
 
 func Register(mux *http.ServeMux, deps Deps) huma.API {
 	api := humago.New(mux, HumaConfig(deps.Log,
-		"The monitors monitor-hub runs, the events they reported and the consumers that read them. Send a personal token as Authorization: Bearer <token>, or the session cookie from POST /api/session.",
+		"The monitors monitor-hub runs, the events they reported, the consumers that read them and each monitor's configuration. Send a personal token as Authorization: Bearer <token>, or the session cookie from POST /api/session.",
 		"A personal token (mht_), shown once when it is created.",
 	))
 	api.UseMiddleware(gate.Middleware(api, deps.Accounts, deps.PublicURL))
 	monitors.Configure(api, deps.Pool, deps.Monitors)
 	events.Configure(api, deps.Pool)
 	consumerlist.Configure(api, deps.Consumers, deps.Registry)
+	monitorsettings.Configure(api, deps.Settings)
 	return api
 }
 

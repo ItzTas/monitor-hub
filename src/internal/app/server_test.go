@@ -53,3 +53,18 @@ func TestRequestLogsShowThePathWithoutTheQuery(t *testing.T) {
 		t.Error("the request log shows the query string, token included")
 	}
 }
+
+func TestBodyLimit(t *testing.T) {
+	cases := map[string]int64{
+		"/api/monitors/sei/settings":          131072,
+		"/api/monitors/sei/check":             1024,
+		"/api/monitors/sei/settings/progress": 1024,
+		"/api/monitors/a/b/settings":          1024,
+		"/api/session":                        1024,
+	}
+	for path, want := range cases {
+		if got := bodyLimit(path); got != want {
+			t.Errorf("bodyLimit(%q) = %d, want %d", path, got, want)
+		}
+	}
+}

@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/ItzTas/monitor-hub/src/internal/api/monitorsettings"
 )
 
 const (
@@ -78,7 +81,7 @@ func withMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 		started := time.Now()
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, bodyLimit(r.URL.Path))
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(recorder, r)
 		level := slog.LevelInfo
@@ -92,4 +95,14 @@ func withMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 			slog.Duration("duration", time.Since(started).Round(time.Millisecond)),
 		)
 	})
+}
+
+// bodyLimit lets only a configuration save, /api/monitors/<name>/settings, send a large body.
+func bodyLimit(path string) int64 {
+	rest, monitors := strings.CutPrefix(path, "/api/monitors/")
+	name, settings := strings.CutSuffix(rest, "/settings")
+	if !monitors || !settings || name == "" || strings.Contains(name, "/") {
+		return maxBodyBytes
+	}
+	return monitorsettings.BodyBytes
 }
