@@ -15,8 +15,8 @@
       "name": "check_interval_minutes",
       "label": "Check interval (minutes)",
       "help": "Time from the end of one check of the gazette to the start of the next. Decimals are allowed.",
-      "type": "string",
-      "default": "30",
+      "type": "number",
+      "default": 30,
       "group": "Monitoring",
       "env": "CHECK_INTERVAL_MINUTES"
     },

@@ -184,7 +184,7 @@ func TestTheSeiFormFollowsTheDeclaration(t *testing.T) {
 
 func TestTheDiarioFormHasAListOfTerms(t *testing.T) {
 	sc := scene{
-		document: map[string]any{"watch_terms": []any{"PAULO SANTOS", "0034712k"}, "check_interval_minutes": "30"},
+		document: map[string]any{"watch_terms": []any{"PAULO SANTOS", "0034712k"}, "check_interval_minutes": json.Number("30")},
 		sources: map[string]monitorconfig.Source{
 			"watch_terms": monitorconfig.SourceEnv, "check_interval_minutes": monitorconfig.SourceDefault,
 			"database_url": monitorconfig.SourceEnv, "gazette_api_url": monitorconfig.SourceDefault,
