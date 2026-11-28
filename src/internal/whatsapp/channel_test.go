@@ -6,117 +6,87 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
-
-	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/proto/waE2E"
-	"go.mau.fi/whatsmeow/types"
 
 	"github.com/ItzTas/monitor-hub/src/internal/notify"
 )
 
 const (
-	group  = "120363012345678901@g.us"
-	number = "5595991234567"
+	group      = "120363000000000001@g.us"
+	number     = "5500900000001"
+	other      = "5500900000002"
+	numberChat = "550000000001@s.whatsapp.net"
 )
 
-var registered = types.NewJID("559591234567", types.DefaultUserServer)
-
-type delivered struct {
-	to   types.JID
+type sentText struct {
+	chat string
 	text string
 }
 
-type fakeMessenger struct {
-	mu         sync.Mutex
-	paired     bool
-	connected  bool
-	loggedIn   bool
+type fakeGateway struct {
+	ready      bool
+	readyCtx   context.Context
 	connectErr error
-	hang       chan struct{}
 	connects   int
-	waits      int
-	numbers    map[string]types.JID
+	chats      map[string]string
 	lookups    int
 	sendErr    error
 	stall      bool
-	sent       []delivered
+	sent       []sentText
 }
 
-func (f *fakeMessenger) Paired() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.paired
+func (f *fakeGateway) Ready(ctx context.Context) bool {
+	f.readyCtx = ctx
+	return f.ready
 }
 
-func (f *fakeMessenger) IsConnected() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.connected
-}
-
-func (f *fakeMessenger) ConnectContext(context.Context) error {
-	f.mu.Lock()
+func (f *fakeGateway) Connect(context.Context) error {
 	f.connects++
-	hang := f.hang
-	f.mu.Unlock()
-	if hang != nil {
-		<-hang
+	return f.connectErr
+}
+
+func (f *fakeGateway) Lookup(_ context.Context, number string) (string, error) {
+	f.lookups++
+	chat, ok := f.chats[number]
+	if !ok {
+		return "", ErrNotOnWhatsApp
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.connectErr != nil {
-		return f.connectErr
+	return chat, nil
+}
+
+func (f *fakeGateway) SendText(ctx context.Context, chat, text string) error {
+	if f.stall {
+		<-ctx.Done()
+		return fmt.Errorf("failed to send to %s: %w", chat, ctx.Err())
 	}
-	f.connected = true
+	if f.sendErr != nil {
+		return fmt.Errorf("failed to send to %s: %w", chat, f.sendErr)
+	}
+	f.sent = append(f.sent, sentText{chat: chat, text: text})
 	return nil
 }
 
-func (f *fakeMessenger) WaitForConnection(time.Duration) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.waits++
-	return f.connected && f.loggedIn
+func sendWithin(t *testing.T, ctx context.Context, channel *Channel) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- channel.Send(ctx, notify.NewTestMessage()) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("Send still running after 5s")
+		return nil
+	}
 }
 
-func (f *fakeMessenger) IsOnWhatsApp(_ context.Context, phones []string) ([]types.IsOnWhatsAppResponse, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.lookups++
-	answers := make([]types.IsOnWhatsAppResponse, 0, len(phones))
-	for _, phone := range phones {
-		jid, ok := f.numbers[phone]
-		answers = append(answers, types.IsOnWhatsAppResponse{Query: phone, JID: jid, IsIn: ok})
-	}
-	return answers, nil
-}
-
-func (f *fakeMessenger) SendMessage(ctx context.Context, to types.JID, message *waE2E.Message, _ ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
-	f.mu.Lock()
-	stall, sendErr := f.stall, f.sendErr
-	f.mu.Unlock()
-	if stall {
-		<-ctx.Done()
-		return whatsmeow.SendResponse{}, fmt.Errorf("failed to send to %s: %w", to, ctx.Err())
-	}
-	if sendErr != nil {
-		return whatsmeow.SendResponse{}, fmt.Errorf("failed to get LID for PN %s: %w", to, sendErr)
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.sent = append(f.sent, delivered{to: to, text: message.GetConversation()})
-	return whatsmeow.SendResponse{}, nil
-}
-
-func online() *fakeMessenger {
-	return &fakeMessenger{paired: true, connected: true, loggedIn: true, numbers: map[string]types.JID{"+" + number: registered}}
+func gateway() *fakeGateway {
+	return &fakeGateway{ready: true, chats: map[string]string{number: numberChat}}
 }
 
 func TestSendsToTheNumberWhatsAppKnowsAndToGroups(t *testing.T) {
-	messenger := online()
-	channel := NewChannel(messenger, []string{number, group})
+	gw := gateway()
+	channel := NewChannel(gw, []string{number, group})
 	msg := notify.Message{Subject: "1 update from SEI", Body: "New document on process 00000.000001/2026-00"}
 
 	first := channel.Send(t.Context(), msg)
@@ -126,56 +96,80 @@ func TestSendsToTheNumberWhatsAppKnowsAndToGroups(t *testing.T) {
 		t.Fatalf("Send = %v, %v", first, second)
 	}
 	text := "monitor-hub: 1 update from SEI\n\nNew document on process 00000.000001/2026-00"
-	groupJID, _ := types.ParseJID(group)
-	want := []delivered{{registered, text}, {groupJID, text}, {registered, text}, {groupJID, text}}
-	if !slices.Equal(messenger.sent, want) || messenger.lookups != 1 || messenger.connects != 0 {
-		t.Errorf("sent %+v, %d lookups, %d connects", messenger.sent, messenger.lookups, messenger.connects)
+	want := []sentText{{numberChat, text}, {group, text}, {numberChat, text}, {group, text}}
+	if !slices.Equal(gw.sent, want) || gw.lookups != 1 || gw.connects != 2 {
+		t.Errorf("sent %d messages (as expected: %v), %d lookups, %d connects", len(gw.sent), slices.Equal(gw.sent, want), gw.lookups, gw.connects)
 	}
 }
 
 func TestANumberOffWhatsAppDoesNotStopTheOtherRecipients(t *testing.T) {
-	messenger := online()
-	channel := NewChannel(messenger, []string{"5595990000000", group})
+	gw := gateway()
+	channel := NewChannel(gw, []string{other, group})
 
 	err := channel.Send(t.Context(), notify.NewTestMessage())
 
-	if err == nil || err.Error() != "recipient 1 of 2: the number is not on WhatsApp" || len(messenger.sent) != 1 || messenger.sent[0].to.Server != types.GroupServer {
-		t.Errorf("Send = %v, sent %+v", err, messenger.sent)
+	if err == nil || err.Error() != "recipient 1 of 2: the number is not on WhatsApp" || !errors.Is(err, ErrNotOnWhatsApp) {
+		t.Errorf("Send = %v", err)
+	}
+	if len(gw.sent) != 1 || gw.sent[0].chat != group {
+		t.Errorf("sent %d messages, the group got one: %v", len(gw.sent), len(gw.sent) == 1 && gw.sent[0].chat == group)
 	}
 }
 
-func TestConnectsOnDemand(t *testing.T) {
+func TestFailedSendErrorsShowNoPhoneNumber(t *testing.T) {
+	failing := gateway()
+	failing.sendErr = errors.New("server returned error 500")
+	refused := gateway()
+	refused.connectErr = fmt.Errorf("noise handshake failed for %s:7@s.whatsapp.net", number)
 	tests := map[string]struct {
-		messenger *fakeMessenger
-		want      string
+		gateway *fakeGateway
+		want    string
 	}{
-		"reconnects":      {&fakeMessenger{paired: true, loggedIn: true, numbers: map[string]types.JID{"+" + number: registered}}, ""},
-		"not paired":      {&fakeMessenger{connectErr: ErrNotPaired}, "could not connect to WhatsApp: not paired with WhatsApp; run monitor-hub whatsapp-pair"},
-		"login times out": {&fakeMessenger{paired: true}, "the WhatsApp session did not log in within 30s"},
+		"send":    {failing, "recipient 1 of 1: failed to send to [redacted]@s.whatsapp.net: server returned error 500"},
+		"connect": {refused, "noise handshake failed for [redacted]:7@s.whatsapp.net"},
 	}
 	for name, tt := range tests {
-		err := NewChannel(tt.messenger, []string{number}).Send(t.Context(), notify.NewTestMessage())
+		err := NewChannel(tt.gateway, []string{number}).Send(t.Context(), notify.NewTestMessage())
 
-		got := ""
-		if err != nil {
-			got = err.Error()
+		if err == nil {
+			t.Errorf("%s: Send succeeded", name)
+			continue
 		}
-		if got != tt.want || tt.messenger.connects != 1 {
-			t.Errorf("%s: Send = %q, %d connects", name, got, tt.messenger.connects)
+		if strings.Contains(err.Error(), number) || strings.Contains(err.Error(), strings.TrimSuffix(numberChat, "@s.whatsapp.net")) {
+			t.Errorf("%s: the error shows a phone number", name)
+			continue
 		}
-		if tt.want != "" && len(tt.messenger.sent) != 0 {
-			t.Errorf("%s: sent %+v", name, tt.messenger.sent)
+		if err.Error() != tt.want {
+			t.Errorf("%s: Send = %v, want %q", name, err, tt.want)
 		}
-	}
-	if !errors.Is(NewChannel(&fakeMessenger{connectErr: ErrNotPaired}, nil).Send(t.Context(), notify.NewTestMessage()), ErrNotPaired) {
-		t.Error("the not paired error does not unwrap to ErrNotPaired")
 	}
 }
 
-func TestReadyOnlyWithAPairedSession(t *testing.T) {
-	for _, paired := range []bool{true, false} {
-		if ready := NewChannel(&fakeMessenger{paired: paired}, []string{number}).Ready(); ready != paired {
-			t.Errorf("paired %v: Ready = %v", paired, ready)
+func TestSendReturnsWhenTheContextEnds(t *testing.T) {
+	gw := gateway()
+	gw.stall = true
+	channel := NewChannel(gw, []string{number})
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+
+	err := sendWithin(t, ctx, channel)
+
+	want := "recipient 1 of 1: failed to send to [redacted]@s.whatsapp.net: context deadline exceeded"
+	if err == nil || err.Error() != want {
+		t.Errorf("Send = %v, want %q", err, want)
+	}
+}
+
+func TestReadyAsksTheGateway(t *testing.T) {
+	type key struct{}
+	for _, ready := range []bool{true, false} {
+		gw := &fakeGateway{ready: ready}
+		ctx := context.WithValue(t.Context(), key{}, ready)
+
+		got := NewChannel(gw, []string{number}).Ready(ctx)
+
+		if got != ready || gw.readyCtx != ctx {
+			t.Errorf("gateway ready %v: Ready = %v, got the caller's context: %v", ready, got, gw.readyCtx == ctx)
 		}
 	}
 }
@@ -186,65 +180,7 @@ func TestUnavailableChannelNeverSends(t *testing.T) {
 	err := channel.Send(t.Context(), notify.NewTestMessage())
 
 	want := "the WhatsApp session could not be opened when monitor-hub started; restart monitor-hub once the session store works"
-	if channel.Name() != "whatsapp" || channel.Ready() || err == nil || err.Error() != want {
-		t.Errorf("name %q, ready %v, Send = %v", channel.Name(), channel.Ready(), err)
-	}
-}
-
-func TestFailedSendErrorsShowNoPhoneNumber(t *testing.T) {
-	failing := online()
-	failing.sendErr = errors.New("server returned error 500")
-	refused := &fakeMessenger{paired: true, connectErr: fmt.Errorf("noise handshake failed for %s:7@s.whatsapp.net", number)}
-	tests := map[string]struct {
-		messenger *fakeMessenger
-		want      string
-	}{
-		"send":    {failing, "recipient 1 of 1: failed to get LID for PN [redacted]@s.whatsapp.net: server returned error 500"},
-		"connect": {refused, "could not connect to WhatsApp: noise handshake failed for [redacted]:7@s.whatsapp.net"},
-	}
-	for name, tt := range tests {
-		err := NewChannel(tt.messenger, []string{number}).Send(t.Context(), notify.NewTestMessage())
-
-		if err == nil || err.Error() != tt.want {
-			t.Errorf("%s: Send = %v, want %q", name, err, tt.want)
-		}
-		for _, digits := range []string{number, registered.User} {
-			if err != nil && strings.Contains(err.Error(), digits) {
-				t.Errorf("%s: the error shows %s: %v", name, digits, err)
-			}
-		}
-	}
-}
-
-func TestSendReturnsWhenTheContextEnds(t *testing.T) {
-	stalled := online()
-	stalled.stall = true
-	hung := &fakeMessenger{paired: true, hang: make(chan struct{})}
-	t.Cleanup(func() { close(hung.hang) })
-	tests := map[string]struct {
-		messenger *fakeMessenger
-		want      string
-	}{
-		"while sending":    {stalled, "recipient 1 of 1: failed to send to [redacted]@s.whatsapp.net: context deadline exceeded"},
-		"while connecting": {hung, "could not connect to WhatsApp: context deadline exceeded"},
-	}
-	for name, tt := range tests {
-		channel := NewChannel(tt.messenger, []string{number})
-		for attempt := 1; attempt <= 2; attempt++ {
-			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-			started := time.Now()
-
-			err := channel.Send(ctx, notify.NewTestMessage())
-
-			cancel()
-			if err == nil || err.Error() != tt.want || time.Since(started) > 5*time.Second {
-				t.Errorf("%s, attempt %d: Send = %v after %s", name, attempt, err, time.Since(started))
-			}
-		}
-	}
-	hung.mu.Lock()
-	defer hung.mu.Unlock()
-	if hung.connects != 1 {
-		t.Errorf("a hung connection was tried %d times at once", hung.connects)
+	if channel.Name() != "whatsapp" || channel.Ready(t.Context()) || err == nil || err.Error() != want {
+		t.Errorf("name %q, ready %v, Send = %v", channel.Name(), channel.Ready(t.Context()), err)
 	}
 }

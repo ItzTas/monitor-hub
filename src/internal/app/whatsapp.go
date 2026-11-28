@@ -68,7 +68,7 @@ func whatsAppChannels(ctx context.Context, cfg *core.WhatsApp, pool *pgxpool.Poo
 	if !link.session.Paired() {
 		logger.Warn("WhatsApp is set up but not paired; its notifications wait until you run monitor-hub whatsapp-pair and restart")
 	}
-	return link, []notify.Channel{whatsapp.NewChannel(link.session, cfg.Recipients)}
+	return link, []notify.Channel{whatsapp.NewChannel(whatsapp.NewWhatsmeow(link.session), cfg.Recipients)}
 }
 
 func whatsAppPair(ctx context.Context, args, environ []string, term terminal) error {

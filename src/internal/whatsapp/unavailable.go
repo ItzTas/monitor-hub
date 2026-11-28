@@ -15,7 +15,7 @@ func (Unavailable) Name() string {
 	return channelName
 }
 
-func (Unavailable) Ready() bool {
+func (Unavailable) Ready(context.Context) bool {
 	return false
 }
 

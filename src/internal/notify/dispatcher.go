@@ -23,7 +23,7 @@ type Channel interface {
 }
 
 type gate interface {
-	Ready() bool
+	Ready(ctx context.Context) bool
 }
 
 type Dispatcher struct {
@@ -87,7 +87,7 @@ func (d *Dispatcher) deliver(ctx context.Context, channel Channel) {
 	if !d.recordHeld(ctx, channel.Name()) {
 		return
 	}
-	if gated, ok := channel.(gate); ok && !gated.Ready() {
+	if gated, ok := channel.(gate); ok && !gated.Ready(ctx) {
 		return
 	}
 	due, err := d.outbox.DueDeliveries(ctx, channel.Name(), d.now(), batchSize)

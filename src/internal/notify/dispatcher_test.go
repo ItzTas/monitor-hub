@@ -354,7 +354,7 @@ type gatedChannel struct {
 	ready bool
 }
 
-func (c *gatedChannel) Ready() bool {
+func (c *gatedChannel) Ready(context.Context) bool {
 	return c.ready
 }
 
