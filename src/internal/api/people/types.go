@@ -5,7 +5,7 @@ import "time"
 type User struct {
 	Login       string    `json:"login"`
 	Admin       bool      `json:"admin" doc:"An admin can do everything."`
-	Disabled    bool      `json:"disabled" doc:"A disabled person cannot sign in, and their sessions and tokens do not work."`
+	Disabled    bool      `json:"disabled" doc:"A disabled person cannot sign in, and their personal tokens do not work. Disabling a person ends their sessions."`
 	CreatedAt   time.Time `json:"created_at"`
 	Permissions []string  `json:"permissions" doc:"The permissions given to the person directly, as slugs."`
 }

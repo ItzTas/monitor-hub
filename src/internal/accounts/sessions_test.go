@@ -157,6 +157,11 @@ func TestASessionEnds(t *testing.T) {
 	}
 	ended("a person disabled after login", s, disabled)
 	open("a session of someone else after a disable", kept)
+	no := false
+	if err := s.UpdateUser(t.Context(), "ana-lima", UserChange{Disabled: &no}); err != nil {
+		t.Fatal(err)
+	}
+	ended("a person disabled after login and enabled again", s, disabled)
 
 	if err := s.DeleteUser(t.Context(), "paulo-santos"); err != nil {
 		t.Fatal(err)

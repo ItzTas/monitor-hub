@@ -339,6 +339,13 @@ func TestCreateDisableAndDelete(t *testing.T) {
 	if enable.Code != http.StatusOK || !reflect.DeepEqual(decodeItem(t, enable), ana) {
 		t.Errorf("enable ana-lima = %d %s, want 200 with %+v", enable.Code, shown(t, enable), ana)
 	}
+	if rec := b.serve(t, http.MethodGet, "/api/me", "", withSession(session.ID)); rec.Code != http.StatusUnauthorized {
+		t.Errorf("the session ana-lima opened before she was disabled, once she is enabled again = %d %s, want 401", rec.Code, shown(t, rec))
+	}
+	// A route that needs a session answers a token that works with 403.
+	if rec := b.serve(t, http.MethodGet, "/api/me", "", withBearer(token)); rec.Code != http.StatusForbidden || detail(t, rec) != "this route needs a signed-in session" {
+		t.Errorf("the token of ana-lima once she is enabled again = %d %s, want 403", rec.Code, shown(t, rec))
+	}
 	if rec := b.signIn(t, "ana-lima", anaPassword); rec.Code != http.StatusOK {
 		t.Errorf("ana-lima signing in once enabled again = %d %s, want 200", rec.Code, shown(t, rec))
 	}

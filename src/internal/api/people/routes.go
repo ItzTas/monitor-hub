@@ -40,7 +40,7 @@ func RegisterRoutes(api huma.API, h *Handler) {
 		Method:      http.MethodPatch,
 		Path:        "/api/users/{login}",
 		Summary:     "Change a person",
-		Description: "Sets whether the person is an admin, whether they are disabled, or both. A field left out stays as it is, and the two changes apply together or not at all. A disabled person cannot sign in, and their sessions and tokens stop working on the next request. A change that would leave no active admin gets 409. Only an admin can do this.",
+		Description: "Sets whether the person is an admin, whether they are disabled, or both. A field left out stays as it is, and the two changes apply together or not at all. A disabled person cannot sign in, and their personal tokens stop working on the next request. Disabling a person also ends their sessions, so once they are enabled again their tokens work but they have to sign in again. A change that would leave no active admin gets 409. Only an admin can do this.",
 		Tags:        []string{"people"},
 		Metadata:    gate.Meta(gate.Session),
 		Errors:      []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict},

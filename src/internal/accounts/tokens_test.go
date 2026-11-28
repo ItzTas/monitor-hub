@@ -204,6 +204,11 @@ func TestATokenFollowsItsOwnerOnTheNextRequest(t *testing.T) {
 	}
 	_, err = s.ByToken(t.Context(), secret)
 	wantUnauthenticated(t, "a token of a disabled person", err)
+	no := false
+	if err := s.UpdateUser(t.Context(), "paulo-santos", UserChange{Disabled: &no}); err != nil {
+		t.Fatal(err)
+	}
+	canView("after the owner is enabled again", true)
 }
 
 func TestLastUseIsRecordedAtMostOncePerMinute(t *testing.T) {

@@ -75,7 +75,14 @@ func (s *Service) UpdateUser(ctx context.Context, login string, change UserChang
 		if change.Disabled == nil {
 			return nil
 		}
-		return q.SetUserDisabled(ctx, db.SetUserDisabledParams{ID: user.ID, Disabled: *change.Disabled, Now: s.now()})
+		if err := q.SetUserDisabled(ctx, db.SetUserDisabledParams{ID: user.ID, Disabled: *change.Disabled, Now: s.now()}); err != nil {
+			return err
+		}
+		if !*change.Disabled {
+			return nil
+		}
+		// Enabling the person again must not bring these sessions back.
+		return q.DeleteUserSessions(ctx, user.ID)
 	})
 }
 
