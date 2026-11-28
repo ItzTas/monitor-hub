@@ -82,7 +82,7 @@ func (s *Service) Save(ctx context.Context, name string, change Change) (SaveRes
 	if unchanged(saved, next) {
 		return SaveResult{}, nil
 	}
-	changed := changedNames(saved, change)
+	changed := changedNames(entry.Settings, saved, change)
 	after := Assemble(entry, s.deps.Environ, s.deps.DataRoot, next)
 	if len(after.Problems) > 0 {
 		return SaveResult{}, &ProblemsError{after.Problems}
@@ -152,7 +152,7 @@ func (s *Service) next(entry catalog.Entry, saved Saved, change Change) Saved {
 	if entry.Settings == nil {
 		return deletedWithoutDeclaration(saved, change.DeleteIgnored)
 	}
-	a := Assemble(entry, s.deps.Environ, s.deps.DataRoot, merged(saved, change))
+	a := Assemble(entry, s.deps.Environ, s.deps.DataRoot, merged(entry.Settings, saved, change))
 	next := a.kept
 	for _, v := range slices.DeleteFunc(a.Ignored, deleted) {
 		v.Secret = v.Secret || secretToday(entry.Settings, v.Path)
@@ -161,7 +161,7 @@ func (s *Service) next(entry catalog.Entry, saved Saved, change Change) Saved {
 	return next
 }
 
-func merged(saved Saved, change Change) Saved {
+func merged(decl *settings.Declaration, saved Saved, change Change) Saved {
 	next := Saved{
 		Document:  orEmpty(maps.Clone(saved.Document)),
 		Secrets:   orEmpty(maps.Clone(saved.Secrets)),
@@ -177,6 +177,9 @@ func merged(saved Saved, change Change) Saved {
 	for path, text := range change.Secrets {
 		if text == nil {
 			delete(next.Secrets, path)
+			if topSecret(decl, path) {
+				delete(next.Document, path)
+			}
 			continue
 		}
 		next.Secrets[path] = *text
@@ -205,6 +208,12 @@ func deletedWithoutDeclaration(saved Saved, paths []string) Saved {
 	return next
 }
 
+// topSecret reports whether path is a top-level secret field. A null secret there also clears
+// the plain value saved before the field became secret.
+func topSecret(decl *settings.Declaration, path string) bool {
+	return decl != nil && slices.ContainsFunc(decl.Fields, func(f settings.Field) bool { return f.Name == path && f.Secret })
+}
+
 // isNull takes both forms a JSON null reaches Change.Document in.
 func isNull(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
@@ -226,7 +235,7 @@ func unchanged(a, b Saved) bool {
 
 // changedNames lists what the change sets differently from what is saved: top-level fields,
 // secret paths, env:<NAME> and ignored:<path>, each group in order.
-func changedNames(saved Saved, change Change) []string {
+func changedNames(decl *settings.Declaration, saved Saved, change Change) []string {
 	var changed []string
 	for _, key := range slices.Sorted(maps.Keys(change.Document)) {
 		old, had := saved.Document[key]
@@ -237,8 +246,9 @@ func changedNames(saved Saved, change Change) []string {
 	}
 	for _, path := range slices.Sorted(maps.Keys(change.Secrets)) {
 		old, had := saved.Secrets[path]
+		_, plain := saved.Document[path]
 		text := change.Secrets[path]
-		if text == nil && had || text != nil && (!had || old != *text) {
+		if text == nil && (had || plain && topSecret(decl, path)) || text != nil && (!had || old != *text) {
 			changed = append(changed, path)
 		}
 	}

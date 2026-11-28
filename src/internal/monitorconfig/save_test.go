@@ -251,6 +251,7 @@ var saveSecrets = map[string]string{
 	"replaced child value":  "old-mail-plain",
 	"secret variable":       "free-secret-value",
 	"page secret":           "pw-secret-value",
+	"plain value of a field that became secret": "plain-old-value",
 }
 
 func revision(r int64) *int64 { return &r }
@@ -535,6 +536,26 @@ func TestASaveThatLeavesTheDocumentAloneDoesNotRestart(t *testing.T) {
 	last := map[string]any{"level": "INFO", "msg": "monitor configuration saved", "monitor": "testmonitor", "changed": []any{"ignored:older"}, "restarted": false}
 	if len(records) != len(steps) || !reflect.DeepEqual(records[len(records)-1], last) {
 		t.Errorf("log records = %v, want %d ending with %v", records, len(steps), last)
+	}
+}
+
+func TestANullSecretClearsThePlainValueSavedBeforeTheFieldBecameSecret(t *testing.T) {
+	s := newSaveScene(t, saveFields, saveEnviron)
+	s.put(t, "testmonitor", Saved{Document: raws(t, `{"db":"plain-old-value","n":6}`)})
+
+	result := s.save(t, Change{Secrets: map[string]*string{"db": nil}})
+
+	if want := (SaveResult{Changed: []string{"db"}, Restarted: true, Request: 1}); !reflect.DeepEqual(result, want) {
+		t.Errorf("Save = %+v, want %+v", result, want)
+	}
+	sameSaved(t, "after the save", s.stored(t, "testmonitor"), Saved{Document: raws(t, `{"n":6}`)})
+	if _, ok := decodeDocument(t, s.checker.document)["db"]; ok {
+		t.Error("the checked document still holds db")
+	}
+	view := readView(t, s.service, "testmonitor")
+	i := slices.IndexFunc(view.Secrets, func(st SecretState) bool { return st.Path == "db" })
+	if i < 0 || view.Secrets[i] != (SecretState{Path: "db"}) {
+		t.Errorf("secret states = %+v, want db neither set nor saved", view.Secrets)
 	}
 }
 
