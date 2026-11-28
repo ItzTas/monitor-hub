@@ -647,15 +647,15 @@ Use this if the hub misbehaves and you want the old services back. The old stack
 
 ### Going back to an earlier hub image
 
-To keep the hub but run an earlier image of it, set `MONITOR_HUB_TAG` in `.env` to an earlier tag. An image without the configuration API ignores the values saved through it: it starts on the same database and leaves the `monitor_configs` table alone, and its monitors read only `.env`. The earlier image also carries the monitors of its own release; `v0.4.1` carries diario 2.4.0, sei 2.4.0 and anhanguera 0.2.0, which read `.env` and nothing the API saved. If the SEI password was saved through the API and `.env` still holds an old one, sei tries the old one once and pauses (section 8, "When SEI refuses the login").
+To keep the hub but run an earlier image of it, set `MONITOR_HUB_TAG` in `.env` to an earlier tag. This subsection holds for `v0.4.0` and later. Older images predate the hub's people and tokens (migration `00005_access`), and this runbook does not cover going back to them. An image without the configuration API ignores the values saved through it: it starts on the same database and leaves the `monitor_configs` table alone, and its monitors read only `.env`. The earlier image also carries the monitors of its own release; `v0.4.1` carries diario 2.4.0, sei 2.4.0 and anhanguera 0.2.0, which read `.env` and nothing the API saved. If the SEI password was saved through the API and `.env` still holds an old one, sei tries the old one once and pauses (section 8, "When SEI refuses the login").
 
-So before you change the tag, copy every saved value into `.env`, under the variable its field names in `env` with the monitor's prefix: `poll_interval` of `sei`, for example, goes in `SEI__POLL_INTERVAL`, and a list goes in as its items separated by commas. `GET /api/monitors/<monitor>/settings` lists each field's `env` in `declaration`. List the saved values:
+So before you change the tag, copy every saved value into `.env`, under the variable its field names in `env` with the monitor's prefix: `poll_interval` of `sei`, for example, goes in `SEI__POLL_INTERVAL`, and a list goes in as its items separated by commas. `GET /api/monitors/<monitor>/settings` lists each field's `env` in `declaration`. Both queries below can show secrets in your terminal, so run them where nobody else can read the screen. List the saved values:
 
 ```bash
 docker exec <postgres-container> psql -U monitor_hub -d monitor_hub -c 'SELECT monitor, document, variables FROM monitor_configs ORDER BY monitor;'
 ```
 
-`document` holds the values that are not secret, by field name, and `variables` the free variables, with the value of each one even when it is marked secret. The secrets are in their own column. This shows them in your terminal, so run it where nobody else can read the screen:
+`document` holds the values that are not secret, by field name, and `variables` the free variables, with the value of each one even when it is marked secret. A field that became secret in a newer monitor can also keep its old plain value in `document` until the next save of that monitor moves it to the ignored values, or a `null` for it in `secrets` deletes it. The secrets are in their own column:
 
 ```bash
 docker exec <postgres-container> psql -U monitor_hub -d monitor_hub -c 'SELECT monitor, secrets FROM monitor_configs ORDER BY monitor;'
@@ -814,13 +814,13 @@ Then follow steps 4 and 5 again: for SEI, the pending count and the pause check 
   curl -s -X PUT -b cookies.txt -H "Origin: http://127.0.0.1:8090" -H 'Content-Type: application/json' -d '{"document":{"watch_terms":["Paulo Santos","0034712k"]}}' http://127.0.0.1:8090/api/monitors/diario/settings
   ```
 
-  Expected: `{"changed":["watch_terms"],"restarted":true,"request":1}` with status `202`, where `request` counts the restarts saves have asked for since the hub started. The monitor first checks the new values with its `validate-settings`, then the hub saves them and restarts it. A save that changes nothing the monitor receives answers `200` with `"restarted":false`. Follow the restart:
+  Expected: `{"changed":["watch_terms"],"restarted":true,"request":1}` with status `202`, where `request` counts the restarts that saves have asked for on that monitor since the hub started. The monitor first checks the new values with its `validate-settings`, then the hub saves them and restarts it. A save that changes nothing the monitor receives answers `200` with `"restarted":false`. Follow the restart:
 
   ```bash
   curl -s -b cookies.txt -H "Origin: http://127.0.0.1:8090" http://127.0.0.1:8090/api/monitors/diario/settings/progress
   ```
 
-  `state` is `restarting` at first, then `up` with the monitor's `monitor_state` and `message`, or `failed` with its start-up error in `reason`. After 75 seconds without either it is `no_answer`.
+  `state` is `restarting` at first, then `up` with the monitor's `monitor_state` and `message`, or `failed` with its start-up error in `reason`. After 75 seconds without either it is `no_answer`. Before any save of that monitor since the hub started, the route answers `state` `none`, with `request` `0` and `requested_at` `null`. `phase` always gives the state of the monitor's last start: `not_started`, `starting`, `running`, `failed` or `exited`.
 
   More of what a save takes and refuses:
   - Secrets go in `secrets`, by path, and only there: `{"secrets":{"sei_password":"<password>"}}`. Send one the way step 5 sends your password, with `read -rs` and `printf`, so it stays out of the shell history. The API never returns a secret. `null` in `secrets` sends the secret back to `.env` and also deletes a plain value saved for that field before it became secret.
