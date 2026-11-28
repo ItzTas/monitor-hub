@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/ItzTas/monitor-hub/sdk-go/settings"
 )
@@ -131,22 +132,22 @@ func loadEntry(dir string) (Entry, error) {
 }
 
 func readSettings(root *os.Root) (*settings.Declaration, error) {
-	info, err := root.Stat(settings.File)
+	// Without O_NONBLOCK, opening a FIFO would wait for a writer forever.
+	f, err := root.OpenFile(settings.File, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	// Opening a FIFO would wait for a writer forever.
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", filepath.Join(root.Name(), settings.File))
-	}
-	f, err := root.Open(settings.File)
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", filepath.Join(root.Name(), settings.File))
+	}
 	data, err := io.ReadAll(io.LimitReader(f, settingsLimit+1))
 	if err != nil {
 		return nil, err
