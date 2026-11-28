@@ -281,7 +281,7 @@ Every monitor ships a manifest named `monitor.json`:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `protocol_version` | number | Must be `2`. A manifest with `1`, from before the gRPC service was renamed, is refused with a message saying so. |
+| `protocol_version` | number | Must be `2`. A manifest with any other number is refused, and the error names both numbers. |
 | `name` | string | Matches `^[a-z][a-z0-9-]{1,30}$`: lowercase letters, digits and single hyphens, starting with a letter, 2 to 31 characters. It must not end with a hyphen or contain two hyphens in a row, because one monitor's environment prefix must never be the beginning of another's. It must equal the name of the monitor's directory. |
 | `command` | string array | The command to run. It must not be empty. |
 | `apk` | string array | Alpine packages the monitor needs. The image build installs them. |

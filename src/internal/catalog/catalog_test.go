@@ -392,23 +392,10 @@ func TestManifestValidate(t *testing.T) {
 	}
 }
 
-func TestManifestExplainsTheRetiredProtocolVersion(t *testing.T) {
-	tests := map[string]struct{ raw, want string }{
-		"retired": {
-			`{"protocol_version":1,"name":"diario","command":["x"]}`,
-			"protocol_version 1 is no longer supported: this hub speaks protocol_version 2, where the gRPC service is monitorhub.monitor.v1.Monitor; rebuild the monitor with the current SDK",
-		},
-		"future": {
-			`{"protocol_version":3,"name":"diario","command":["x"]}`,
-			"unsupported protocol_version 3: this hub speaks protocol_version 2",
-		},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			_, err := ReadManifest(strings.NewReader(tc.raw))
-			if err == nil || err.Error() != tc.want {
-				t.Fatalf("ReadManifest error = %v, want %q", err, tc.want)
-			}
-		})
+func TestManifestNamesTheProtocolVersionItRefuses(t *testing.T) {
+	_, err := ReadManifest(strings.NewReader(`{"protocol_version":3,"name":"diario","command":["x"]}`))
+	want := "unsupported protocol_version 3: this hub speaks protocol_version 2"
+	if err == nil || err.Error() != want {
+		t.Fatalf("ReadManifest error = %v, want %q", err, want)
 	}
 }

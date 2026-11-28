@@ -69,9 +69,6 @@ func ValidateName(name string) error {
 }
 
 func (m Manifest) Validate() error {
-	if m.ProtocolVersion == 1 {
-		return errors.New("protocol_version 1 is no longer supported: this hub speaks protocol_version 2, where the gRPC service is monitorhub.monitor.v1.Monitor; rebuild the monitor with the current SDK")
-	}
 	if m.ProtocolVersion != protocolVersion {
 		return fmt.Errorf("unsupported protocol_version %d: this hub speaks protocol_version %d", m.ProtocolVersion, protocolVersion)
 	}
