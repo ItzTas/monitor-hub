@@ -42,11 +42,11 @@ func (s *Service) List(ctx context.Context, p access.Principal) ([]Monitor, erro
 	}
 	byName := map[string]Monitor{}
 	for _, name := range s.supervisor.Names() {
-		byName[name] = Monitor{Name: name, State: stateName(0)}
+		byName[name] = Monitor{Name: name, State: StateName(monitorpb.State_STATE_UNSPECIFIED)}
 	}
 	for _, row := range rows {
 		monitor := row.Monitor
-		monitor.State = stateName(row.State)
+		monitor.State = StateName(monitorpb.State(row.State))
 		byName[row.Name] = monitor
 	}
 	visible := access.Visible(p, slices.Sorted(maps.Keys(byName)))
@@ -76,9 +76,9 @@ func (s *Service) Check(ctx context.Context, name string) (CheckResult, error) {
 	return CheckResult{Accepted: answer.GetAccepted(), Message: answer.GetMessage()}, nil
 }
 
-func stateName(state int16) string {
+func StateName(state monitorpb.State) string {
 	name, known := monitorpb.State_name[int32(state)]
-	if !known || state == int16(monitorpb.State_STATE_UNSPECIFIED) {
+	if !known || state == monitorpb.State_STATE_UNSPECIFIED {
 		return "unknown"
 	}
 	return strings.ToLower(strings.TrimPrefix(name, "STATE_"))

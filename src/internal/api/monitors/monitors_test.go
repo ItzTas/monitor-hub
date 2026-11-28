@@ -221,8 +221,8 @@ func TestStateNames(t *testing.T) {
 		monitorpb.State(42):               "unknown",
 	}
 	for state, want := range cases {
-		if got := stateName(int16(state)); got != want {
-			t.Errorf("stateName(%d) = %q, want %q", state, got, want)
+		if got := StateName(state); got != want {
+			t.Errorf("StateName(%d) = %q, want %q", state, got, want)
 		}
 	}
 }
