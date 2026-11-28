@@ -90,8 +90,8 @@ func TestPrepareUsesTheLastReadConfigurationWhenTheDatabaseFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	if store.deadline.IsZero() || store.deadline.After(asked.Add(5*time.Second+time.Second)) {
-		t.Errorf("the read had deadline %v, want at most 5s after %v", store.deadline, asked)
+	if !store.deadline.After(asked.Add(4*time.Second)) || store.deadline.After(asked.Add(6*time.Second)) {
+		t.Errorf("the read had deadline %v, want 5s after %v", store.deadline, asked)
 	}
 	if doc := decodeDocument(t, first.Document); doc["n"] != json.Number("7") || doc["p"] != "saved-pw-9" {
 		t.Fatal("the document is not the saved configuration (values not shown)")
