@@ -104,7 +104,7 @@ docker compose pull
 docker run --rm --entrypoint ls ghcr.io/itztas/monitor-hub:latest /opt/monitor-hub/monitors
 ```
 
-Check: the list shows `diario`, `sei` and `anhanguera`. If `ls` cannot find `/opt/monitor-hub/monitors`, or `sei` is missing, the image is too old: stop here, leave both old stacks running, and pull again after the hub's CI has published a newer image. Step 4 stops sei-monitor too, and nothing in an image without `sei` would replace it, so SEI would go unwatched. If you set `MONITOR_HUB_TAG`, use that tag in the command instead of `latest`.
+Check: the list shows `diario`, `sei` and `anhanguera`. If you set `MONITOR_HUB_TAG`, use that tag in the command instead of `latest`.
 
 ### Where the databases are
 
@@ -183,8 +183,8 @@ All three monitors are stricter about their database than the Go programs were. 
 - Connect straight to Postgres. A pooler in transaction mode breaks the session lock each monitor holds, and all three send an `options` start-up parameter that such a pooler refuses.
 - The URL must carry the role's password. All three monitors refuse a URL without one, or with an empty one, with `DATABASE_URL has no password: add the role's password to the URL`. If the database trusts the role without a password, put any password there; Postgres ignores it.
 - The monitors connect without TLS. `sslmode=disable`, `allow` and `prefer` work. `require`, `verify-ca` and `verify-full` fail at once.
-- All three refuse several hosts, a URL with no host, and any query key they do not know with `DATABASE_URL is not a valid Postgres address`, which never repeats the URL. diario and anhanguera also refuse the key=value form (`host=db user=diario`) and any scheme other than `postgres://` and `postgresql://`. The libpq keys that diario and sei 2.1 accepted, and anhanguera 0.1.0 too, such as `connect_timeout` and `keepalives`, are accepted and ignored.
-- An `idle_session_timeout` on the role no longer makes a monitor exit. The lock connection is queried every 0.5 s, and pool connections are tested before each use. A monitor still exits if its lock connection closes or stops answering (30 s for sei and anhanguera, 10 s for diario), so do not run `pg_terminate_backend` on it or put a firewall in between that cuts long connections. For sei, each restart logs in to SEI once, up to 12 times an hour. For anhanguera, each restart is one login to the portal.
+- All three refuse several hosts, a URL with no host, and any query key they do not know with `DATABASE_URL is not a valid Postgres address`, which never repeats the URL. diario and anhanguera also refuse the key=value form (`host=db user=diario`) and any scheme other than `postgres://` and `postgresql://`. diario and sei accept and ignore libpq keys such as `connect_timeout` and `keepalives`, so the URL of an old stack works as it is. anhanguera refuses them like any other key it does not know.
+- An `idle_session_timeout` on the role does not make a monitor exit. The lock connection is queried every 0.5 s, and pool connections are tested before each use. A monitor still exits if its lock connection closes or stops answering (30 s for sei and anhanguera, 10 s for diario), so do not run `pg_terminate_backend` on it or put a firewall in between that cuts long connections. For sei, each restart logs in to SEI once, up to 12 times an hour. For anhanguera, each restart is one login to the portal.
 
 Check each role:
 
@@ -334,8 +334,6 @@ Now run the pending count of "The SEI program" once more, list the rows if it is
 ## 5. Start the hub and check it
 
 The hub listens on port 8090 on the host, or on your `APP_PORT`. The commands below use 8090.
-
-If an older hub used the `data` volume, move each monitor's directory from `<DATA_DIR>/plugins/<name>` to `<DATA_DIR>/monitors/<name>` before you start this release; the hub does not move it for you. diario, sei and anhanguera keep nothing there, so this matters only for a monitor of your own.
 
 ```bash
 cd /opt/stacks/monitor-hub
@@ -506,8 +504,6 @@ Finally open `http://hub.lan/settings` if the proxy is set up, and sign in there
 
 The anhanguera monitor reads the Anhanguera student portal (AVA) and reports invoices, activity deadlines and calendar events. It is a third monitor next to `diario` and `sei`, and a new install starts on its own database. There is nothing to take over: it has no old service.
 
-If you already ran anhanguera 0.1.0 under an earlier hub, read "Upgrading from 0.1.0" in the README of the anhanguera-monitor repository before the first start of this version. The role needs `CREATE` on its schema and must own the `goose_db_version` table, and you should take a `pg_dump` first, because 0.1.0 cannot use the database once this version has run on it. Then skip "Create its database" and keep the existing role and database.
-
 Pull the image first (`docker compose pull`) and check that it carries the monitor:
 
 ```bash
@@ -528,7 +524,7 @@ SQL
 docker exec -i <postgres-container> psql -U postgres -c '\l' | grep anhanguera_monitor
 ```
 
-Check: one line with `anhanguera_monitor` as owner. The monitor applies its migrations on first start. The rules from step 3, "The monitor database URLs", apply here too: connect straight to Postgres with no pooler in between, and use `sslmode=disable`, `allow` or `prefer`. The URL must carry the role's password: without one the monitor refuses it with `DATABASE_URL has no password: add the role's password to the URL`. It also refuses the key=value form and any scheme other than `postgres://` and `postgresql://`. `idle_session_timeout` on the role no longer needs to be `0`. The monitor stops when its lock connection closes or stays silent for 30 s, and each restart is one login to the portal, so do not run `pg_terminate_backend` on it.
+Check: one line with `anhanguera_monitor` as owner. The monitor applies its migrations on first start. The rules from step 3, "The monitor database URLs", apply here too: connect straight to Postgres with no pooler in between, and use `sslmode=disable`, `allow` or `prefer`. The URL must carry the role's password: without one the monitor refuses it with `DATABASE_URL has no password: add the role's password to the URL`. It also refuses the key=value form and any scheme other than `postgres://` and `postgresql://`. The role's `idle_session_timeout` can have any value. The monitor stops when its lock connection closes or stays silent for 30 s, and each restart is one login to the portal, so do not run `pg_terminate_backend` on it.
 
 ### Set the variables
 
@@ -644,24 +640,6 @@ Use this if the hub misbehaves and you want the old services back. The old stack
    ```
 
    Check: the images are the Go ones pinned in step 1, and each service answers on its old `/healthz` and logs no error. The hub's database is not touched by the old services and can stay.
-
-### Going back to an earlier hub image
-
-To keep the hub but run an earlier image of it, set `MONITOR_HUB_TAG` in `.env` to an earlier tag. This subsection holds for `v0.4.0` and later. Older images predate the hub's people and tokens (migration `00005_access`), and this runbook does not cover going back to them. An image without the configuration API ignores the values saved through it: it starts on the same database and leaves the `monitor_configs` table alone, and its monitors read only `.env`. The earlier image also carries the monitors of its own release; `v0.4.1` carries diario 2.4.0, sei 2.4.0 and anhanguera 0.2.0, which read `.env` and nothing the API saved. If the SEI password was saved through the API and `.env` still holds an old one, sei tries the old one once and pauses (section 8, "When SEI refuses the login").
-
-So before you change the tag, copy every saved value into `.env`, under the variable its field names in `env` with the monitor's prefix: `poll_interval` of `sei`, for example, goes in `SEI__POLL_INTERVAL`, and a list goes in as its items separated by commas. `GET /api/monitors/<monitor>/settings` lists each field's `env` in `declaration`. Both queries below can show secrets in your terminal, so run them where nobody else can read the screen. List the saved values:
-
-```bash
-docker exec <postgres-container> psql -U monitor_hub -d monitor_hub -c 'SELECT monitor, document, variables FROM monitor_configs ORDER BY monitor;'
-```
-
-`document` holds the values that are not secret, by field name, and `variables` the free variables, with the value of each one even when it is marked secret. A field that became secret in a newer monitor can also keep its old plain value in `document` until the next save of that monitor moves it to the ignored values, or a `null` for it in `secrets` deletes it. The secrets are in their own column:
-
-```bash
-docker exec <postgres-container> psql -U monitor_hub -d monitor_hub -c 'SELECT monitor, secrets FROM monitor_configs ORDER BY monitor;'
-```
-
-Then set the tag and recreate the container with `docker compose pull` and `docker compose up -d`. When you come back to this image, the saved values apply again and win over `.env`.
 
 ### Coming forward again
 
