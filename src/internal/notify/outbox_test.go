@@ -95,6 +95,7 @@ func TestDueDeliveriesReturnsWhatIsDueInOrder(t *testing.T) {
 		if e.DisplayName == "" {
 			e.DisplayName = e.Monitor
 		}
+		e.Seq = seq
 		return DueDelivery{Delivery: Delivery{EventSeq: seq, Channel: channel, Status: deliveryPending, NextAttemptAt: due}, Event: e}
 	}
 

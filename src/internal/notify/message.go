@@ -10,6 +10,7 @@ import (
 const maxListed = 10
 
 type Event struct {
+	Seq         int64     `json:"-"`
 	Monitor     string    `json:"monitor"`
 	DisplayName string    `json:"display_name"`
 	Kind        string    `json:"kind"`

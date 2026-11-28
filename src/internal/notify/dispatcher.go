@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -160,9 +161,10 @@ func (d *Dispatcher) send(ctx context.Context, channel Channel, group []DueDeliv
 		return false
 	}
 	now := d.now()
+	errFor := outcomes(sendErr)
 	attempts := make([]Delivery, 0, len(group))
 	for _, delivery := range group {
-		attempts = append(attempts, attempt(delivery.Delivery, sendErr, now))
+		attempts = append(attempts, attempt(delivery.Delivery, errFor(delivery.EventSeq), now))
 	}
 	if err := d.record(ctx, attempts); err != nil {
 		d.hold(channel.Name(), attempts)
@@ -171,6 +173,25 @@ func (d *Dispatcher) send(ctx context.Context, channel Channel, group []DueDeliv
 	}
 	d.report(channel.Name(), monitor, attempts, sendErr)
 	return true
+}
+
+// outcomes gives each event of a send its own error: nil for the events a
+// *PartialError lists as done, sendErr for the others.
+func outcomes(sendErr error) func(seq int64) error {
+	var partial *PartialError
+	if !errors.As(sendErr, &partial) {
+		return func(int64) error { return sendErr }
+	}
+	done := map[int64]bool{}
+	for _, seq := range partial.Done {
+		done[seq] = true
+	}
+	return func(seq int64) error {
+		if done[seq] {
+			return nil
+		}
+		return sendErr
+	}
 }
 
 func (d *Dispatcher) report(channel, monitor string, attempts []Delivery, sendErr error) {

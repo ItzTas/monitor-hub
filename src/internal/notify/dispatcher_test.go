@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"slices"
@@ -21,7 +22,7 @@ type fakeChannel struct {
 	got  []Message
 	errs []error
 	sent chan Message
-	send func(ctx context.Context) error
+	send func(ctx context.Context, msg Message) error
 }
 
 func (c *fakeChannel) Name() string {
@@ -40,7 +41,7 @@ func (c *fakeChannel) Send(ctx context.Context, msg Message) error {
 		c.sent <- msg
 	}
 	if c.send != nil {
-		return c.send(ctx)
+		return c.send(ctx, msg)
 	}
 	return err
 }
@@ -182,6 +183,50 @@ func TestDeliveryThatFailedOnceIsSentOnTheRetry(t *testing.T) {
 	}
 }
 
+func TestEventsThatReachedEveryRecipientAreSentDespiteTheError(t *testing.T) {
+	failure := errors.New("recipient 2 of 2: the number is not on WhatsApp")
+	cases := map[string]struct {
+		wrap      func(*PartialError) error
+		lastError string
+	}{
+		"partial error":         {func(p *PartialError) error { return p }, failure.Error()},
+		"wrapped partial error": {func(p *PartialError) error { return fmt.Errorf("whatsapp: %w", p) }, "whatsapp: " + failure.Error()},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			pool := coretest.Pool(t)
+			seqs := queue(t, pool, []string{"whatsapp"}, t0,
+				seiEvent("Process 1 moved", t0.Add(-3*time.Hour)),
+				seiEvent("Process 2 moved", t0.Add(-2*time.Hour)),
+				seiEvent("Process 3 moved", t0.Add(-time.Hour)),
+			)
+			var got []int64
+			whatsapp := &fakeChannel{name: "whatsapp", send: func(_ context.Context, msg Message) error {
+				for _, e := range msg.Events {
+					got = append(got, e.Seq)
+				}
+				return c.wrap(&PartialError{Done: []int64{msg.Events[0].Seq}, Err: failure})
+			}}
+			now := t0
+
+			newDispatcher(pool, &now, whatsapp).RunOnce(t.Context())
+
+			if !slices.Equal(got, seqs) {
+				t.Errorf("the channel got the events %v, want %v", got, seqs)
+			}
+			sentAt := t0
+			want := map[string]stored{
+				"Process 1 moved": {title: "Process 1 moved", status: "sent", attempts: 1, nextAttemptAt: t0, sentAt: &sentAt},
+				"Process 2 moved": {title: "Process 2 moved", status: "pending", attempts: 1, nextAttemptAt: t0.Add(time.Minute), lastError: c.lastError},
+				"Process 3 moved": {title: "Process 3 moved", status: "pending", attempts: 1, nextAttemptAt: t0.Add(time.Minute), lastError: c.lastError},
+			}
+			if deliveries := deliveriesOf(t, pool, "whatsapp"); !reflect.DeepEqual(deliveries, want) {
+				t.Errorf("deliveries = %+v\nwant %+v", deliveries, want)
+			}
+		})
+	}
+}
+
 func TestShutdownDuringASendLeavesTheDeliveriesPending(t *testing.T) {
 	pool := coretest.Pool(t)
 	queue(t, pool, []string{"telegram"}, t0,
@@ -190,7 +235,7 @@ func TestShutdownDuringASendLeavesTheDeliveriesPending(t *testing.T) {
 	)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	telegram := &fakeChannel{name: "telegram", send: func(ctx context.Context) error {
+	telegram := &fakeChannel{name: "telegram", send: func(ctx context.Context, _ Message) error {
 		cancel()
 		return ctx.Err()
 	}}
@@ -295,7 +340,7 @@ func TestWakeDuringAPassChainsOnePassMore(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	telegram := &fakeChannel{name: "telegram", sent: make(chan Message, 4)}
-	telegram.send = func(ctx context.Context) error {
+	telegram.send = func(ctx context.Context, _ Message) error {
 		once.Do(func() {
 			select {
 			case <-release:

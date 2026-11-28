@@ -72,6 +72,7 @@ func dueDelivery(row db.DueDeliveriesRow) DueDelivery {
 			LastError:     row.LastError,
 		},
 		Event: Event{
+			Seq:         row.EventSeq,
 			Monitor:     row.Monitor,
 			DisplayName: cmp.Or(row.DisplayName, row.Monitor),
 			Kind:        row.Kind,
