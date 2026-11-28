@@ -407,3 +407,47 @@ func TestRefuseIs401ForNobodyAnd403Otherwise(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowedOrigin(t *testing.T) {
+	tests := []struct {
+		origin, host, publicURL string
+		want                    bool
+	}{
+		{"http://hub.lan", "hub.lan", "", true},
+		{"https://hub.lan", "hub.lan", "", true},
+		{"http://hub.lan", "hub.lan:8090", "", false},
+		{"http://evil.example", "hub.lan", "", false},
+		{"", "hub.lan", "", false},
+		{"null", "hub.lan", "", false},
+		{"http://hub.lan", "127.0.0.1:8090", "http://hub.lan", true},
+		{"https://hub.lan", "127.0.0.1:8090", "http://hub.lan", false},
+		{"https://hub.example:8443", "x", "https://hub.example:8443/x", true},
+		{"http://hub.lan", "x", "not a url", false},
+	}
+	for _, tt := range tests {
+		if got := AllowedOrigin(tt.origin, tt.host, tt.publicURL); got != tt.want {
+			t.Errorf("AllowedOrigin(%q, %q, %q) = %v, want %v", tt.origin, tt.host, tt.publicURL, got, tt.want)
+		}
+	}
+}
+
+func TestSessionCookies(t *testing.T) {
+	sameAttributes := func(name string, c http.Cookie, secure bool) {
+		t.Helper()
+		if c.Name != CookieName || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" || c.Secure != secure {
+			t.Errorf("%s = %+v, want %s, HttpOnly, SameSite=Strict, Path=/ and Secure %v", name, c, CookieName, secure)
+		}
+	}
+	for _, secure := range []bool{false, true} {
+		opened := SessionCookie("id", testNow, secure)
+		sameAttributes("SessionCookie", opened, secure)
+		if opened.Value != "id" || opened.MaxAge != 43200 || !opened.Expires.Equal(testNow) {
+			t.Errorf("SessionCookie = %+v, want the value id, MaxAge 43200 and Expires %v", opened, testNow)
+		}
+		cleared := ClearedSessionCookie(secure)
+		sameAttributes("ClearedSessionCookie", cleared, secure)
+		if cleared.Value != "" || cleared.MaxAge >= 0 {
+			t.Errorf("ClearedSessionCookie = %+v, want an empty value and a negative MaxAge", cleared)
+		}
+	}
+}

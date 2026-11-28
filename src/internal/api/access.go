@@ -20,6 +20,8 @@ type AccessDeps struct {
 	Log       *slog.Logger
 	PublicURL string
 	After     func(time.Duration) <-chan time.Time
+	// Logins is the sign-in queue; nil starts one of its own on After.
+	Logins *session.Logins
 }
 
 func RegisterAccess(mux *http.ServeMux, deps AccessDeps) huma.API {
@@ -28,7 +30,11 @@ func RegisterAccess(mux *http.ServeMux, deps AccessDeps) huma.API {
 		"A personal token (mht_), shown once when it is created.",
 	))
 	api.UseMiddleware(gate.Middleware(api, deps.Accounts, deps.PublicURL))
-	session.Configure(api, deps.Accounts, deps.After)
+	logins := deps.Logins
+	if logins == nil {
+		logins = session.NewLogins(deps.After, nil)
+	}
+	session.Configure(api, deps.Accounts, logins)
 	tokens.Configure(api, deps.Accounts)
 	people.Configure(api, deps.Accounts)
 	return api

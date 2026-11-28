@@ -48,10 +48,6 @@ type refusal struct {
 }
 
 func Middleware(api huma.API, resolver Resolver, publicURL string) func(huma.Context, func(huma.Context)) {
-	publicOrigin := ""
-	if u, err := url.Parse(publicURL); err == nil && u.Host != "" {
-		publicOrigin = u.Scheme + "://" + u.Host
-	}
 	return func(ctx huma.Context, next func(huma.Context)) {
 		level := routeLevel(ctx.Operation())
 		p, refused, err := identify(ctx, resolver, level)
@@ -60,7 +56,7 @@ func Middleware(api huma.API, resolver Resolver, publicURL string) func(huma.Con
 			return
 		}
 		if refused == nil {
-			refused = check(ctx, p, level, publicOrigin)
+			refused = check(ctx, p, level, publicURL)
 		}
 		if refused == nil {
 			next(huma.WithContext(ctx, access.WithPrincipal(ctx.Context(), p)))
@@ -116,14 +112,14 @@ func identify(ctx huma.Context, resolver Resolver, level Level) (access.Principa
 	return access.Principal{}, invalid, nil
 }
 
-func check(ctx huma.Context, p access.Principal, level Level, publicOrigin string) *refusal {
+func check(ctx huma.Context, p access.Principal, level Level, publicURL string) *refusal {
 	if p.Kind() == access.Nobody && level != Anyone {
 		return &refusal{http.StatusUnauthorized, msgNobody}
 	}
 	if p.Kind() != access.Session && level == Session {
 		return &refusal{http.StatusForbidden, msgNeedSession}
 	}
-	if !fromThisSite(ctx, p, publicOrigin) {
+	if !fromThisSite(ctx, p, publicURL) {
 		return &refusal{http.StatusForbidden, msgOrigin}
 	}
 	return nil
@@ -131,7 +127,7 @@ func check(ctx huma.Context, p access.Principal, level Level, publicOrigin strin
 
 // fromThisSite asks a change for an Origin of the hub itself, and a session for an
 // Origin at all: browsers send one, so a session change without it is suspect.
-func fromThisSite(ctx huma.Context, p access.Principal, publicOrigin string) bool {
+func fromThisSite(ctx huma.Context, p access.Principal, publicURL string) bool {
 	changes := map[string]bool{http.MethodPost: true, http.MethodPut: true, http.MethodPatch: true, http.MethodDelete: true}
 	if !changes[ctx.Method()] {
 		return true
@@ -140,7 +136,24 @@ func fromThisSite(ctx huma.Context, p access.Principal, publicOrigin string) boo
 	if origin == "" {
 		return p.Kind() != access.Session
 	}
-	return origin == "http://"+ctx.Host() || origin == "https://"+ctx.Host() || origin == publicOrigin
+	return AllowedOrigin(origin, ctx.Host(), publicURL)
+}
+
+// AllowedOrigin is true for an Origin of the hub: its Host over HTTP or HTTPS,
+// or the scheme and host of publicURL.
+func AllowedOrigin(origin, host, publicURL string) bool {
+	if origin == "" {
+		return false
+	}
+	return origin == "http://"+host || origin == "https://"+host || origin == publicOrigin(publicURL)
+}
+
+func publicOrigin(publicURL string) string {
+	u, err := url.Parse(publicURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // Refuse is 401 for nobody and 403 for anyone identified.
@@ -177,6 +190,14 @@ func NeedAdmin(ctx context.Context) error {
 }
 
 func Cookie(ctx huma.Context, id string, expires time.Time) http.Cookie {
+	return SessionCookie(id, expires, secure(ctx))
+}
+
+func ClearCookie(ctx huma.Context) http.Cookie {
+	return ClearedSessionCookie(secure(ctx))
+}
+
+func SessionCookie(id string, expires time.Time, secure bool) http.Cookie {
 	return http.Cookie{
 		Name:     CookieName,
 		Value:    id,
@@ -185,18 +206,18 @@ func Cookie(ctx huma.Context, id string, expires time.Time) http.Cookie {
 		MaxAge:   int(accounts.SessionLifetime / time.Second),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   secure(ctx),
+		Secure:   secure,
 	}
 }
 
-func ClearCookie(ctx huma.Context) http.Cookie {
+func ClearedSessionCookie(secure bool) http.Cookie {
 	return http.Cookie{
 		Name:     CookieName,
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   secure(ctx),
+		Secure:   secure,
 	}
 }
 

@@ -31,7 +31,7 @@ func NewLogins(after func(time.Duration) <-chan time.Time, waiting func()) *Logi
 	return &Logins{slot: make(chan struct{}, 1), after: after, waiting: waiting}
 }
 
-func (l *Logins) run(ctx context.Context, login func() error) error {
+func (l *Logins) Run(ctx context.Context, login func() error) error {
 	if err := l.take(ctx); err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func (h *Handler) Create(ctx context.Context, input *CreateInput) (*CreateOutput
 		session   accounts.Session
 		principal access.Principal
 	)
-	err := h.logins.run(ctx, func() (err error) {
+	err := h.logins.Run(ctx, func() (err error) {
 		session, principal, err = h.accounts.Login(ctx, input.Body.Login, input.Body.Password)
 		return err
 	})

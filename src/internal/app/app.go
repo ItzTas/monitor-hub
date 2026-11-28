@@ -15,6 +15,7 @@ import (
 
 	"github.com/ItzTas/monitor-hub/src/internal/accounts"
 	"github.com/ItzTas/monitor-hub/src/internal/api"
+	"github.com/ItzTas/monitor-hub/src/internal/api/session"
 	"github.com/ItzTas/monitor-hub/src/internal/catalog"
 	"github.com/ItzTas/monitor-hub/src/internal/consumerapi"
 	"github.com/ItzTas/monitor-hub/src/internal/consumers"
@@ -85,7 +86,8 @@ func assemble(ctx context.Context, cfg core.Config, environ []string, logger *sl
 	icons.Register(mux)
 	consumerapi.Register(mux, consumerapi.Deps{Consumers: consumerService, Stream: stream.NewService(stream.NewPostgres(pool), signal, registry), Log: logger})
 	api.Register(mux, api.Deps{Pool: pool, Monitors: monitors, Accounts: accountService, PublicURL: cfg.PublicURL, Log: logger, Consumers: consumerService, Registry: registry, Settings: settings})
-	api.RegisterAccess(mux, api.AccessDeps{Accounts: accountService, Log: logger, PublicURL: cfg.PublicURL, After: time.After})
+	logins := session.NewLogins(time.After, nil)
+	api.RegisterAccess(mux, api.AccessDeps{Accounts: accountService, Log: logger, PublicURL: cfg.PublicURL, Logins: logins})
 	dispatcher := notify.NewDispatcher(notify.NewOutbox(pool), channels, logger, notify.WithClock(now, time.After))
 	return &application{
 		address:    cfg.HTTPAddress,

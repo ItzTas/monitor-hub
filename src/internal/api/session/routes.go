@@ -2,7 +2,6 @@ package session
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -10,8 +9,8 @@ import (
 	"github.com/ItzTas/monitor-hub/src/internal/api/gate"
 )
 
-func Configure(api huma.API, svc *accounts.Service, after func(time.Duration) <-chan time.Time) {
-	RegisterRoutes(api, NewHandler(svc, NewLogins(after, nil)))
+func Configure(api huma.API, svc *accounts.Service, logins *Logins) {
+	RegisterRoutes(api, NewHandler(svc, logins))
 }
 
 func RegisterRoutes(api huma.API, h *Handler) {
