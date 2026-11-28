@@ -522,7 +522,7 @@ fn misbehaving_validators_are_reported() {
             )],
         ),
         Case::new(
-            "version 1 answer",
+            "problem without a path",
             r#"echo '{"problems":[{"name":"X","message":"m"}]}'; exit 1"#,
             vec![],
         ),

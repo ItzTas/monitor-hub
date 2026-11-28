@@ -142,7 +142,7 @@ func TestCheckReportsEveryBrokenField(t *testing.T) {
 		{"null secret", second(`{"name":"b","label":"L","type":"string","secret":null}`), []string{"settings.json: fields[1]: secret must be true or false"}},
 		{"null editable", second(`{"name":"b","label":"L","type":"string","editable":null}`), []string{"settings.json: fields[1]: editable must be true or false"}},
 		{"text secret", second(`{"name":"b","label":"L","type":"string","secret":"yes"}`), []string{"settings.json: fields[1]: secret must be true or false"}},
-		{"settings_version 1", `{"settings_version":1,"fields":[]}`, []string{"settings.json: settings_version is 1, want 2"}},
+		{"settings_version 3", `{"settings_version":3,"fields":[]}`, []string{"settings.json: settings_version is 3, want 2"}},
 		{"settings_version as text", `{"settings_version":"2","fields":[]}`, []string{`settings.json: settings_version is "2", want 2`}},
 		{"settings_version with a fraction", `{"settings_version":2.0,"fields":[]}`, []string{"settings.json: settings_version is 2.0, want 2"}},
 		{"no settings_version", `{"fields":[]}`, []string{"settings.json: settings_version is missing, want 2"}},

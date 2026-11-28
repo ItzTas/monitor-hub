@@ -151,7 +151,7 @@ fn structural_errors_are_reported() {
         assert!(matches!(err, SettingsError::Format(_)), "{case}: {err:?}");
     }
 
-    for version in [1, 3] {
+    for version in [0, 3] {
         let json = format!(r#"{{"settings_version":{version},"fields":[]}}"#);
         let err = parse(json.as_bytes()).unwrap_err();
         assert!(
@@ -251,10 +251,10 @@ fn null_optional_attributes_count_as_absent() {
 
 #[test]
 fn error_texts_are_stable() {
-    let err = parse(br#"{"settings_version":1,"fields":[]}"#).unwrap_err();
+    let err = parse(br#"{"settings_version":3,"fields":[]}"#).unwrap_err();
     assert_eq!(
         err.to_string(),
-        "settings.json: settings_version is 1, want 2"
+        "settings.json: settings_version is 3, want 2"
     );
     let err = parse(b"\xef\xbb\xbf{}").unwrap_err();
     assert_eq!(

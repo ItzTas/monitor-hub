@@ -97,7 +97,7 @@ func TestReadRefuses(t *testing.T) {
 		{"null secret", second(`{"name":"b","label":"L","type":"string","secret":null}`), "settings.json: fields[1]: secret must be true or false"},
 		{"null editable", second(`{"name":"b","label":"L","type":"string","editable":null}`), "settings.json: fields[1]: editable must be true or false"},
 		{"text editable", second(`{"name":"b","label":"L","type":"string","editable":"false"}`), "settings.json: fields[1]: editable must be true or false"},
-		{"settings_version 1", `{"settings_version":1,"fields":[]}`, "settings.json: settings_version is 1, want 2"},
+		{"settings_version 3", `{"settings_version":3,"fields":[]}`, "settings.json: settings_version is 3, want 2"},
 		{"settings_version as text", `{"settings_version":"2","fields":[]}`, `settings.json: settings_version is "2", want 2`},
 		{"settings_version with a fraction", `{"settings_version":2.0,"fields":[]}`, "settings.json: settings_version is 2.0, want 2"},
 		{"no settings_version", `{"fields":[]}`, "settings.json: settings_version is missing, want 2"},

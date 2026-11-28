@@ -238,7 +238,7 @@ func TestLoadReadsTheDeclarationBesideTheManifest(t *testing.T) {
 		writeManifest(t, root, name, `{"protocol_version":2,"name":"`+name+`","command":["x"]}`)
 	}
 	writeSettings(t, root, "aa", padded(declaration, 1<<20))
-	writeSettings(t, root, "cc", []byte(`{"settings_version":1,"fields":[]}`))
+	writeSettings(t, root, "cc", []byte(`{"settings_version":3,"fields":[]}`))
 	if err := os.Mkdir(filepath.Join(root, "dd", settings.File), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestLoadReadsTheDeclarationBesideTheManifest(t *testing.T) {
 	}
 
 	wantErrors := map[string]string{
-		"cc": "settings.json: settings_version is 1, want 2",
+		"cc": "settings.json: settings_version is 3, want 2",
 		"ee": "settings.json is larger than 1 MiB",
 		"ff": `settings.json: key "Secret" differs from "secret" only in letter case`,
 	}

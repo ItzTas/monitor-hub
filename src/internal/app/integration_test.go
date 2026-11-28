@@ -658,16 +658,16 @@ func TestAMonitorWithoutSettingsBehavesAsBefore(t *testing.T) {
 	}
 }
 
-func TestAVersion1FileIsLoggedAndIgnored(t *testing.T) {
+func TestAnUnsupportedSettingsVersionIsLoggedAndIgnored(t *testing.T) {
 	b := newBench(t)
-	installTestmonitor(t, filepath.Join(b.monitorsDir, "testmonitor"), `{"settings_version":1,"fields":[]}`, "")
+	installTestmonitor(t, filepath.Join(b.monitorsDir, "testmonitor"), `{"settings_version":3,"fields":[]}`, "")
 	logs := &jsonLogs{}
 	app := b.assemble(slog.New(slog.NewJSONHandler(logs, nil)))
 	run(t, app)
 	waitForMonitor(t, app)
 
 	record := logs.waitRecord(t, "the monitor's settings.json is ignored; none of its configuration can be changed here")
-	if text, _ := record["error"].(string); record["monitor"] != "testmonitor" || !strings.Contains(text, "settings.json: settings_version is 1, want 2") {
+	if text, _ := record["error"].(string); record["monitor"] != "testmonitor" || !strings.Contains(text, "settings.json: settings_version is 3, want 2") {
 		t.Errorf("the ignored settings.json was logged as %v, want monitor testmonitor and the version error", withoutPasswords(fmt.Sprint(record)))
 	}
 	if settings := readSettings(t, app, signIn(t, app)); settings["declared"] != false {

@@ -246,11 +246,11 @@ func TestConformanceReportsSettingsFileViolations(t *testing.T) {
 			},
 			want: badSettingsLine,
 		},
-		"settings_version 1": {
+		"unsupported settings_version": {
 			dir: func(t *testing.T) string {
-				return monitorDir(t, `{"settings_version":1,"fields":[{"name":"EVENTS","label":"Events","type":"integer"}]}`, "")
+				return monitorDir(t, `{"settings_version":3,"fields":[{"name":"EVENTS","label":"Events","type":"integer"}]}`, "")
 			},
-			want: "settings.json: settings_version is 1, want 2",
+			want: "settings.json: settings_version is 3, want 2",
 		},
 		"unreadable": {
 			dir: func(t *testing.T) string {
