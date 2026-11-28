@@ -34,7 +34,7 @@ type telegramMessage struct {
 }
 
 func newTelegram(cfg core.Telegram, api, userAgent string) *telegram {
-	return &telegram{api: api, token: cfg.Token, chatID: cfg.ChatID, userAgent: userAgent, client: newHTTPClient()}
+	return &telegram{api: api, token: cfg.Token, chatID: cfg.ChatID, userAgent: userAgent, client: NewHTTPClient()}
 }
 
 func (t *telegram) Name() string {
@@ -54,7 +54,7 @@ func (t *telegram) Send(ctx context.Context, msg Message) error {
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("User-Agent", t.userAgent)
-	status, answer, err := post(t.client, request)
+	status, answer, err := Do(t.client, request)
 	if err != nil {
 		return t.redact(err)
 	}

@@ -19,7 +19,7 @@ type ntfy struct {
 }
 
 func newNtfy(cfg core.Ntfy, userAgent string) *ntfy {
-	return &ntfy{url: cfg.URL, token: cfg.Token, userAgent: userAgent, client: newHTTPClient()}
+	return &ntfy{url: cfg.URL, token: cfg.Token, userAgent: userAgent, client: NewHTTPClient()}
 }
 
 func (n *ntfy) Name() string {
@@ -39,7 +39,7 @@ func (n *ntfy) Send(ctx context.Context, msg Message) error {
 	if !n.token.IsZero() {
 		request.Header.Set("Authorization", "Bearer "+n.token.Reveal())
 	}
-	status, _, err := post(n.client, request)
+	status, _, err := Do(n.client, request)
 	if err != nil {
 		return err
 	}

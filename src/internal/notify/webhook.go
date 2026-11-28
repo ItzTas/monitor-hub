@@ -28,7 +28,7 @@ type webhookPayload struct {
 }
 
 func newWebhook(cfg core.Webhook, userAgent string) *webhook {
-	return &webhook{url: cfg.URL, secret: cfg.Secret, userAgent: userAgent, client: newHTTPClient()}
+	return &webhook{url: cfg.URL, secret: cfg.Secret, userAgent: userAgent, client: NewHTTPClient()}
 }
 
 func encodeEvents(msg Message) ([]byte, error) {
@@ -57,7 +57,7 @@ func (w *webhook) Send(ctx context.Context, msg Message) error {
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("User-Agent", w.userAgent)
 	request.Header.Set(signatureHeader, "sha256="+hex.EncodeToString(mac.Sum(nil)))
-	status, _, err := post(w.client, request)
+	status, _, err := Do(w.client, request)
 	if err != nil {
 		return err
 	}

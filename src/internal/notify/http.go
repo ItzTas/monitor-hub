@@ -16,7 +16,7 @@ const (
 
 var errBadRequest = errors.New("could not build the request")
 
-func newHTTPClient() *http.Client {
+func NewHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: httpTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -25,7 +25,7 @@ func newHTTPClient() *http.Client {
 	}
 }
 
-func post(client *http.Client, request *http.Request) (int, []byte, error) {
+func Do(client *http.Client, request *http.Request) (int, []byte, error) {
 	response, err := client.Do(request)
 	if err != nil {
 		if urlErr, ok := errors.AsType[*url.Error](err); ok {

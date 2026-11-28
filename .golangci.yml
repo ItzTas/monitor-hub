@@ -42,6 +42,11 @@ linters:
         text: G124
         linters:
           - gosec
+      # Notification channels send to the addresses set in the hub's own configuration.
+      - path: (^|/)src/internal/notify/http\.go$
+        text: G704
+        linters:
+          - gosec
     paths:
       - sdk-go/monitorpb
       - src/internal/db
