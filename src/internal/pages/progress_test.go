@@ -89,9 +89,33 @@ func TestProgressSaysOnlyWhatTheSupervisorSaw(t *testing.T) {
 		t.Errorf("the progress when Progress does not know sei = %d, want 404", code)
 	}
 	buttonsBack(t, "the progress when Progress does not know sei", body)
-	if code, _ := progress("/settings/nope/progress", asHTMX); code != http.StatusNotFound {
-		t.Errorf("the progress of a monitor out of the catalog = %d, want 404", code)
+}
+
+func TestAPollTheGuardsRefuseGivesTheButtonsBack(t *testing.T) {
+	mux, _, _, people := newTestSite(t, Deps{Entries: monitorEntries(t)})
+	poll := func(target, session string) (int, string) {
+		rec := serve(t.Context(), mux, http.MethodGet, target, "", withCookie(cookie(session)), asHTMX)
+		return rec.Code, rec.Body.String()
 	}
+
+	code, body := poll("/settings/nope/progress?shown=restarting", "admin")
+	if code != http.StatusNotFound || !strings.Contains(body, msgUnknown) || strings.Contains(body, "hx-trigger") {
+		t.Errorf("the poll of a monitor out of the catalog = %d %q, want 404 with the message and no poll", code, body)
+	}
+	buttonsBack(t, "the poll of a monitor out of the catalog", body)
+
+	code, body = poll("/settings/sei/progress?shown=restarting", "viewer")
+	if code != http.StatusForbidden || !strings.Contains(body, "You do not have permission to change") || strings.Contains(body, "hx-trigger") {
+		t.Errorf("the poll of a person without configure = %d %q, want 403 with the message and no poll", code, body)
+	}
+	buttonsBack(t, "the poll of a person without configure", body)
+
+	people.sessionErr = errors.New("database down")
+	code, body = poll("/settings/sei/progress?shown=restarting", "admin")
+	if code != http.StatusServiceUnavailable || !strings.Contains(body, "database cannot be reached") || strings.Contains(body, "hx-trigger") {
+		t.Errorf("the poll with the session unreadable = %d %q, want 503 with the message and no poll", code, body)
+	}
+	buttonsBack(t, "the poll with the session unreadable", body)
 }
 
 // buttonsBack checks that an answer that ends the poll gives both save buttons back, enabled.

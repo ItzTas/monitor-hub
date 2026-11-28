@@ -37,6 +37,8 @@ type Deps struct {
 	Log       *slog.Logger
 }
 
+const progressRoute = "GET /settings/{name}/progress"
+
 type site struct {
 	deps      Deps
 	assets    assets
@@ -56,7 +58,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 		"GET /settings/{name}/variables/new": s.authed(s.may(access.Configure, s.newVariable)),
 		"POST /settings/{name}":              s.changes(s.may(access.Configure, s.saveForm)),
 		"POST /settings/{name}/form":         s.changes(s.may(access.Configure, s.edit)),
-		"GET /settings/{name}/progress":      s.authed(s.may(access.Configure, s.followRestart)),
+		progressRoute:                        s.authed(s.may(access.Configure, s.followRestart)),
 		"POST /settings/{name}/check":        s.changes(s.may(access.Check, s.checkNow)),
 	}
 	for pattern, handler := range routes {

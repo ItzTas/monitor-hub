@@ -40,7 +40,7 @@ func (s *site) followRestart(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := s.deps.Settings.Progress(r.Context(), name)
 	if err != nil {
-		s.failPoll(w, r, name, err)
+		s.failToLoad(w, r, name, err, msgDatabaseRead)
 		return
 	}
 	restarting := p.State == monitorconfig.ProgressRestarting
@@ -49,16 +49,6 @@ func (s *site) followRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fragment(w, http.StatusOK, "progress", progressView{Outcome: resultOf(name, p), Ended: !restarting, Buttons: buttons{OutOfBand: true}})
-}
-
-// failPoll answers in place of the element that polls, so polling stops; the save buttons
-// held while the restart went on come back with the message.
-func (s *site) failPoll(w http.ResponseWriter, r *http.Request, name string, err error) {
-	status, text, ok := s.loadFailure(r, name, err, msgDatabaseRead)
-	if !ok {
-		return
-	}
-	s.fragment(w, status, "poll-failure", pollFailure{Message: text, Buttons: buttons{OutOfBand: true}})
 }
 
 // resultOf is what the restart came to, as the supervisor saw it.

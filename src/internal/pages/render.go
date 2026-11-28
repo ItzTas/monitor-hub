@@ -82,11 +82,16 @@ func (s *site) write(w http.ResponseWriter, status int, set *template.Template, 
 }
 
 // fail answers htmx with only the message, in place of the outcome, and a page
-// load with the error page.
+// load with the error page. A refused poll also gives back the save buttons the
+// restart held.
 func (s *site) fail(w http.ResponseWriter, r *http.Request, status int, message string) {
 	if isHTMX(r) {
 		w.Header().Set("HX-Retarget", "#outcome")
 		w.Header().Set("HX-Reswap", "innerHTML")
+		if r.Pattern == progressRoute {
+			s.fragment(w, status, "poll-failure", pollFailure{Message: message, Buttons: buttons{OutOfBand: true}})
+			return
+		}
 		s.fragment(w, status, "message", message)
 		return
 	}
