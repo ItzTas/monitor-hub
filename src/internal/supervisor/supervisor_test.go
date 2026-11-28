@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -358,44 +357,5 @@ func TestNames(t *testing.T) {
 	s := New([]catalog.Entry{entry("zeta", "", "z"), entry("alpha", "", "a")}, nil, t.TempDir(), slog.New(slog.DiscardHandler))
 	if got := s.Names(); !slices.Equal(got, []string{"alpha", "zeta"}) {
 		t.Fatalf("Names() = %v", got)
-	}
-}
-
-func writeExecutable(t *testing.T, path string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestResolveCommand(t *testing.T) {
-	dir := t.TempDir()
-	pathDir := t.TempDir()
-	writeExecutable(t, filepath.Join(dir, "tool"))
-	writeExecutable(t, filepath.Join(pathDir, "tool"))
-	writeExecutable(t, filepath.Join(pathDir, "other"))
-	writeExecutable(t, filepath.Join(filepath.Dir(dir), "escape"))
-	env := []string{"PATH=" + pathDir}
-
-	found := map[string]struct{ command, want string }{
-		"file in the directory wins": {command: "tool", want: filepath.Join(dir, "tool")},
-		"falls back to PATH":         {command: "other", want: filepath.Join(pathDir, "other")},
-	}
-	for name, tt := range found {
-		t.Run(name, func(t *testing.T) {
-			got, err := resolveCommand(entry("probe", dir, tt.command), env)
-			if err != nil || got != tt.want {
-				t.Fatalf("got %q, %v; want %q", got, err, tt.want)
-			}
-		})
-	}
-
-	for name, command := range map[string]string{"unknown command": "missing", "escape through ..": "../escape"} {
-		t.Run(name, func(t *testing.T) {
-			_, err := resolveCommand(entry("probe", dir, command), env)
-			if err == nil || !strings.Contains(err.Error(), "probe") {
-				t.Fatalf("got error %v, want one naming the monitor", err)
-			}
-		})
 	}
 }

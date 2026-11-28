@@ -1,15 +1,26 @@
 package catalog
 
 import (
+	"maps"
+	"slices"
 	"sort"
 	"strings"
+
+	"github.com/ItzTas/monitor-hub/sdk-go/settings"
 )
 
 func EnvPrefix(name string) string {
 	return strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "__"
 }
 
-func Environment(name string, environ []string, dataRoot string) []string {
+// Layer changes what a monitor receives from its prefixed variables: Drop removes names, Add
+// sets names on top. The hub's own names still win over both.
+type Layer struct {
+	Drop []string
+	Add  map[string]string
+}
+
+func Environment(name string, environ []string, dataRoot string, layer Layer) []string {
 	prefix := EnvPrefix(name)
 	vars := map[string]string{}
 	inherited := map[string]string{}
@@ -18,12 +29,17 @@ func Environment(name string, environ []string, dataRoot string) []string {
 		if !ok {
 			continue
 		}
-		if stripped, found := strings.CutPrefix(key, prefix); found && stripped != "" {
-			vars[stripped] = value
+		stripped, found := strings.CutPrefix(key, prefix)
+		if !found || stripped == "" {
+			inherited[key] = value
 			continue
 		}
-		inherited[key] = value
+		if settings.Reserved(stripped) || slices.Contains(layer.Drop, stripped) {
+			continue
+		}
+		vars[stripped] = value
 	}
+	maps.Copy(vars, layer.Add)
 	for _, key := range []string{"PATH", "TZ"} {
 		delete(vars, key)
 		if value, ok := inherited[key]; ok {

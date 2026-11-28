@@ -5,14 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/ItzTas/monitor-hub/sdk-go/settings"
 )
 
-const protocolVersion = 2
+const (
+	protocolVersion = 2
+	settingsLimit   = 1 << 20
+)
 
 var (
 	namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,30}$`)
@@ -26,9 +32,13 @@ type Manifest struct {
 	Apk             []string `json:"apk"`
 }
 
+// Entry is one monitor directory. Settings is nil when the monitor has no settings.json or the
+// hub ignored it; SettingsError says why it was ignored.
 type Entry struct {
-	Manifest Manifest
-	Dir      string
+	Manifest      Manifest
+	Dir           string
+	Settings      *settings.Declaration
+	SettingsError error
 }
 
 func ReadManifest(r io.Reader) (Manifest, error) {
@@ -116,5 +126,25 @@ func loadEntry(dir string) (Entry, error) {
 	if m.Name != filepath.Base(dir) {
 		return Entry{}, fmt.Errorf("monitor directory %s: manifest name %q does not match directory", dir, m.Name)
 	}
-	return Entry{Manifest: m, Dir: dir}, nil
+	declaration, settingsErr := readSettings(root)
+	return Entry{Manifest: m, Dir: dir, Settings: declaration, SettingsError: settingsErr}, nil
+}
+
+func readSettings(root *os.Root) (*settings.Declaration, error) {
+	f, err := root.Open(settings.File)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, settingsLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > settingsLimit {
+		return nil, errors.New(settings.File + " is larger than 1 MiB")
+	}
+	return settings.Read(data)
 }

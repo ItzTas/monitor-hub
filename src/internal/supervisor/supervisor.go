@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -161,11 +160,11 @@ func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Dur
 }
 
 func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *atomic.Bool) (*plugin.Client, *exec.Cmd, error) {
-	env := catalog.Environment(entry.Manifest.Name, s.environ, s.dataRoot)
-	if err := os.MkdirAll(envValue(env, sdk.DataDirEnv), 0o700); err != nil {
+	env := catalog.Environment(entry.Manifest.Name, s.environ, s.dataRoot, catalog.Layer{})
+	if err := os.MkdirAll(catalog.EnvValue(env, sdk.DataDirEnv), 0o700); err != nil {
 		return nil, nil, fmt.Errorf("create data dir: %w", err)
 	}
-	path, err := resolveCommand(entry, env)
+	path, err := catalog.ResolveCommand(entry, env)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -342,46 +341,4 @@ func (s *Supervisor) announce(name string) {
 		close(changed)
 	}
 	s.changes[name] = make(chan struct{})
-}
-
-func resolveCommand(entry catalog.Entry, env []string) (string, error) {
-	command := entry.Manifest.Command[0]
-	local := filepath.Join(entry.Dir, command)
-	if filepath.IsLocal(command) && isExecutable(local) {
-		return local, nil
-	}
-	if path, ok := lookPath(command, envValue(env, "PATH")); ok {
-		return path, nil
-	}
-	return "", fmt.Errorf("monitor %s: command %q not found", entry.Manifest.Name, command)
-}
-
-func lookPath(command, pathList string) (string, bool) {
-	if filepath.IsAbs(command) {
-		return command, isExecutable(command)
-	}
-	if strings.ContainsRune(command, filepath.Separator) {
-		return "", false
-	}
-	for _, dir := range filepath.SplitList(pathList) {
-		candidate := filepath.Join(dir, command)
-		if filepath.IsAbs(dir) && isExecutable(candidate) {
-			return candidate, true
-		}
-	}
-	return "", false
-}
-
-func isExecutable(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
-}
-
-func envValue(env []string, key string) string {
-	for _, kv := range env {
-		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
-			return v
-		}
-	}
-	return ""
 }
