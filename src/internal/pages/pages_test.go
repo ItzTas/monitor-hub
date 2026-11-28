@@ -231,6 +231,18 @@ func (j *journal) all() []string {
 	return slices.Clone(j.entries)
 }
 
+// within is what ch gives, or a failure saying why after 10 s.
+func within[T any](t *testing.T, ch <-chan T, why string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(10 * time.Second):
+		t.Fatal(why)
+		panic("unreachable")
+	}
+}
+
 func TestAWrongPasswordWaitsInTheQueueAndIsNeverEchoed(t *testing.T) {
 	after, logs, notes := newFakeAfter(), &lockedBuffer{}, &journal{}
 	waited := make(chan struct{}, 1)
@@ -248,7 +260,7 @@ func TestAWrongPasswordWaitsInTheQueueAndIsNeverEchoed(t *testing.T) {
 	go func() {
 		answeredWrong <- serve(t.Context(), mux, http.MethodPost, "/settings/login", signInForm("paulo-santos", wrongPassword), fromHub)
 	}()
-	<-after.called
+	within(t, after.called, "the wrong password never reached the 1 s wait: the sign-in skipped the queue")
 	select {
 	case <-answeredWrong:
 		t.Fatal("the wrong password was answered before the delay")
@@ -257,10 +269,11 @@ func TestAWrongPasswordWaitsInTheQueueAndIsNeverEchoed(t *testing.T) {
 	go func() {
 		answeredRight <- serve(t.Context(), mux, http.MethodPost, "/settings/login", signInForm("paulo-santos", rightPassword), fromHub)
 	}()
-	<-waited
+	within(t, waited, "the second sign-in never waited behind the wrong password: it skipped the queue")
 	notes.add("release")
 	after.fire <- time.Time{}
-	wrong, right := <-answeredWrong, <-answeredRight
+	wrong := within(t, answeredWrong, "the wrong password was never answered after the wait")
+	right := within(t, answeredRight, "the sign-in that waited was never answered")
 
 	if wrong.Code != http.StatusUnauthorized {
 		t.Errorf("the wrong password = %d %s, want 401", wrong.Code, shown(t, wrong))
@@ -269,11 +282,11 @@ func TestAWrongPasswordWaitsInTheQueueAndIsNeverEchoed(t *testing.T) {
 	password := startTag(body, "password")
 	describedBy, _ := attr(password, "aria-describedby")
 	if !hasAttr(password, "aria-invalid", "true") || describedBy == "" {
-		t.Errorf("the password field after a wrong password is %q, want aria-invalid and aria-describedby", password)
+		t.Errorf("the password field after a wrong password is %q, want aria-invalid and aria-describedby", withoutPasswords(password))
 	}
 	message := regexp.MustCompile(`(?s)<p\s[^>]*\bid="` + regexp.QuoteMeta(describedBy) + `"[^>]*>(.*?)</p>`).FindStringSubmatch(body)
 	if message == nil || !strings.Contains(html.UnescapeString(message[1]), "wrong login or password") {
-		t.Errorf("the message the password field points to is %q, want wrong login or password", message)
+		t.Errorf("the message the password field points to is %q, want wrong login or password", withoutPasswords(strings.Join(message, " | ")))
 	}
 	if value, _ := attr(password, "value"); value != "" {
 		t.Error("the password field after a wrong password has a value")
@@ -303,16 +316,16 @@ func TestAWrongPasswordWaitsInTheQueueAndIsNeverEchoed(t *testing.T) {
 	go func() {
 		answeredWrong <- serve(t.Context(), mux, http.MethodPost, "/settings/login", signInForm("paulo-santos", wrongPassword), fromHub)
 	}()
-	<-after.called
+	within(t, after.called, "the second wrong password never reached the 1 s wait: the sign-in skipped the queue")
 	ctx, cancel := context.WithCancel(t.Context())
 	go func() {
 		answeredRight <- serve(ctx, mux, http.MethodPost, "/settings/login", signInForm("paulo-santos", rightPassword), fromHub)
 	}()
-	<-waited
+	within(t, waited, "the sign-in of the client that leaves never waited in the queue")
 	cancel()
-	left := <-answeredRight
+	left := within(t, answeredRight, "the client that left the queue was never let go")
 	after.fire <- time.Time{}
-	<-answeredWrong
+	within(t, answeredWrong, "the second wrong password was never answered after the wait")
 
 	if !silent(left) {
 		t.Errorf("a client that left the queue got %d %s, want nothing written", left.Code, shown(t, left))
