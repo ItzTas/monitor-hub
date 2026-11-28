@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -8,13 +9,20 @@ import (
 	"github.com/ItzTas/monitor-hub/sdk-go/settings"
 )
 
+var variablePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// VariableName reports whether name may be the name of a variable added to a monitor.
+func VariableName(name string) bool {
+	return variablePattern.MatchString(name)
+}
+
 func EnvPrefix(name string) string {
 	return strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "__"
 }
 
 // Layer changes what a monitor receives from its prefixed variables: Drop removes names, Add
-// sets names on top. A name settings.Reserved refuses never passes, and the hub's own names win
-// over both.
+// sets names on top. An added name that is not a VariableName or that settings.Reserved refuses
+// never passes, and the hub's own names win over both.
 type Layer struct {
 	Drop []string
 	Add  map[string]string
@@ -40,7 +48,7 @@ func Environment(name string, environ []string, dataRoot string, layer Layer) []
 		vars[stripped] = value
 	}
 	for key, value := range layer.Add {
-		if !settings.Reserved(key) {
+		if VariableName(key) && !settings.Reserved(key) {
 			vars[key] = value
 		}
 	}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -49,8 +48,6 @@ type Assembly struct {
 	Env      []string
 	Secrets  []string
 }
-
-var variablePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 // Assemble builds the document of a monitor field by field: the saved value, else the .env text,
 // else the default.
@@ -328,7 +325,7 @@ func (a *assembler) layer() catalog.Layer {
 	}
 	for _, key := range slices.Sorted(maps.Keys(a.saved.Variables)) {
 		v := a.saved.Variables[key]
-		if !variablePattern.MatchString(key) || settings.Reserved(key) || slices.Contains(layer.Drop, key) {
+		if !catalog.VariableName(key) || settings.Reserved(key) || slices.Contains(layer.Drop, key) {
 			// A free variable named after a secret field's env may hold that secret.
 			a.ignore("env:"+key, encode(v.Value), v.Secret || secretEnv[key], ReasonUndeclared)
 			continue
