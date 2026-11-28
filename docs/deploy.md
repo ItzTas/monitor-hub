@@ -479,7 +479,7 @@ The session lasts 12 hours. Section 8, "People, tokens and credentials", uses it
    curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8090/api/monitors
    ```
 
-   Expected for `diario`: `"state":"idle"` and a `last_success_at` later than the moment you asked (the API gives times in UTC). `checking` means the cycle is still running, so repeat. `failing` gives the reason in `message`.
+   Expected for `diario`: `"state":"idle"` and a `last_success_at` later than the moment you asked (every time the API returns is in UTC and ends in `Z`, while the hub's log uses the container's `TZ`). `checking` means the cycle is still running, so repeat. `failing` gives the reason in `message`.
 
    Do not ask `sei` for a check now. Its first check starts on its own as soon as it has reached SEI, and it refuses a check within 5 minutes of the last one. The same list proves the SEI side: `sei` as `idle` with a `last_success_at` later than the start means the arm64 build reached SEI over TLS, logged in, read your units and wrote to its database.
 
