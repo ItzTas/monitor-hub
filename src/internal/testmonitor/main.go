@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/ItzTas/monitor-hub/sdk-go"
 	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/settings"
 	"github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -29,6 +33,8 @@ var (
 	baseTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	started  = time.Now()
 	worker   sync.Mutex
+	// hubEnviron is the environment the hub passed, before the document adds to it.
+	hubEnviron []string
 )
 
 type server struct {
@@ -36,8 +42,15 @@ type server struct {
 }
 
 func main() {
+	hubEnviron = os.Environ()
+	if fd := os.Getenv(settings.ConfigFDEnv); fd != "" {
+		exitOnError(readDocument(fd))
+	}
 	if slices.Equal(os.Args[1:], []string{"validate-settings"}) {
 		os.Exit(validateSettings())
+	}
+	if name := os.Getenv("RECORD_START"); name != "" {
+		exitOnError(appendToDataFile("starts", fmt.Sprintf("%d %s\n", os.Getpid(), os.Getenv(name))))
 	}
 	if os.Getenv("SPAWN_CHILD") == "1" {
 		spawnChild()
@@ -53,6 +66,85 @@ func main() {
 		return
 	}
 	sdk.Serve(&server{})
+}
+
+func exitOnError(err error) {
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// readDocument reads the configuration document from the descriptor fd and sets each top-level
+// text, number or boolean as the variable named after its key in capitals.
+func readDocument(fd string) error {
+	if os.Getenv("RECORD_FD") == "1" {
+		link, err := os.Readlink("/proc/self/fd/" + fd)
+		if err != nil {
+			return err
+		}
+		if err := writeDataFile("fd", []byte(link)); err != nil {
+			return err
+		}
+	}
+	n, err := strconv.Atoi(fd)
+	if err != nil {
+		return fmt.Errorf("%s: %w", settings.ConfigFDEnv, err)
+	}
+	f := os.NewFile(uintptr(n), "config")
+	data, err := io.ReadAll(f)
+	_ = f.Close()
+	if err != nil {
+		return fmt.Errorf("read the configuration document: %w", err)
+	}
+	if os.Getenv("RECORD_CONFIG") == "1" {
+		if err := writeDataFile("config.json", data); err != nil {
+			return err
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var document map[string]any
+	if err := decoder.Decode(&document); err != nil {
+		return fmt.Errorf("decode the configuration document: %w", err)
+	}
+	for key, value := range document {
+		switch value.(type) {
+		case string, json.Number, bool:
+			_ = os.Setenv(strings.ToUpper(key), fmt.Sprint(value))
+		}
+	}
+	return nil
+}
+
+func dataRoot() (*os.Root, error) {
+	return os.OpenRoot(os.Getenv(sdk.DataDirEnv))
+}
+
+func writeDataFile(name string, data []byte) error {
+	root, err := dataRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.WriteFile(name, data, 0o600)
+}
+
+func appendToDataFile(name, line string) error {
+	root, err := dataRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(line); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func validateSettings() int {
@@ -116,7 +208,7 @@ func answerNoProblems() int {
 }
 
 func validAnswer() int {
-	if len(os.Environ()) != 0 {
+	if len(hubEnviron) != 0 {
 		return 3
 	}
 	if _, err := os.Stat("settings.json"); err != nil {

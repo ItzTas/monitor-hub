@@ -2,19 +2,23 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/settings"
 	"github.com/ItzTas/monitor-hub/src/internal/catalog"
 )
 
@@ -57,6 +61,12 @@ func startLoggingSupervisor(t *testing.T, environ []string, logger *slog.Logger)
 	dataRoot := t.TempDir()
 	s := New([]catalog.Entry{entry("testmonitor", monitorDir, "testmonitor")}, environ, dataRoot, logger)
 	s.restartDelays = []time.Duration{10 * time.Millisecond}
+	return s, dataRoot, launch(t, s)
+}
+
+// launch runs s until the test ends or the returned function is called.
+func launch(t *testing.T, s *Supervisor) func() {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
@@ -76,7 +86,7 @@ func startLoggingSupervisor(t *testing.T, environ []string, logger *slog.Logger)
 		}
 	})
 	t.Cleanup(stop)
-	return s, dataRoot, stop
+	return stop
 }
 
 func waitDescribe(t *testing.T, s *Supervisor, timeout time.Duration) monitorpb.MonitorClient {
@@ -357,5 +367,99 @@ func TestNames(t *testing.T) {
 	s := New([]catalog.Entry{entry("zeta", "", "z"), entry("alpha", "", "a")}, nil, t.TempDir(), slog.New(slog.DiscardHandler))
 	if got := s.Names(); !slices.Equal(got, []string{"alpha", "zeta"}) {
 		t.Fatalf("Names() = %v", got)
+	}
+}
+
+type fakeDocuments struct {
+	mu       sync.Mutex
+	delivery Delivery
+	err      error
+	calls    int
+}
+
+func (f *fakeDocuments) Prepare(_ context.Context, name string) (Delivery, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if name != "testmonitor" {
+		return Delivery{}, fmt.Errorf("Prepare(%q), want testmonitor", name)
+	}
+	return f.delivery, f.err
+}
+
+func (f *fakeDocuments) setDocument(document string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.delivery.Document = []byte(document)
+}
+
+func (f *fakeDocuments) prepared() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// startWithDocuments gives the supervisor no environment of its own: the monitor gets environ
+// only through docs.
+func startWithDocuments(t *testing.T, environ []string, logger *slog.Logger, docs *fakeDocuments) (*Supervisor, string) {
+	t.Helper()
+	dataRoot := t.TempDir()
+	docs.delivery.Env = catalog.Environment("testmonitor", environ, dataRoot, catalog.Layer{})
+	s := New([]catalog.Entry{entry("testmonitor", monitorDir, "testmonitor")}, nil, dataRoot, logger, WithDocuments(docs))
+	s.restartDelays = []time.Duration{10 * time.Millisecond}
+	launch(t, s)
+	return s, filepath.Join(dataRoot, "monitors", "testmonitor")
+}
+
+func TestEachStartGetsAFreshDocument(t *testing.T) {
+	docs := &fakeDocuments{delivery: Delivery{Document: []byte(`{"mark":"1"}`)}}
+	environ := []string{"TESTMONITOR__RECORD_FD=1", "TESTMONITOR__RECORD_CONFIG=1", "TESTMONITOR__CRASH_ON_CHECK=1", "TESTMONITOR__ECHO=MARK"}
+	s, dataDir := startWithDocuments(t, environ, slog.New(slog.DiscardHandler), docs)
+	first := waitDescribe(t, s, 10*time.Second)
+	if got := statusMessage(t, first); got != "1" {
+		t.Fatalf("the first process read mark %q, want 1", got)
+	}
+
+	docs.setDocument(`{"mark":"2"}`)
+	if _, err := first.Check(t.Context(), &monitorpb.CheckRequest{}); err == nil {
+		t.Fatal("Check succeeded, want the monitor to crash")
+	}
+	if got := statusMessage(t, waitDescribe(t, s, 10*time.Second)); got != "2" {
+		t.Errorf("the restarted process read mark %q, want 2", got)
+	}
+
+	if config, err := os.ReadFile(filepath.Join(dataDir, "config.json")); err != nil || string(config) != `{"mark":"2"}` {
+		t.Errorf("config.json = %q, %v; want {\"mark\":\"2\"}", config, err)
+	}
+	if fd, err := os.ReadFile(filepath.Join(dataDir, "fd")); err != nil || !strings.HasPrefix(string(fd), "/memfd:monitor-hub-config") {
+		t.Errorf("the descriptor pointed at %q (%v), want /memfd:monitor-hub-config", fd, err)
+	}
+	if got := docs.prepared(); got != 2 {
+		t.Errorf("Prepare ran %d times for two starts", got)
+	}
+}
+
+func TestWithoutDocumentsTheEnvironmentIsTodays(t *testing.T) {
+	s, _, _ := startSupervisor(t, []string{"TESTMONITOR__ECHO=" + settings.ConfigFDEnv})
+	if got := statusMessage(t, waitDescribe(t, s, 10*time.Second)); got != "" {
+		t.Fatalf("the monitor got %s=%q, want no descriptor", settings.ConfigFDEnv, got)
+	}
+}
+
+func TestAFailedPrepareMeansNoProcess(t *testing.T) {
+	const reason = `n: N is not an integer ("three")`
+	logger, buf := capture()
+	docs := &fakeDocuments{delivery: Delivery{Document: []byte(`{}`)}, err: errors.New(reason)}
+	s, dataDir := startWithDocuments(t, []string{"TESTMONITOR__RECORD_START=MONITOR_HUB_DATA_DIR"}, logger, docs)
+
+	records := waitForRecords(t, buf, 1, lifecycle)
+	if len(records) == 0 || records[0]["msg"] != "monitor failed to start" || records[0]["error"] != reason {
+		t.Fatalf("lifecycle records = %v, want monitor failed to start with error %q", records, reason)
+	}
+	if _, ok := s.Client("testmonitor"); ok {
+		t.Error("a client is available although Prepare failed")
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "starts")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("stat starts: %v, want no process to have started", err)
 	}
 }

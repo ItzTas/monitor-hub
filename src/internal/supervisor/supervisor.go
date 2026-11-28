@@ -19,7 +19,9 @@ import (
 
 	"github.com/ItzTas/monitor-hub/sdk-go"
 	"github.com/ItzTas/monitor-hub/sdk-go/monitorpb"
+	"github.com/ItzTas/monitor-hub/sdk-go/settings"
 	"github.com/ItzTas/monitor-hub/src/internal/catalog"
+	"github.com/ItzTas/monitor-hub/src/internal/memfile"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
 	"golang.org/x/sys/unix"
@@ -32,10 +34,36 @@ const (
 	groupPollInterval = 5 * time.Millisecond
 )
 
+// Delivery is what one start of a monitor receives: its environment and, for a monitor with a
+// declaration, its configuration document.
+type Delivery struct {
+	Env      []string
+	Document []byte
+}
+
+type Documents interface {
+	Prepare(ctx context.Context, name string) (Delivery, error)
+}
+
+type Option func(*Supervisor)
+
+func WithDocuments(d Documents) Option {
+	return func(s *Supervisor) { s.documents = d }
+}
+
+// environment gives every monitor only its prefixed variables, and no document.
+type environment struct {
+	environ  []string
+	dataRoot string
+}
+
+func (e environment) Prepare(_ context.Context, name string) (Delivery, error) {
+	return Delivery{Env: catalog.Environment(name, e.environ, e.dataRoot, catalog.Layer{})}, nil
+}
+
 type Supervisor struct {
 	entries       []catalog.Entry
-	environ       []string
-	dataRoot      string
+	documents     Documents
 	log           *slog.Logger
 	restartDelays []time.Duration
 	stableAfter   time.Duration
@@ -46,11 +74,10 @@ type Supervisor struct {
 	changes map[string]chan struct{}
 }
 
-func New(entries []catalog.Entry, environ []string, dataRoot string, log *slog.Logger) *Supervisor {
-	return &Supervisor{
+func New(entries []catalog.Entry, environ []string, dataRoot string, log *slog.Logger, options ...Option) *Supervisor {
+	s := &Supervisor{
 		entries:       entries,
-		environ:       environ,
-		dataRoot:      dataRoot,
+		documents:     environment{environ: environ, dataRoot: dataRoot},
 		log:           log,
 		restartDelays: []time.Duration{time.Second, 5 * time.Second, 30 * time.Second, 2 * time.Minute, 5 * time.Minute},
 		stableAfter:   10 * time.Minute,
@@ -58,6 +85,10 @@ func New(entries []catalog.Entry, environ []string, dataRoot string, log *slog.L
 		clients:       map[string]monitorpb.MonitorClient{},
 		changes:       map[string]chan struct{}{},
 	}
+	for _, option := range options {
+		option(s)
+	}
+	return s
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
@@ -136,6 +167,10 @@ func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Dur
 	}
 	defer closePidfd(cmd)
 	rpc, err := dispense(client)
+	// The child holds its own copy of the document's descriptor once it runs.
+	for _, f := range cmd.ExtraFiles {
+		_ = f.Close()
+	}
 	if err != nil {
 		s.stop(name, client, cmd, false)
 		return 0, err
@@ -160,7 +195,11 @@ func (s *Supervisor) runOnce(ctx context.Context, entry catalog.Entry) (time.Dur
 }
 
 func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *atomic.Bool) (*plugin.Client, *exec.Cmd, error) {
-	env := catalog.Environment(entry.Manifest.Name, s.environ, s.dataRoot, catalog.Layer{})
+	delivery, err := s.documents.Prepare(ctx, entry.Manifest.Name)
+	if err != nil {
+		return nil, nil, err
+	}
+	env := delivery.Env
 	if err := os.MkdirAll(catalog.EnvValue(env, sdk.DataDirEnv), 0o700); err != nil {
 		return nil, nil, fmt.Errorf("create data dir: %w", err)
 	}
@@ -170,6 +209,14 @@ func (s *Supervisor) newClient(ctx context.Context, entry catalog.Entry, ready *
 	}
 	cmd := exec.CommandContext(ctx, path, entry.Manifest.Command[1:]...)
 	cmd.Dir = entry.Dir
+	if delivery.Document != nil {
+		f, err := memfile.New("monitor-hub-config", delivery.Document)
+		if err != nil {
+			return nil, nil, fmt.Errorf("hand over the configuration document: %w", err)
+		}
+		cmd.ExtraFiles = []*os.File{f}
+		env = append(slices.Clip(env), settings.ConfigFDEnv+"=3")
+	}
 	cmd.Env = env
 	pidfd := -1
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, PidFD: &pidfd}
