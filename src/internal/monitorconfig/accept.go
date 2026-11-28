@@ -18,6 +18,8 @@ const (
 	ReasonType          IgnoredReason = "type"
 	ReasonNotEditable   IgnoredReason = "not_editable"
 	ReasonNoDeclaration IgnoredReason = "no_declaration"
+	// A newer value replaced it.
+	ReasonReplaced IgnoredReason = "replaced"
 )
 
 type IgnoredValue struct {

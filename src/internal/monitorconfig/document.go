@@ -173,13 +173,17 @@ func (a *assembler) candidate(f settings.Field) (any, bool) {
 		a.notEditable(f)
 		return nil, false
 	}
-	if text, ok := a.saved.Secrets[f.Name]; ok && f.Secret {
-		a.usedSecrets[f.Name] = true
-		return a.secretValue(f, f.Name, text)
-	}
 	raw, ok := a.saved.Document[f.Name]
 	if ok {
 		a.usedDoc[f.Name] = true
+	}
+	if text, saved := a.saved.Secrets[f.Name]; saved && f.Secret {
+		a.usedSecrets[f.Name] = true
+		// The plain value saved before the field became secret may be the old password.
+		if ok {
+			a.ignore(f.Name, raw, true, ReasonReplaced)
+		}
+		return a.secretValue(f, f.Name, text)
 	}
 	if f.Type == settings.Object {
 		return a.object(f, raw, ok)
@@ -195,9 +199,11 @@ func (a *assembler) notEditable(f settings.Field) {
 		a.usedDoc[f.Name] = true
 		a.ignore(f.Name, raw, f.Secret, ReasonNotEditable)
 	}
-	if text, ok := a.saved.Secrets[f.Name]; ok {
-		a.usedSecrets[f.Name] = true
-		a.ignore(f.Name, encode(text), true, ReasonNotEditable)
+	for _, path := range slices.Sorted(maps.Keys(a.saved.Secrets)) {
+		if path == f.Name || strings.HasPrefix(path, f.Name+".") {
+			a.usedSecrets[path] = true
+			a.ignore(path, encode(a.saved.Secrets[path]), true, ReasonNotEditable)
+		}
 	}
 }
 
@@ -230,6 +236,9 @@ func (a *assembler) object(f settings.Field, raw json.RawMessage, saved bool) (a
 			continue
 		}
 		a.usedSecrets[path] = true
+		if old, ok := take(object, names); ok {
+			a.ignore(path, encode(old), true, ReasonReplaced)
+		}
 		value, ok := a.secretValue(child, path, a.saved.Secrets[path])
 		if !ok {
 			continue
@@ -265,6 +274,21 @@ func secretChild(f settings.Field, path string) ([]string, settings.Field, bool)
 		fields = fields[j].Fields
 	}
 	return nil, settings.Field{}, false
+}
+
+// take removes the value at names inside object and returns it.
+func take(object map[string]any, names []string) (any, bool) {
+	for _, name := range names[:len(names)-1] {
+		next, ok := object[name].(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		object = next
+	}
+	last := names[len(names)-1]
+	old, ok := object[last]
+	delete(object, last)
+	return old, ok
 }
 
 func insert(object map[string]any, names []string, value any) {

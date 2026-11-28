@@ -73,10 +73,11 @@ func TestAssemblePrecedence(t *testing.T) {
 		{
 			name:     "a value saved in a field that is not editable",
 			document: `{"cmd":"x"}`,
+			secrets:  map[string]string{"cmd.key": "k-old"},
 			environ:  []string{"TESTMONITOR__CMD=run"},
 			want:     `{"cmd":"run","o":{"host":"localhost"},"s":"d"}`,
 			sources:  map[string]Source{"s": SourceDefault, "n": SourceUnset, "p": SourceUnset, "cmd": SourceEnv, "o": SourceDefault, "r": SourceUnset},
-			dropped:  []plain{{"cmd", `"x"`, false, ReasonNotEditable}},
+			dropped:  []plain{{"cmd", `"x"`, false, ReasonNotEditable}, {"cmd.key", `"k-old"`, true, ReasonNotEditable}},
 		},
 		{
 			name:     "bad .env text under a saved value",
@@ -260,6 +261,39 @@ func TestAssembleSecrets(t *testing.T) {
 		}
 		if doc := decodeDocument(t, a.Document); doc["p"] != json.Number("1234") {
 			t.Error("the saved secret integer is not the number 1234")
+		}
+	})
+
+	// A value saved before the field became secret may be the old password.
+	replaced := func(t *testing.T, document, path, old string) Assembly {
+		t.Helper()
+		s := saved("1234")
+		s.Document = raws(t, document)
+		a := Assemble(entryWith(decl), environ, "/data", s)
+		want := []plain{{path, old, true, ReasonReplaced}}
+		if got := plainIgnored(a.Ignored); !slices.Equal(got, want) {
+			t.Errorf("ignored = %+v, want %+v", shownIgnored(got), shownIgnored(want))
+		}
+		for _, p := range a.Problems {
+			if strings.Contains(p.Message, strings.Trim(old, `"`)) {
+				t.Error("a problem cites the replaced value")
+			}
+		}
+		return a
+	}
+
+	t.Run("a secret saved over a plain value", func(t *testing.T) {
+		a := replaced(t, `{"p":4321}`, "p", `4321`)
+		if doc := decodeDocument(t, a.Document); doc["p"] != json.Number("1234") {
+			t.Error("the document does not hold the saved secret")
+		}
+	})
+
+	t.Run("a secret child saved over a plain value", func(t *testing.T) {
+		a := replaced(t, `{"o":{"key":"old-child-7"}}`, "o.key", `"old-child-7"`)
+		doc := decodeDocument(t, a.Document)
+		if o, _ := doc["o"].(map[string]any); o["key"] != childSecret {
+			t.Error("the document does not hold the saved secret child")
 		}
 	})
 
