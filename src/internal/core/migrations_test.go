@@ -236,8 +236,8 @@ func expectCode(t *testing.T, db *sql.DB, what, statement, code string) {
 }
 
 func TestMigration00005CascadesAndConstraints(t *testing.T) {
-	address, db := emptyDatabase(t)
-	if err := schema.Migrate(t.Context(), address); err != nil {
+	_, db := emptyDatabase(t)
+	if _, err := provider(t, db).UpTo(t.Context(), 5); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	version, err := provider(t, db).GetDBVersion(t.Context())

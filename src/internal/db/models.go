@@ -76,6 +76,16 @@ type Monitor struct {
 	StatusSeenAt       *time.Time
 }
 
+type MonitorConfig struct {
+	Monitor   string
+	Document  []byte
+	Secrets   []byte
+	Ignored   []byte
+	Variables []byte
+	Revision  int64
+	UpdatedAt time.Time
+}
+
 type Session struct {
 	IDHash    string
 	UserID    int64
