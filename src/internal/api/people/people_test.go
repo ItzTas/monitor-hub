@@ -479,60 +479,72 @@ func TestTheLastAdminStays(t *testing.T) {
 }
 
 func TestTwoAdminsRemovingEachOtherLeaveOne(t *testing.T) {
-	b := newBench(t)
-	accountstest.Admin(t, b.svc, "ana-lima")
-	sessions := map[string]string{
-		"paulo-santos": accountstest.Session(t, b.svc, "paulo-santos"),
-		"ana-lima":     accountstest.Session(t, b.svc, "ana-lima"),
+	changes := []struct {
+		name, method, body string
+		success            int
+	}{
+		{"take admin from", http.MethodPatch, `{"admin":false}`, http.StatusOK},
+		{"disable", http.MethodPatch, `{"disabled":true}`, http.StatusOK},
+		{"delete", http.MethodDelete, "", http.StatusNoContent},
 	}
-	targets := map[string]string{"paulo-santos": "ana-lima", "ana-lima": "paulo-santos"}
+	for _, c := range changes {
+		t.Run(c.name, func(t *testing.T) {
+			b := newBench(t)
+			accountstest.Admin(t, b.svc, "ana-lima")
+			sessions := map[string]string{
+				"paulo-santos": accountstest.Session(t, b.svc, "paulo-santos"),
+				"ana-lima":     accountstest.Session(t, b.svc, "ana-lima"),
+			}
+			targets := map[string]string{"paulo-santos": "ana-lima", "ana-lima": "paulo-santos"}
 
-	// The test holds the access lock, so both changes pass the gate as admins and queue behind it.
-	tx, err := b.pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
-	if err := db.New(tx).LockAccess(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+			// The test holds the access lock, so both changes pass the gate as admins and queue behind it.
+			tx, err := b.pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
+			if err := db.New(tx).LockAccess(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 
-	answers := make(chan *httptest.ResponseRecorder, len(targets))
-	var wg sync.WaitGroup
-	for by, target := range targets {
-		wg.Go(func() {
-			answers <- serve(t.Context(), b.mux, http.MethodPatch, "/api/users/"+target, `{"admin":false}`, withSession(sessions[by]))
+			answers := make(chan *httptest.ResponseRecorder, len(targets))
+			var wg sync.WaitGroup
+			for by, target := range targets {
+				wg.Go(func() {
+					answers <- serve(t.Context(), b.mux, c.method, "/api/users/"+target, c.body, withSession(sessions[by]))
+				})
+			}
+			done := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(done)
+			}()
+			coretest.WaitForAdvisoryWaiters(t, b.pool, len(targets), done)
+			select {
+			case <-done:
+				t.Fatal("both changes were answered without queuing on the access lock")
+			default:
+			}
+			if err := tx.Rollback(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			<-done
+
+			codes := map[int]int{}
+			for range targets {
+				rec := <-answers
+				codes[rec.Code]++
+				if rec.Code == http.StatusConflict && detail(t, rec) != "this is the last person with admin" {
+					t.Errorf("the refused change = 409 %s, want the detail %q", shown(t, rec), "this is the last person with admin")
+				}
+			}
+			if want := map[int]int{c.success: 1, http.StatusConflict: 1}; !maps.Equal(codes, want) {
+				t.Errorf("two admins who %s each other got the statuses %v, want one %d and one 409", c.name, codes, c.success)
+			}
+			if got := b.admins(t); len(got) != 1 {
+				t.Errorf("the admins after two admins tried to %s each other = %v, want exactly one", c.name, got)
+			}
 		})
-	}
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-	coretest.WaitForAdvisoryWaiters(t, b.pool, len(targets), done)
-	select {
-	case <-done:
-		t.Fatal("both changes were answered without queuing on the access lock")
-	default:
-	}
-	if err := tx.Rollback(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	<-done
-
-	codes := map[int]int{}
-	for range targets {
-		rec := <-answers
-		codes[rec.Code]++
-		if rec.Code == http.StatusConflict && detail(t, rec) != "this is the last person with admin" {
-			t.Errorf("the refused removal = 409 %s, want the detail %q", shown(t, rec), "this is the last person with admin")
-		}
-	}
-	if want := map[int]int{http.StatusOK: 1, http.StatusConflict: 1}; !maps.Equal(codes, want) {
-		t.Errorf("two admins removing each other got the statuses %v, want one 200 and one 409", codes)
-	}
-	if got := b.admins(t); len(got) != 1 {
-		t.Errorf("the admins after two admins removed each other = %v, want exactly one", got)
 	}
 }
 
