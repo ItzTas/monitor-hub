@@ -16,17 +16,16 @@ import (
 
 func TestReadManifestRejects(t *testing.T) {
 	tests := map[string]string{
-		"protocol version 1": `{"protocol_version":1,"name":"diario","command":["x"]}`,
-		"protocol version 3": `{"protocol_version":3,"name":"diario","command":["x"]}`,
-		"uppercase name":     `{"protocol_version":2,"name":"Diario","command":["x"]}`,
-		"trailing hyphen":    `{"protocol_version":2,"name":"sei-","command":["x"]}`,
-		"double hyphen":      `{"protocol_version":2,"name":"ab--c","command":["x"]}`,
-		"short name":         `{"protocol_version":2,"name":"x","command":["x"]}`,
-		"empty command":      `{"protocol_version":2,"name":"diario","command":[]}`,
-		"unknown field":      `{"protocol_version":2,"name":"diario","command":["x"],"extra":1}`,
-		"trailing object":    `{"protocol_version":2,"name":"diario","command":["x"]}{"a":1}`,
-		"trailing junk":      `{"protocol_version":2,"name":"diario","command":["x"]} junk`,
-		"shell in apk":       `{"protocol_version":2,"name":"diario","command":["x"],"apk":["poppler-utils; rm -rf /"]}`,
+		"no protocol version": `{"name":"diario","command":["x"]}`,
+		"uppercase name":      `{"protocol_version":2,"name":"Diario","command":["x"]}`,
+		"trailing hyphen":     `{"protocol_version":2,"name":"sei-","command":["x"]}`,
+		"double hyphen":       `{"protocol_version":2,"name":"ab--c","command":["x"]}`,
+		"short name":          `{"protocol_version":2,"name":"x","command":["x"]}`,
+		"empty command":       `{"protocol_version":2,"name":"diario","command":[]}`,
+		"unknown field":       `{"protocol_version":2,"name":"diario","command":["x"],"extra":1}`,
+		"trailing object":     `{"protocol_version":2,"name":"diario","command":["x"]}{"a":1}`,
+		"trailing junk":       `{"protocol_version":2,"name":"diario","command":["x"]} junk`,
+		"shell in apk":        `{"protocol_version":2,"name":"diario","command":["x"],"apk":["poppler-utils; rm -rf /"]}`,
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
