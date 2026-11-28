@@ -555,9 +555,15 @@ Exit codes:
 
 `probe` records nothing, so you can run it again. When the first invoice appears on the portal, compare the `Invoices` shape in the output with the monitor's `docs/site-api.md` and fix whichever side is wrong.
 
-## 6. Pair WhatsApp (only if you use it)
+## 6. WhatsApp (only if you use it)
 
-Skip this if `WHATSAPP_RECIPIENTS` is empty. Pair with the hub stopped, from the same image and `.env`:
+Skip this if `WHATSAPP_RECIPIENTS` is empty. `WHATSAPP_GATEWAY` picks how the hub reaches WhatsApp: `whatsmeow` is the session built into the hub and the default when the variable is empty, and `wuzapi` sends through a WuzAPI server you run. Case does not matter. Any other value stops the hub at start with `WHATSAPP_GATEWAY: use whatsmeow or wuzapi (got "<value>")`.
+
+The hub sends a notification to one recipient at a time and records each recipient that got it in the `delivery_recipients` table. A retry goes only to the recipients missing from that table, even after a restart. The record names the recipient, not the gateway, so switching gateways while notifications are pending does not resend them to anyone who already got them.
+
+### The built-in session (whatsmeow)
+
+Pair with the hub stopped, from the same image and `.env`:
 
 ```bash
 docker compose stop monitor-hub
@@ -573,6 +579,38 @@ docker compose logs --tail 20 monitor-hub | grep -i whatsapp
 
 Check: no "not paired" warning. If you paired while the hub was running, restart it with `docker compose restart monitor-hub`. A database that already has a paired number refuses a second pairing; the error text says how to unlink first.
 
+### WuzAPI
+
+Pair the sending number in WuzAPI, not in the hub. `whatsapp-pair` pairs only the built-in session: it still runs when `WHATSAPP_GATEWAY` is `wuzapi`, but the WuzAPI gateway never uses the session it pairs.
+
+Set three variables in `.env`:
+
+```bash
+WHATSAPP_GATEWAY=wuzapi
+WHATSAPP_WUZAPI_URL=http://wuzapi:8080
+WHATSAPP_WUZAPI_TOKEN=change-me
+```
+
+- `WHATSAPP_WUZAPI_URL`: WuzAPI's address as the hub's container reaches it, `http` or `https`, without a username, password, `?` or `#`. The hub drops a trailing slash.
+- `WHATSAPP_WUZAPI_TOKEN`: the token of the WuzAPI user whose session sends the messages, not WuzAPI's admin token. It is a secret. `WHATSAPP_WUZAPI_TOKEN_FILE` reads it from a file instead (section 8, "Secrets from files"); set one of the two. The hub refuses a token with spaces or line breaks, sends it only in the `Token` header, and keeps it out of its logs and errors.
+
+If the URL or the token is missing, the hub does not start, and the error names the missing variable. With `WHATSAPP_GATEWAY` empty or `whatsmeow`, it also refuses to start while `WHATSAPP_WUZAPI_URL`, `WHATSAPP_WUZAPI_TOKEN` or `WHATSAPP_WUZAPI_TOKEN_FILE` is set, so remove them when you switch back.
+
+The hub's container must reach WuzAPI. A port WuzAPI publishes on `127.0.0.1` is out of its reach, and `host.docker.internal` (added with `extra_hosts`) does not help with that, because it points at the host's Docker bridge address, not at `127.0.0.1`. Put both containers on one Docker network and use WuzAPI's container name with the port inside its container: `http://wuzapi:8080` for a container named `wuzapi` on WuzAPI's default port. To see which networks WuzAPI is on:
+
+```bash
+docker inspect wuzapi --format '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{end}}'
+```
+
+If the list includes `postgres`, the hub already shares it. Otherwise add one of the listed networks to `compose.yaml` the way the commented `<old-stack-network>` lines show.
+
+```bash
+docker compose up -d
+docker compose logs --tail 20 monitor-hub | grep -i wuzapi
+```
+
+Check: no `WhatsApp notifications wait because WuzAPI is not ready` line. A working WuzAPI prints nothing here, because the hub logs only when WuzAPI changes between ready and not ready. The warning carries a `reason`, such as `WuzAPI refused the token (401); check WHATSAPP_WUZAPI_TOKEN` or `the WuzAPI session is not logged in; pair the number in WuzAPI`. While WuzAPI is not ready, WhatsApp notifications stay pending without using up attempts. The hub asks WuzAPI again after a minute and logs `WuzAPI is ready; WhatsApp notifications resume` once it is ready.
+
 ## 7. Roll back
 
 Use this if the hub misbehaves and you want the old services back. The old stacks are already pinned to their Go images (step 1). The rollback also stops the anhanguera monitor, which has no old service to take over.
@@ -584,6 +622,14 @@ Use this if the hub misbehaves and you want the old services back. The old stack
    ```
 
    Each row is one notification for one channel: the event's position in the hub, its monitor, title and link, when the hub stored it, and the channel. `pending` means the hub still meant to send it. `failed` means the hub gave up after six attempts, with the last error in `last_error`; the hub never retries those, so the list may hold old ones you already know about. The query reads only the database, so it works with the hub stopped too. Save the output, and pass on every row you have not already handled.
+
+   A `whatsapp` row may already have reached some of its recipients: the hub records each recipient that got an event in `delivery_recipients`, with the number in digits only or the group id. This lists them for the rows still undelivered:
+
+   ```bash
+   docker exec -i <postgres-container> psql -U monitor_hub -d monitor_hub -c "SELECT r.event_seq, r.recipient, r.sent_at FROM delivery_recipients r JOIN deliveries d ON d.event_seq = r.event_seq AND d.channel = r.channel WHERE d.status <> 'sent' ORDER BY r.event_seq, r.recipient;"
+   ```
+
+   Pass those events on only to the recipients this list leaves out.
 
 2. Stop the hub:
 
