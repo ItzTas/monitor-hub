@@ -47,6 +47,8 @@ type Assembly struct {
 	Problems []Problem
 	Env      []string
 	Secrets  []string
+	// kept is the part of what is saved that the declaration takes.
+	kept Saved
 }
 
 // Assemble builds the document of a monitor field by field: the saved value, else the .env text,
@@ -65,7 +67,11 @@ func Assemble(entry catalog.Entry, environ []string, dataRoot string, saved Save
 		env:         envTexts(name, environ),
 		usedDoc:     map[string]bool{},
 		usedSecrets: map[string]bool{},
-		out:         Assembly{Sources: map[string]Source{}, EnvSet: map[string]bool{}},
+		out: Assembly{
+			Sources: map[string]Source{},
+			EnvSet:  map[string]bool{},
+			kept:    Saved{Document: map[string]json.RawMessage{}, Secrets: map[string]string{}, Variables: map[string]Variable{}},
+		},
 	}
 	doc := map[string]any{}
 	for _, f := range a.decl.Fields {
@@ -188,7 +194,11 @@ func (a *assembler) candidate(f settings.Field) (any, bool) {
 	if !ok {
 		return nil, false
 	}
-	return a.accept(f, raw)
+	value, accepted := a.accept(f, raw)
+	if accepted {
+		a.out.kept.Document[f.Name] = encode(value)
+	}
+	return value, accepted
 }
 
 func (a *assembler) notEditable(f settings.Field) {
@@ -212,9 +222,19 @@ func (a *assembler) accept(f settings.Field, raw json.RawMessage) (any, bool) {
 
 // secretValue converts the saved text of a secret to the field's type.
 func (a *assembler) secretValue(f settings.Field, path, text string) (any, bool) {
+	value, ok := convertSecret(f, text)
+	if !ok {
+		a.ignore(path, encode(text), true, ReasonType)
+		return nil, false
+	}
+	a.out.kept.Secrets[path] = text
+	return value, true
+}
+
+// convertSecret converts the text of a secret to the field's type; a choice must be an option.
+func convertSecret(f settings.Field, text string) (any, bool) {
 	value, expected := ConvertText(f.Type, text)
 	if expected != "" || f.Type == settings.Choice && !slices.Contains(f.Options, text) {
-		a.ignore(path, encode(text), true, ReasonType)
 		return nil, false
 	}
 	return value, true
@@ -222,10 +242,12 @@ func (a *assembler) secretValue(f settings.Field, path, text string) (any, bool)
 
 // object is the saved object with the saved secrets inside it put in place.
 func (a *assembler) object(f settings.Field, raw json.RawMessage, saved bool) (any, bool) {
-	var object map[string]any
+	var object, plain map[string]any
 	if saved {
 		value, _ := a.accept(f, raw)
 		object, _ = value.(map[string]any)
+		// The saved object without the secrets put in place, for kept.
+		plain, _ = decodeDefault(encode(object)).(map[string]any)
 	}
 	for _, path := range slices.Sorted(maps.Keys(a.saved.Secrets)) {
 		names, child, ok := secretChild(f, path)
@@ -234,6 +256,7 @@ func (a *assembler) object(f settings.Field, raw json.RawMessage, saved bool) (a
 		}
 		a.usedSecrets[path] = true
 		if old, ok := take(object, names); ok {
+			take(plain, names)
 			a.ignore(path, encode(old), true, ReasonReplaced)
 		}
 		value, ok := a.secretValue(child, path, a.saved.Secrets[path])
@@ -244,6 +267,9 @@ func (a *assembler) object(f settings.Field, raw json.RawMessage, saved bool) (a
 			object = map[string]any{}
 		}
 		insert(object, names, value)
+	}
+	if plain != nil {
+		a.out.kept.Document[f.Name] = encode(plain)
 	}
 	return object, object != nil
 }
@@ -334,6 +360,7 @@ func (a *assembler) layer() catalog.Layer {
 			layer.Add = map[string]string{}
 		}
 		layer.Add[key] = v.Value
+		a.out.kept.Variables[key] = v
 	}
 	return layer
 }
@@ -418,7 +445,8 @@ func missing(f settings.Field) (any, bool) {
 	return object, len(object) > 0
 }
 
-// decodeDefault decodes a default that settings.Read already checked, a fresh copy each time.
+// decodeDefault decodes a default that settings.Read already checked, or other valid JSON, a
+// fresh copy each time.
 func decodeDefault(raw json.RawMessage) any {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -39,18 +40,34 @@ type Deps struct {
 	Now        func() time.Time
 }
 
-// Service reads a monitor's configuration for the API.
+// Service reads, saves and follows a monitor's configuration for the API.
 type Service struct {
 	deps    Deps
 	entries map[string]catalog.Entry
+	// One save per monitor at a time.
+	locks map[string]*sync.Mutex
+
+	mu       sync.Mutex
+	requests map[string]request
+}
+
+// request is the last restart a save asked for.
+type request struct {
+	number uint64
+	at     time.Time
 }
 
 func NewService(deps Deps) *Service {
+	if deps.Now == nil {
+		deps.Now = time.Now
+	}
 	entries := make(map[string]catalog.Entry, len(deps.Entries))
+	locks := make(map[string]*sync.Mutex, len(deps.Entries))
 	for _, entry := range deps.Entries {
 		entries[entry.Manifest.Name] = entry
+		locks[entry.Manifest.Name] = &sync.Mutex{}
 	}
-	return &Service{deps: deps, entries: entries}
+	return &Service{deps: deps, entries: entries, locks: locks, requests: map[string]request{}}
 }
 
 // load reads what is saved for a monitor and assembles its document.

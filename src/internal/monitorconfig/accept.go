@@ -82,7 +82,7 @@ func acceptList(field settings.Field, path string, value any) (any, []IgnoredVal
 	if !ok {
 		return nil, nil, false
 	}
-	item := settings.Field{Name: field.Name, Type: field.Items.Type, Options: field.Items.Options, Fields: field.Items.Fields}
+	item := itemField(field)
 	kept := []any{}
 	var ignored []IgnoredValue
 	for i, v := range items {
@@ -96,6 +96,11 @@ func acceptList(field settings.Field, path string, value any) (any, []IgnoredVal
 		kept = append(kept, accepted)
 	}
 	return kept, ignored, true
+}
+
+// itemField is a list item checked as a field.
+func itemField(list settings.Field) settings.Field {
+	return settings.Field{Name: list.Name, Type: list.Items.Type, Options: list.Items.Options, Fields: list.Items.Fields}
 }
 
 func acceptObject(field settings.Field, path string, value any) (any, []IgnoredValue, bool) {
